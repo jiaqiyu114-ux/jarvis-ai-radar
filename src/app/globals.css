@@ -1,0 +1,253 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ══════════════════════════════════════════
+   Light Theme — Warm Paper
+   ══════════════════════════════════════════ */
+:root {
+  --background:         #F6F1E8;
+  --surface:            #FFFDF8;
+  --card:               #FFFDF8;
+  --sidebar:            #F3EDE3;
+  --popover:            #FFFDF8;
+
+  --foreground:         #2E2B24;
+  --card-foreground:    #2E2B24;
+  --popover-foreground: #2E2B24;
+
+  --primary:            #C96543;
+  --primary-foreground: #FFFDF8;
+  --primary-soft:       #F1D5C8;
+  --primary-hover:      #B95535;
+
+  --secondary:          #EDE6DB;
+  --secondary-foreground: #2E2B24;
+
+  --muted:              #E8E0D5;
+  --muted-foreground:   #6F675C;
+  --subtle-foreground:  #9A9082;
+
+  --accent:             #EDE6DB;
+  --accent-foreground:  #2E2B24;
+
+  --border:             #DDD3C5;
+  --input:              #DDD3C5;
+  --ring:               #C96543;
+
+  --destructive:        #A94735;
+  --destructive-foreground: #FFFDF8;
+
+  --success:            #2F6B4F;
+  --warning:            #B9822E;
+  --danger:             #A94735;
+
+  --tag-bg:             #EFE6DA;
+  --radius:             0.5rem;
+}
+
+/* ══════════════════════════════════════════
+   Dark Theme — Warm Ink
+   ══════════════════════════════════════════ */
+.dark {
+  --background:         #242421;
+  --surface:            #2A2A26;
+  --card:               #2A2A26;
+  --sidebar:            #20211E;
+  --popover:            #2A2A26;
+
+  --foreground:         #E8E1D6;
+  --card-foreground:    #E8E1D6;
+  --popover-foreground: #E8E1D6;
+
+  --primary:            #D67350;
+  --primary-foreground: #1E1C19;
+  --primary-soft:       #4A2E25;
+  --primary-hover:      #E1815D;
+
+  --secondary:          #34332E;
+  --secondary-foreground: #E8E1D6;
+
+  --muted:              #2E2D28;
+  --muted-foreground:   #B8AEA0;
+  --subtle-foreground:  #8E867A;
+
+  --accent:             #34332E;
+  --accent-foreground:  #E8E1D6;
+
+  --border:             #3A3934;
+  --input:              #3A3934;
+  --ring:               #D67350;
+
+  --destructive:        #D06455;
+  --destructive-foreground: #1E1C19;
+
+  --success:            #47B17A;
+  --warning:            #D6A24A;
+  --danger:             #D06455;
+
+  --tag-bg:             #34332E;
+}
+
+/* ══════════════════════════════════════════
+   Tailwind v4 Theme Token Mapping
+   ══════════════════════════════════════════ */
+@theme inline {
+  --color-background:           var(--background);
+  --color-foreground:           var(--foreground);
+  --color-card:                 var(--card);
+  --color-card-foreground:      var(--card-foreground);
+  --color-popover:              var(--popover);
+  --color-popover-foreground:   var(--popover-foreground);
+  --color-primary:              var(--primary);
+  --color-primary-foreground:   var(--primary-foreground);
+  --color-secondary:            var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted:                var(--muted);
+  --color-muted-foreground:     var(--muted-foreground);
+  --color-accent:               var(--accent);
+  --color-accent-foreground:    var(--accent-foreground);
+  --color-destructive:          var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border:               var(--border);
+  --color-input:                var(--input);
+  --color-ring:                 var(--ring);
+  --color-sidebar:              var(--sidebar);
+  --color-surface:              var(--surface);
+  --color-success:              var(--success);
+  --color-warning:              var(--warning);
+  --color-danger:               var(--danger);
+  --font-sans:                  var(--font-geist-sans);
+  --font-mono:                  var(--font-geist-mono);
+  --radius-sm:                  calc(var(--radius) - 4px);
+  --radius-md:                  calc(var(--radius) - 2px);
+  --radius-lg:                  var(--radius);
+  --radius-xl:                  calc(var(--radius) + 4px);
+}
+
+/* ══════════════════════════════════════════
+   Base Styles
+   ══════════════════════════════════════════ */
+*, *::before, *::after {
+  border-color: var(--color-border);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  /* CJK-friendly font stack */
+  font-family:
+    var(--font-geist-sans, "Geist"),
+    "PingFang SC",
+    "Microsoft YaHei UI",
+    "Noto Sans SC",
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--primary-soft);
+  color: var(--foreground);
+}
+
+/* Warm scrollbar */
+::-webkit-scrollbar        { width: 5px; height: 5px; }
+::-webkit-scrollbar-track  { background: var(--muted); }
+::-webkit-scrollbar-thumb  { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); }
+
+/* ══════════════════════════════════════════
+   Typography System
+   ══════════════════════════════════════════ */
+
+/* Page-level editorial title — font-weight 700 for CJK readability */
+.editorial-title {
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.12;
+  color: var(--foreground);
+  font-family:
+    var(--font-geist-sans, "Geist"),
+    "PingFang SC",
+    "Microsoft YaHei UI",
+    "Noto Sans SC",
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+}
+
+/* Small uppercase label above page title */
+.page-kicker {
+  font-size: 0.6875rem;     /* 11px */
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+
+/* Subtitle / description below title */
+.page-subtitle {
+  font-size: 0.875rem;       /* 14px */
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+/* Section heading inside page body */
+.section-title {
+  font-size: 0.6875rem;     /* 11px */
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+/* Small metadata / meta text */
+.meta-text {
+  font-size: 0.6875rem;     /* 11px */
+  color: var(--muted-foreground);
+}
+
+/* Score numbers — always monospace */
+.score-number {
+  font-family: var(--font-geist-mono, ui-monospace, "Geist Mono", monospace);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Small uppercase metadata label (kept for backward compat) */
+.muted-label {
+  font-size: 0.6875rem;     /* 11px */
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+
+/* Paper-like card */
+.paper-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* Soft muted background panel */
+.soft-panel {
+  background: var(--secondary);
+  border-radius: var(--radius);
+}
+
+/* Inline signal chip */
+.signal-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.625rem;
+  font-weight: 600;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  border: 1px solid color-mix(in oklch, currentColor 30%, transparent);
+  background: color-mix(in oklch, currentColor 10%, transparent);
+}
