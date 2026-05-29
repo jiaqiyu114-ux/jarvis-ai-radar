@@ -11,7 +11,18 @@ import { isServerSupabaseConfigured } from '@/lib/supabase/server'
  *   200: partial or full success (check ok + errors[] for details)
  *   400: Supabase not configured (for write requests)
  *   500: unexpected fatal error
+ *
+ * Debug field: included only outside of production (NODE_ENV !== 'production').
  */
+
+/** Remove the debug field from persist results in production to reduce response surface. */
+function forResponse(result: object): Record<string, unknown> {
+  const body = result as Record<string, unknown>
+  if (process.env.NODE_ENV === 'production') {
+    return Object.fromEntries(Object.entries(body).filter(([k]) => k !== 'debug'))
+  }
+  return body
+}
 
 function buildSample(result: Awaited<ReturnType<typeof runMockProviderIngest>>) {
   if (result.mode === 'dry-run') {
@@ -45,7 +56,7 @@ export async function GET(req: NextRequest) {
 
     const result  = await runMockProviderIngest({ dryRun: !write })
     const sample  = buildSample(result)
-    const payload = sample ? { ...result, sample } : result
+    const payload = forResponse(sample ? { ...result, sample } : result)
     const status  = 'ok' in result && !result.ok ? 500 : 200
 
     return NextResponse.json(payload, { status })
@@ -66,9 +77,9 @@ export async function POST() {
   }
 
   try {
-    const result = await runMockProviderIngest({ dryRun: false })
-    const status = result.ok ? 200 : 500
-    return NextResponse.json(result, { status })
+    const result  = await runMockProviderIngest({ dryRun: false })
+    const status  = result.ok ? 200 : 500
+    return NextResponse.json(forResponse(result), { status })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     console.error('[api/ingest/mock-provider POST]', message)

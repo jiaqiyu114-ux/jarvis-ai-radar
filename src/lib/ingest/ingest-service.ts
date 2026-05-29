@@ -139,7 +139,7 @@ export async function runMockProviderIngest(opts?: { dryRun?: boolean }): Promis
 // ── RSS provider ingest ───────────────────────────────────────────────────────
 
 export type RssDryRunResult = {
-  ok:          true
+  ok:          boolean   // false when all feeds failed; true if at least one item was fetched
   mode:        'dry-run'
   provider:    string
   fetched:     number
@@ -185,8 +185,11 @@ export async function runRssProviderIngest(opts?: { dryRun?: boolean }): Promise
       }),
     }))
 
+    // ok=false only when there were feeds to process but ALL of them failed
+    const ok = unique.length > 0 || feedErrors.length === 0
+
     return {
-      ok:          true,
+      ok,
       mode:        'dry-run',
       provider:    RssProviderAdapter.provider.name,
       fetched:     raw.length,

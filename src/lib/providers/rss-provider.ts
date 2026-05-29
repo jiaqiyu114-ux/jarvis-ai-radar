@@ -62,6 +62,7 @@ const FALLBACK_FEEDS: FallbackFeed[] = [
 export type FeedError = {
   sourceName: string
   feedUrl:    string
+  stage:      'fetch' | 'parse'   // which stage the error occurred in
   message:    string
 }
 
@@ -179,49 +180,66 @@ export async function fetchRssProviderItems(): Promise<RssFetchResult> {
 
   // ── Fetch each feed ───────────────────────────────────────────────────────
   for (const feed of feeds) {
+    // Stage 1: network fetch — isolated so parse errors don't mask fetch errors
+    let xml: string
     try {
-      const xml     = await fetchRssFeed(feed.feedUrl)
-      const parsed  = parseRssFeed(xml)
-
-      let rank = 0
-      for (const p of parsed) {
-        rank++
-
-        // Skip items missing title or URL
-        if (!p.title.trim()) {
-          itemErrors.push({ sourceName: feed.name, message: 'missing title — skipped' })
-          continue
-        }
-        if (!p.url.trim()) {
-          itemErrors.push({ sourceName: feed.name, title: p.title, message: 'missing url — skipped' })
-          continue
-        }
-
-        try {
-          items.push(toNormalizedItem(
-            p,
-            feed.feedUrl,
-            feed.name,
-            feed.sourceHomepage,
-            feed.tier,
-            feed.category,
-            rank,
-            fetchedAt,
-          ))
-        } catch (err) {
-          itemErrors.push({
-            sourceName: feed.name,
-            title:      p.title,
-            message:    err instanceof Error ? err.message : String(err),
-          })
-        }
-      }
+      xml = await fetchRssFeed(feed.feedUrl)
     } catch (err) {
       feedErrors.push({
         sourceName: feed.name,
         feedUrl:    feed.feedUrl,
+        stage:      'fetch',
         message:    err instanceof Error ? err.message : String(err),
       })
+      continue
+    }
+
+    // Stage 2: XML parse
+    let parsed: import('@/lib/ingest/types').ParsedRssItem[]
+    try {
+      parsed = parseRssFeed(xml)
+    } catch (err) {
+      feedErrors.push({
+        sourceName: feed.name,
+        feedUrl:    feed.feedUrl,
+        stage:      'parse',
+        message:    err instanceof Error ? err.message : String(err),
+      })
+      continue
+    }
+
+    // Stage 3: normalise individual items
+    let rank = 0
+    for (const p of parsed) {
+      rank++
+
+      if (!p.title.trim()) {
+        itemErrors.push({ sourceName: feed.name, message: 'missing title — skipped' })
+        continue
+      }
+      if (!p.url.trim()) {
+        itemErrors.push({ sourceName: feed.name, title: p.title, message: 'missing url — skipped' })
+        continue
+      }
+
+      try {
+        items.push(toNormalizedItem(
+          p,
+          feed.feedUrl,
+          feed.name,
+          feed.sourceHomepage,
+          feed.tier,
+          feed.category,
+          rank,
+          fetchedAt,
+        ))
+      } catch (err) {
+        itemErrors.push({
+          sourceName: feed.name,
+          title:      p.title,
+          message:    err instanceof Error ? err.message : String(err),
+        })
+      }
     }
   }
 
