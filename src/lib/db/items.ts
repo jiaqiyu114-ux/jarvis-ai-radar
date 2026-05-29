@@ -7,6 +7,12 @@ export type DbItemWithSource = DbItem & {
   sources: { name: string; source_tier: DbSourceTier } | null
 }
 
+/** Returned by upsertItemByCanonicalUrl — never null, throws on error. */
+export type UpsertItemResult = {
+  id:     string
+  status: 'inserted' | 'reused'
+}
+
 export type ListItemsOptions = {
   category?:   string
   sourceTier?: DbSourceTier
@@ -164,32 +170,40 @@ export async function rejectItem(id: string): Promise<boolean> {
  *   2. url match (UNIQUE constraint)
  *   3. Insert new item
  *
- * Returns { itemId, inserted } or null on error.
+ * Never returns null — throws on any Supabase error with full diagnostic info.
  * Uses supabaseServer so API routes can write even when RLS is added later.
  */
 export async function upsertItemByCanonicalUrl(
   row: DbItemInsert,
-): Promise<{ itemId: string; inserted: boolean } | null> {
-  if (!isServerSupabaseConfigured || !supabaseServer) return null
+): Promise<UpsertItemResult> {
+  if (!isServerSupabaseConfigured || !supabaseServer) {
+    throw new Error('[db/items] upsertItemByCanonicalUrl: supabaseServer is not configured')
+  }
+
+  // Input validation
+  if (!row.title?.trim()) throw new Error('[db/items] upsertItemByCanonicalUrl: title is required')
+  if (!row.url?.trim())   throw new Error('[db/items] upsertItemByCanonicalUrl: url is required')
 
   // 1. Try canonical_url lookup
   if (row.canonical_url) {
-    const { data: byCanonical } = await supabaseServer
+    const { data: byCanonical, error: e1 } = await supabaseServer
       .from('items')
       .select('id')
       .eq('canonical_url', row.canonical_url)
       .limit(1)
       .maybeSingle()
-    if (byCanonical?.id) return { itemId: byCanonical.id, inserted: false }
+    if (e1) throw new Error(`[db/items] lookup by canonical_url: ${e1.message} (code: ${e1.code})`)
+    if (byCanonical?.id) return { id: byCanonical.id, status: 'reused' }
   }
 
   // 2. Try url lookup (UNIQUE)
-  const { data: byUrl } = await supabaseServer
+  const { data: byUrl, error: e2 } = await supabaseServer
     .from('items')
     .select('id')
     .eq('url', row.url)
     .maybeSingle()
-  if (byUrl?.id) return { itemId: byUrl.id, inserted: false }
+  if (e2) throw new Error(`[db/items] lookup by url: ${e2.message} (code: ${e2.code})`)
+  if (byUrl?.id) return { id: byUrl.id, status: 'reused' }
 
   // 3. Insert
   const { data, error } = await supabaseServer
@@ -199,15 +213,33 @@ export async function upsertItemByCanonicalUrl(
     .single()
 
   if (error) {
-    // Race condition on the url UNIQUE constraint
+    // Race condition on the url UNIQUE constraint — retry lookup
     if (error.code === '23505') {
       const { data: race } = await supabaseServer
         .from('items').select('id').eq('url', row.url).maybeSingle()
-      return race?.id ? { itemId: race.id, inserted: false } : null
+      if (race?.id) return { id: race.id, status: 'reused' }
     }
-    console.error('[db/items] upsertItemByCanonicalUrl:', error.message)
-    return null
+    // Include diagnostic info (no keys, no raw_payload content)
+    const payloadKeys = Object.keys(row)
+      .filter(k => row[k as keyof DbItemInsert] !== undefined)
+      .join(', ')
+    throw new Error(
+      `[db/items] insert failed — ${error.message}` +
+      ` | code: ${error.code ?? 'n/a'}` +
+      ` | details: ${error.details ?? 'none'}` +
+      ` | hint: ${error.hint ?? 'none'}` +
+      ` | title: "${row.title}"` +
+      ` | url: "${row.url}"` +
+      ` | canonical_url: "${row.canonical_url ?? 'none'}"` +
+      ` | payload keys: [${payloadKeys}]`
+    )
   }
 
-  return data?.id ? { itemId: data.id, inserted: true } : null
+  if (!data?.id) {
+    throw new Error(
+      `[db/items] insert returned null without error — title: "${row.title}", url: "${row.url}"`
+    )
+  }
+
+  return { id: data.id, status: 'inserted' }
 }
