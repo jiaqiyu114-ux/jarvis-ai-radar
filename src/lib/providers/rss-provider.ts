@@ -76,6 +76,8 @@ export type RssFetchResult = {
   items:       NormalizedIngestItem[]
   feedErrors:  FeedError[]
   itemErrors:  ItemError[]
+  sourceMode:  'database' | 'fallback'
+  sourceCount: number
 }
 
 // ── NormalizedIngestItem builder ──────────────────────────────────────────────
@@ -162,7 +164,10 @@ export async function fetchRssProviderItems(): Promise<RssFetchResult> {
     category:       string
   }
 
-  const feeds: FeedSpec[] = dbSources.length > 0
+  const usingDb    = dbSources.length > 0
+  const sourceMode: 'database' | 'fallback' = usingDb ? 'database' : 'fallback'
+
+  const feeds: FeedSpec[] = usingDb
     ? dbSources.map((s: DbSource) => ({
         name:           s.name,
         feedUrl:        s.url,
@@ -243,7 +248,7 @@ export async function fetchRssProviderItems(): Promise<RssFetchResult> {
     }
   }
 
-  return { items, feedErrors, itemErrors }
+  return { items, feedErrors, itemErrors, sourceMode, sourceCount: feeds.length }
 }
 
 // ── ProviderAdapter interface ─────────────────────────────────────────────────

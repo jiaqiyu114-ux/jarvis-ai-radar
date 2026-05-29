@@ -144,6 +144,8 @@ export type RssDryRunResult = {
   provider:    string
   fetched:     number
   uniqueItems: number
+  sourceMode:  'database' | 'fallback'
+  sourceCount: number
   feedErrors:  FeedError[]
   itemErrors:  ItemError[]
   sample:      Array<{
@@ -158,8 +160,10 @@ export type RssDryRunResult = {
 }
 
 export type RssWriteResult = import('./persist').PersistResult & {
-  feedErrors: FeedError[]
-  itemErrors: ItemError[]
+  feedErrors:  FeedError[]
+  itemErrors:  ItemError[]
+  sourceMode:  'database' | 'fallback'
+  sourceCount: number
 }
 
 export async function runRssProviderIngest(opts?: { dryRun?: boolean }): Promise<
@@ -168,7 +172,7 @@ export async function runRssProviderIngest(opts?: { dryRun?: boolean }): Promise
   const dryRun = opts?.dryRun !== false   // default true
 
   // 1. Fetch + normalise from all RSS sources
-  const { items: raw, feedErrors, itemErrors } = await fetchRssProviderItems()
+  const { items: raw, feedErrors, itemErrors, sourceMode, sourceCount } = await fetchRssProviderItems()
 
   // 2. Dedup by canonical URL
   const unique = dedupeByCanonicalUrl(raw)
@@ -194,6 +198,8 @@ export async function runRssProviderIngest(opts?: { dryRun?: boolean }): Promise
       provider:    RssProviderAdapter.provider.name,
       fetched:     raw.length,
       uniqueItems: unique.length,
+      sourceMode,
+      sourceCount,
       feedErrors,
       itemErrors,
       sample:      scored.slice(0, 5).map(item => ({
@@ -214,5 +220,5 @@ export async function runRssProviderIngest(opts?: { dryRun?: boolean }): Promise
     RssProviderAdapter.provider,
   )
 
-  return { ...persistResult, feedErrors, itemErrors }
+  return { ...persistResult, feedErrors, itemErrors, sourceMode, sourceCount }
 }

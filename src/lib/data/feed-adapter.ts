@@ -65,7 +65,8 @@ export const dashboardStats: DashboardStats    = mockStats
 
 export async function getFeedItems(): Promise<InformationItem[]> {
   if (shouldUseDatabase()) {
-    const rows = await listItemsWithSource()
+    // Sort by final_score desc so highest-quality items appear first in the feed
+    const rows = await listItemsWithSource({ sortByScore: true })
     if (rows.length > 0) return rows.map(mapDbItem)
   }
   return mockItems

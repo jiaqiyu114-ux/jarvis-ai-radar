@@ -2,9 +2,20 @@ import { supabase, isSupabaseConfigured } from '@/lib/supabase/client'
 import { supabaseServer, isServerSupabaseConfigured } from '@/lib/supabase/server'
 import type { DbItem, DbItemInsert, DbItemScoreUpdate, DbItemStatus, DbSourceTier } from '@/types/database'
 
-/** Items row enriched with source name and tier via JOIN. */
+/** Items row enriched with source name and tier via JOIN (feed display). */
 export type DbItemWithSource = DbItem & {
   sources: { name: string; source_tier: DbSourceTier } | null
+}
+
+/** Items row enriched with full source metadata via JOIN (rule scoring). */
+export type DbItemForScoring = DbItem & {
+  sources: {
+    name:              string
+    source_tier:       DbSourceTier
+    is_official:       boolean
+    reliability_score: number
+    base_score:        number
+  } | null
 }
 
 /** Returned by upsertItemByCanonicalUrl — never null, throws on error. */
@@ -58,19 +69,28 @@ export async function listSelectedItems(options: Omit<ListItemsOptions, 'minScor
  * Used by the feed adapter to display source names instead of UUIDs.
  */
 export async function listItemsWithSource(
-  options: ListItemsOptions = {},
+  options: ListItemsOptions & { sortByScore?: boolean } = {},
 ): Promise<DbItemWithSource[]> {
   if (!isSupabaseConfigured || !supabase) return []
   const {
     category, sourceTier, minScore, maxScore,
     limit = 50, offset = 0, search, status,
+    sortByScore = false,
   } = options
 
   let query = supabase
     .from('items')
     .select('*, sources!items_source_id_fkey(name, source_tier)')
-    .order('published_at', { ascending: false })
     .range(offset, offset + limit - 1)
+
+  // Sort: scored items by final_score desc, then published_at desc
+  if (sortByScore) {
+    query = query
+      .order('final_score', { ascending: false, nullsFirst: false })
+      .order('published_at', { ascending: false, nullsFirst: false })
+  } else {
+    query = query.order('published_at', { ascending: false })
+  }
 
   if (category)               query = query.eq('category', category)
   if (sourceTier)             query = query.eq('source_tier', sourceTier)
@@ -88,6 +108,44 @@ export async function listSelectedItemsWithSource(
   options: Omit<ListItemsOptions, 'minScore' | 'status'> = {},
 ): Promise<DbItemWithSource[]> {
   return listItemsWithSource({ ...options, minScore: 75, status: 'selected' })
+}
+
+/**
+ * Fetch items for rule-based scoring — joins full source metadata.
+ * Returns items with status 'new' or 'scored', most recently fetched first.
+ */
+export async function listItemsForScoring(limit = 100): Promise<DbItemForScoring[]> {
+  if (!isSupabaseConfigured || !supabase) return []
+  const { data, error } = await supabase
+    .from('items')
+    .select('*, sources!items_source_id_fkey(name, source_tier, is_official, reliability_score, base_score)')
+    .in('status', ['new', 'scored'])
+    .order('fetched_at', { ascending: false })
+    .limit(limit)
+  if (error) { console.error('[db/items] listItemsForScoring:', error.message); return [] }
+  return (data ?? []) as unknown as DbItemForScoring[]
+}
+
+/**
+ * Apply rule-based scores to a single item.
+ * Uses supabaseServer so it works from API routes without anon-key write limits.
+ */
+export async function updateItemRuleScore(
+  id:     string,
+  scores: { source_score: number; evidence_score: number; final_score: number },
+): Promise<boolean> {
+  if (!isServerSupabaseConfigured || !supabaseServer) return false
+  const { error } = await supabaseServer
+    .from('items')
+    .update({
+      source_score:   scores.source_score,
+      evidence_score: scores.evidence_score,
+      final_score:    scores.final_score,
+      status:         'scored' as DbItemStatus,
+    })
+    .eq('id', id)
+  if (error) { console.error('[db/items] updateItemRuleScore:', error.message); return false }
+  return true
 }
 
 export async function getItemById(id: string): Promise<DbItem | null> {
