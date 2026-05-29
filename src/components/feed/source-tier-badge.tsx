@@ -1,11 +1,11 @@
 import { cn } from "@/lib/utils"
-import type { SourceTier } from "@/types"
 
 interface SourceTierBadgeProps {
-  tier: SourceTier
+  // Accept any runtime value — real DB rows may have null/undefined tier
+  tier: string | null | undefined
 }
 
-const tierConfig: Record<SourceTier, { label: string; className: string }> = {
+const tierConfig: Record<string, { label: string; className: string }> = {
   S: {
     label: 'S',
     className: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/25',
@@ -24,8 +24,16 @@ const tierConfig: Record<SourceTier, { label: string; className: string }> = {
   },
 }
 
+/** Normalise any runtime value to a valid SourceTier key. */
+function normalizeSourceTier(value: string | null | undefined): 'S' | 'A' | 'B' | 'C' {
+  const t = String(value ?? '').trim().toUpperCase()
+  if (t === 'S' || t === 'A' || t === 'B' || t === 'C') return t
+  return 'C'   // default for null / unknown / D
+}
+
 export function SourceTierBadge({ tier }: SourceTierBadgeProps) {
-  const { label, className } = tierConfig[tier]
+  const safeTier = normalizeSourceTier(tier)
+  const { label, className } = tierConfig[safeTier]
   return (
     <span
       className={cn(

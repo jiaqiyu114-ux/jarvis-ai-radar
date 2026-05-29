@@ -16,24 +16,27 @@ function toCategory(s: string): Category {
   return validCategories.find(c => c === s) ?? '其他'
 }
 
-// DbSourceTier includes 'D'; SourceTier only goes to 'C'
-function toSourceTier(t: DbSourceTier): SourceTier {
-  return t === 'D' ? 'C' : t
+// Safe tier normaliser: handles null/undefined/'D'/lowercase/unknown from DB rows
+function toSourceTier(t: DbSourceTier | string | null | undefined): SourceTier {
+  const s = String(t ?? '').trim().toUpperCase()
+  if (s === 'S' || s === 'A' || s === 'B' || s === 'C') return s
+  return 'C'   // D, null, undefined, empty → C
 }
 
 // ── DbItemWithSource → InformationItem mapper ─────────────────────────────────
-// sources JOIN provides name + tier; falls back to cached source_tier if JOIN is null.
+// sources JOIN provides name + tier; falls back to cached source_tier if JOIN null.
+// All fields are defensively defaulted so a single dirty DB row never crashes.
 
 function mapDbItem(item: DbItemWithSource): InformationItem {
-  const sourceName = item.sources?.name ?? item.source_id ?? '未知信源'
-  const sourceTier = item.sources?.source_tier ?? item.source_tier
+  const sourceName = item.sources?.name ?? (item.source_id ? '未知信源' : 'Unknown Source')
+  const rawTier    = item.sources?.source_tier ?? item.source_tier
 
   return {
     id:          item.id,
-    title:       item.title,
-    summary:     item.summary,
+    title:       item.title || '(no title)',
+    summary:     item.summary || '',
     source:      sourceName,
-    sourceTier:  toSourceTier(sourceTier),
+    sourceTier:  toSourceTier(rawTier),
     publishedAt: item.published_at,
     category:    toCategory(item.category),
     tags:        item.tags ?? [],
