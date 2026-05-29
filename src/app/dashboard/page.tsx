@@ -1,18 +1,12 @@
-import { ExternalLink } from "lucide-react"
+import { ExternalLink, LayoutDashboard, TrendingUp, GitBranch, BookOpen } from "lucide-react"
 import { AppShell } from "@/components/layout/app-shell"
 import { StatCard } from "@/components/dashboard/stat-card"
 import { InformationCard } from "@/components/feed/information-card"
 import { ScoreBadge } from "@/components/feed/score-badge"
 import { SourceTierBadge } from "@/components/feed/source-tier-badge"
-import { mockStats, mockItems } from "@/config/mock-data"
-import { LayoutDashboard, TrendingUp, GitBranch, BookOpen } from "lucide-react"
+import { getFeedItems, getDashboardStats } from "@/lib/data/feed-adapter"
 import { cn } from "@/lib/utils"
-
-const mustReadItems  = mockItems.filter(i => i.finalScore >= 88)
-const highScoreItems = mockItems.filter(i => i.finalScore >= 75 && i.finalScore < 88)
-const trendingItems  = mockItems.filter(i => i.scoreBreakdown.momentum >= 82)
-const contentItems   = mockItems.filter(i => i.scoreBreakdown.content_potential >= 82)
-const topItem        = [...mockItems].sort((a, b) => b.finalScore - a.finalScore)[0]
+import type { InformationItem } from "@/types"
 
 const categoryColorMap: Record<string, string> = {
   'AI技术':   'text-blue-700 bg-blue-100 dark:text-blue-400 dark:bg-blue-400/10',
@@ -26,8 +20,7 @@ const categoryColorMap: Record<string, string> = {
   '人物动态': 'text-rose-700 bg-rose-100 dark:text-pink-400 dark:bg-pink-400/10',
 }
 
-/** Simple quick-item for the right 33% panel — avoids narrow-column InformationCard issues */
-function QuickItem({ item }: { item: (typeof mockItems)[number] }) {
+function QuickItem({ item }: { item: InformationItem }) {
   return (
     <div className="flex items-start gap-2.5 py-2 px-3 rounded-md hover:bg-accent transition-colors">
       <ScoreBadge score={item.finalScore} size="sm" />
@@ -49,7 +42,15 @@ function QuickItem({ item }: { item: (typeof mockItems)[number] }) {
   )
 }
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const [items, stats] = await Promise.all([getFeedItems(), getDashboardStats()])
+
+  const mustReadItems  = items.filter(i => i.finalScore >= 88)
+  const highScoreItems = items.filter(i => i.finalScore >= 75 && i.finalScore < 88)
+  const trendingItems  = items.filter(i => i.scoreBreakdown.momentum >= 82)
+  const contentItems   = items.filter(i => i.scoreBreakdown.content_potential >= 82)
+  const topItem        = [...items].sort((a, b) => b.finalScore - a.finalScore)[0]
+
   const topCatColor = topItem
     ? (categoryColorMap[topItem.category] ?? 'text-stone-500 bg-stone-100 dark:text-muted-foreground dark:bg-muted')
     : ''
@@ -64,11 +65,11 @@ export default function DashboardPage() {
           <h1 className="editorial-title text-[2.25rem]">今日雷达</h1>
           <p className="page-subtitle mt-1.5">
             已抓取{' '}
-            <span className="text-foreground font-medium tabular-nums">{mockStats.todayTotal}</span> 条
+            <span className="text-foreground font-medium tabular-nums">{stats.todayTotal}</span> 条
             {' · '}高分{' '}
-            <span className="text-foreground font-medium tabular-nums">{mockStats.highScoreCount}</span> 条
+            <span className="text-foreground font-medium tabular-nums">{stats.highScoreCount}</span> 条
             {' · '}待评估选题{' '}
-            <span className="text-foreground font-medium tabular-nums">{mockStats.pendingTopics}</span> 个
+            <span className="text-foreground font-medium tabular-nums">{stats.pendingTopics}</span> 个
           </p>
         </div>
 
@@ -108,18 +109,17 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* ── Stats row (lightweight) ── */}
+        {/* ── Stats row ── */}
         <div className="grid grid-cols-4 gap-3 mb-6">
-          <StatCard label="今日抓取"    value={mockStats.todayTotal}   change="+12 较昨日"  icon={LayoutDashboard} trend="up" />
-          <StatCard label="高分 ≥80"   value={mockStats.highScoreCount} change="占比 15.6%" icon={TrendingUp}       trend="up" accent />
-          <StatCard label="活跃事件簇"  value={mockStats.newClusters}   change="持续追踪"   icon={GitBranch} />
-          <StatCard label="待评估选题"  value={mockStats.pendingTopics} change="2 个值得写" icon={BookOpen}         trend="up" />
+          <StatCard label="今日抓取"    value={stats.todayTotal}    change="+12 较昨日"  icon={LayoutDashboard} trend="up" />
+          <StatCard label="高分 ≥80"   value={stats.highScoreCount} change="占比 15.6%" icon={TrendingUp}       trend="up" accent />
+          <StatCard label="活跃事件簇"  value={stats.newClusters}    change="持续追踪"   icon={GitBranch} />
+          <StatCard label="待评估选题"  value={stats.pendingTopics}  change="2 个值得写" icon={BookOpen}         trend="up" />
         </div>
 
         {/* ── Main section: Must-Read (66%) + Quick list (33%) ── */}
         <div className="grid grid-cols-3 gap-6 mb-6">
 
-          {/* Left col-span-2: Must-Read — 66% width, InformationCard works fine here */}
           <div className="col-span-2 space-y-2">
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
@@ -136,9 +136,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Right col-span-1: High-score quick list — 33% width, uses QuickItem to avoid squeeze */}
           <div className="col-span-1 space-y-4">
-
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" />
@@ -159,11 +157,10 @@ export default function DashboardPage() {
                 {trendingItems.slice(0, 3).map(item => <QuickItem key={item.id} item={item} />)}
               </div>
             </div>
-
           </div>
         </div>
 
-        {/* ── Second row: Content potential (full width, lighter) ── */}
+        {/* ── Second row: Content potential ── */}
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />

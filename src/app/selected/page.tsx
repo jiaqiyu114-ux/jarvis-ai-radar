@@ -1,11 +1,10 @@
 import { AppShell } from "@/components/layout/app-shell"
 import { InformationCard } from "@/components/feed/information-card"
-import { mockItems } from "@/config/mock-data"
+import { getSelectedItems } from "@/lib/data/feed-adapter"
 import type { InformationItem } from "@/types"
 
 const SELECTED_MIN_SCORE = 75
 
-/** Compute up to 3 reasons why this item was selected */
 function getEntryReasons(item: InformationItem): string[] {
   const reasons: string[] = []
   if (item.sourceTier === 'S') reasons.push('S 级信源')
@@ -19,7 +18,6 @@ function getEntryReasons(item: InformationItem): string[] {
   return reasons.slice(0, 3)
 }
 
-/** Compute a suggested action based on score dimensions */
 function getSuggestedAction(item: InformationItem): string {
   if (item.scoreBreakdown.content_potential >= 80) return '加入选题池'
   if (item.relatedReportCount >= 15) return '跟进事件簇'
@@ -27,10 +25,9 @@ function getSuggestedAction(item: InformationItem): string {
   return '归档备查'
 }
 
-export default function SelectedPage() {
-  const selected = mockItems
-    .filter(item => item.finalScore >= SELECTED_MIN_SCORE)
-    .sort((a, b) => b.finalScore - a.finalScore)
+export default async function SelectedPage() {
+  const items = await getSelectedItems()
+  const selected = [...items].sort((a, b) => b.finalScore - a.finalScore)
 
   return (
     <AppShell>
@@ -61,7 +58,6 @@ export default function SelectedPage() {
                 const action  = getSuggestedAction(item)
                 return (
                   <div key={item.id}>
-                    {/* Entry rationale strip — light, document-like */}
                     <div className="flex items-center gap-3 px-4 py-1.5 bg-surface border-b border-border/40">
                       <span className="text-[10px] text-muted-foreground">
                         入选：{reasons.join(' · ')}

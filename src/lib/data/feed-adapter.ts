@@ -1,37 +1,90 @@
-/**
- * Feed Adapter — data-source-agnostic access to feed items and dashboard stats.
- *
- * Exposes:
- *   - Async functions for Server Components (await-able).
- *   - Sync constants for Client Components that cannot await during render.
- *
- * Currently always returns mock data.
- * TODO (next sprint): in 'database' mode, call listItems() / listSelectedItems()
- * from @/lib/db/items and map DbItem → InformationItem.
- */
-
 import { mockItems, mockStats } from '@/config/mock-data'
-import type { InformationItem, DashboardStats } from '@/types'
+import { listItems, listSelectedItems } from '@/lib/db/items'
+import { shouldUseDatabase } from './runtime'
+import type { InformationItem, DashboardStats, Category, SourceTier } from '@/types'
+import type { DbItem } from '@/types/database'
 
-// ── Sync constants — Client Components use these directly ─────────────────────
-// Future migration: replace with SWR / server-props pattern for live data.
+// ── Type-safe category validator ──────────────────────────────────────────────
 
-export const allItems: InformationItem[] = mockItems
+const validCategories: readonly Category[] = [
+  'AI技术', '商业动态', '产品发布', '监管政策', '融资并购',
+  '行业趋势', '开源项目', '研究报告', '人物动态', '其他',
+]
+
+function toCategory(s: string): Category {
+  return validCategories.find(c => c === s) ?? '其他'
+}
+
+// ── DbItem → InformationItem mapper ──────────────────────────────────────────
+// source name and tier require a sources join not currently in DbItem;
+// defaults used until that join is added.
+
+function mapDbItem(item: DbItem): InformationItem {
+  return {
+    id:          item.id,
+    title:       item.title,
+    summary:     item.summary,
+    source:      item.source_id ?? '未知信源',
+    sourceTier:  'B' as SourceTier,
+    publishedAt: item.published_at,
+    category:    toCategory(item.category),
+    tags:        item.tags ?? [],
+    finalScore:  item.final_score,
+    scoreBreakdown: {
+      ai_relevance:      item.ai_relevance_score,
+      source_score:      item.source_score,
+      importance:        item.importance_score,
+      novelty:           item.novelty_score,
+      momentum:          item.momentum_score,
+      credibility:       item.credibility_score,
+      actionability:     item.actionability_score,
+      content_potential: item.content_potential_score,
+      personal_fit:      item.personal_fit_score,
+    },
+    originalUrl:        item.url,
+    relatedReportCount: 0,
+  }
+}
+
+// ── Sync constants (Client Components) — always mock ─────────────────────────
+// Client Components cannot await at module load; they use these as initial data.
+
+export const allItems:     InformationItem[] = mockItems
 export const dashboardStats: DashboardStats = mockStats
 
-// ── Async functions — Server Components and future DB integration ─────────────
+// ── Async functions (Server Components + DB integration) ──────────────────────
+// Pattern: try DB first; fall back to mock if DB returns nothing or is unconfigured.
 
 export async function getFeedItems(): Promise<InformationItem[]> {
-  // TODO: if getDataMode() === 'database', call db listItems() and map results
-  return allItems
+  if (shouldUseDatabase()) {
+    const rows = await listItems()
+    if (rows.length > 0) return rows.map(mapDbItem)
+  }
+  return mockItems
 }
 
 export async function getSelectedItems(): Promise<InformationItem[]> {
-  // TODO: if getDataMode() === 'database', call db listSelectedItems() and map results
-  return allItems.filter((item) => item.finalScore >= 75)
+  if (shouldUseDatabase()) {
+    const rows = await listSelectedItems()
+    if (rows.length > 0) return rows.map(mapDbItem)
+  }
+  return mockItems.filter(item => item.finalScore >= 75)
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
-  // TODO: if getDataMode() === 'database', aggregate from db
-  return dashboardStats
+  if (shouldUseDatabase()) {
+    const [all, selected] = await Promise.all([
+      listItems({ limit: 500 }),
+      listItems({ minScore: 75, limit: 500 }),
+    ])
+    if (all.length > 0) {
+      return {
+        todayTotal:    all.length,
+        highScoreCount: selected.length,
+        newClusters:   0,
+        pendingTopics: 0,
+      }
+    }
+  }
+  return mockStats
 }

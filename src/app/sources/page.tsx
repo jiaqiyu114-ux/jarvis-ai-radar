@@ -1,12 +1,13 @@
 import { AppShell } from "@/components/layout/app-shell"
 import { SourceTierBadge } from "@/components/feed/source-tier-badge"
-import { mockSources } from "@/config/mock-data"
+import { getSources } from "@/lib/data/sources-adapter"
 import { formatDistanceToNow } from "date-fns"
 import { zhCN } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 
-export default function SourcesPage() {
-  const enabled = mockSources.filter(s => s.enabled).length
+export default async function SourcesPage() {
+  const sources = await getSources()
+  const enabled = sources.filter(s => s.enabled).length
 
   return (
     <AppShell>
@@ -18,7 +19,7 @@ export default function SourcesPage() {
           <div className="flex items-end justify-between">
             <h1 className="editorial-title text-3xl">信源管理</h1>
             <p className="text-xs text-muted-foreground pb-1">
-              {mockSources.length} 个信源 · {enabled} 个运行中
+              {sources.length} 个信源 · {enabled} 个运行中
             </p>
           </div>
         </div>
@@ -27,31 +28,17 @@ export default function SourcesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-surface">
-                <th className="text-left px-5 py-3">
-                  <span className="muted-label">信源</span>
-                </th>
-                <th className="text-left px-4 py-3">
-                  <span className="muted-label">等级</span>
-                </th>
-                <th className="text-left px-4 py-3">
-                  <span className="muted-label">分类</span>
-                </th>
-                <th className="text-right px-4 py-3">
-                  <span className="muted-label">今日</span>
-                </th>
-                <th className="text-right px-4 py-3">
-                  <span className="muted-label">均分</span>
-                </th>
-                <th className="text-left px-4 py-3">
-                  <span className="muted-label">上次抓取</span>
-                </th>
-                <th className="text-center px-4 py-3">
-                  <span className="muted-label">状态</span>
-                </th>
+                <th className="text-left px-5 py-3"><span className="muted-label">信源</span></th>
+                <th className="text-left px-4 py-3"><span className="muted-label">等级</span></th>
+                <th className="text-left px-4 py-3"><span className="muted-label">分类</span></th>
+                <th className="text-right px-4 py-3"><span className="muted-label">今日</span></th>
+                <th className="text-right px-4 py-3"><span className="muted-label">均分</span></th>
+                <th className="text-left px-4 py-3"><span className="muted-label">上次抓取</span></th>
+                <th className="text-center px-4 py-3"><span className="muted-label">状态</span></th>
               </tr>
             </thead>
             <tbody>
-              {mockSources.map(source => {
+              {sources.map(source => {
                 const lastFetch = formatDistanceToNow(new Date(source.lastFetchedAt), {
                   addSuffix: true,
                   locale: zhCN,
@@ -65,9 +52,7 @@ export default function SourcesPage() {
                       <p className="text-sm font-medium text-foreground">{source.name}</p>
                       <p className="text-[10px] text-muted-foreground mt-0.5">{source.description}</p>
                     </td>
-                    <td className="px-4 py-3.5">
-                      <SourceTierBadge tier={source.tier} />
-                    </td>
+                    <td className="px-4 py-3.5"><SourceTierBadge tier={source.tier} /></td>
                     <td className="px-4 py-3.5">
                       <span className="text-xs text-muted-foreground">{source.category}</span>
                     </td>
