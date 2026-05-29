@@ -2,7 +2,7 @@ import { mockItems, mockStats } from '@/config/mock-data'
 import { listItems, listSelectedItems } from '@/lib/db/items'
 import { shouldUseDatabase } from './runtime'
 import type { InformationItem, DashboardStats, Category, SourceTier } from '@/types'
-import type { DbItem } from '@/types/database'
+import type { DbItem, DbSourceTier } from '@/types/database'
 
 // ── Type-safe category validator ──────────────────────────────────────────────
 
@@ -15,9 +15,14 @@ function toCategory(s: string): Category {
   return validCategories.find(c => c === s) ?? '其他'
 }
 
+// DbSourceTier includes 'D'; SourceTier only goes to 'C'
+function toSourceTier(t: DbSourceTier): SourceTier {
+  return t === 'D' ? 'C' : t
+}
+
 // ── DbItem → InformationItem mapper ──────────────────────────────────────────
-// source name and tier require a sources join not currently in DbItem;
-// defaults used until that join is added.
+// source name: stored as source_id UUID; will be resolved when sources join is added.
+// source_tier: now a direct column on items (cached from sources at write time).
 
 function mapDbItem(item: DbItem): InformationItem {
   return {
@@ -25,7 +30,7 @@ function mapDbItem(item: DbItem): InformationItem {
     title:       item.title,
     summary:     item.summary,
     source:      item.source_id ?? '未知信源',
-    sourceTier:  'B' as SourceTier,
+    sourceTier:  toSourceTier(item.source_tier),
     publishedAt: item.published_at,
     category:    toCategory(item.category),
     tags:        item.tags ?? [],

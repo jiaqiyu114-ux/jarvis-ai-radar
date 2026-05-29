@@ -37,9 +37,14 @@ CREATE TABLE IF NOT EXISTS items (
   id                      uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   source_id               uuid        REFERENCES sources(id) ON DELETE SET NULL,
 
+  -- Cached source tier — denormalized for fast queries without a join
+  source_tier             text        NOT NULL DEFAULT 'B'
+                                      CHECK (source_tier IN ('S','A','B','C','D')),
+
   -- Content
   title                   text        NOT NULL,
   url                     text        NOT NULL UNIQUE,
+  author                  text,
   raw_content             text,
   clean_content           text,
   summary                 text        NOT NULL DEFAULT '',
@@ -187,6 +192,7 @@ CREATE TABLE IF NOT EXISTS topics (
   pain_point      text        NOT NULL DEFAULT '',
   controversy     text,
   stance          text,
+  notes           text,
   material_urls   jsonb       NOT NULL DEFAULT '[]',
 
   priority        text        NOT NULL DEFAULT 'medium'

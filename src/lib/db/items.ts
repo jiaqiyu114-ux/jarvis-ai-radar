@@ -21,20 +21,16 @@ export async function listItems(options: ListItemsOptions = {}): Promise<DbItem[
 
   let query = supabase
     .from('items')
-    .select('*, sources!items_source_id_fkey(source_tier)')
+    .select('*')
     .order('published_at', { ascending: false })
     .range(offset, offset + limit - 1)
 
-  if (category)    query = query.eq('category', category)
+  if (category)               query = query.eq('category', category)
+  if (sourceTier)             query = query.eq('source_tier', sourceTier)
   if (minScore !== undefined) query = query.gte('final_score', minScore)
   if (maxScore !== undefined) query = query.lte('final_score', maxScore)
-  if (status)      query = query.eq('status', status)
-  if (search)      query = query.or(`title.ilike.%${search}%,summary.ilike.%${search}%`)
-
-  // Filter by sourceTier via the joined sources table
-  if (sourceTier) {
-    query = (query as ReturnType<typeof query.eq>).eq('sources.source_tier', sourceTier)
-  }
+  if (status)                 query = query.eq('status', status)
+  if (search)                 query = query.or(`title.ilike.%${search}%,summary.ilike.%${search}%`)
 
   const { data, error } = await query
   if (error) { console.error('[db/items] listItems:', error.message); return [] }
