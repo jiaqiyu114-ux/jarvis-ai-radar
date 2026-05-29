@@ -264,7 +264,21 @@ Invoke-RestMethod -Uri "http://localhost:3000/api/ingest/mock-provider"
 
 详细架构说明见 `docs/provider-architecture.md`。
 
-## 10. 安全声明
+## 10. RSS Provider Adapter v1（Provider 架构接入）
+
+RSS 抓取现在走统一 Provider 架构，不再是孤立 pipeline。
+
+| 接口 | 用途 |
+|------|------|
+| `POST /api/fetch/rss` | 旧接口，保留兼容 |
+| `GET /api/ingest/rss` | 新接口，dry-run（无需 Supabase） |
+| `POST /api/ingest/rss` | 新接口，写库，需要 Supabase |
+
+RSS 源通过 `sources.platform = 'rss'` 过滤。无 DB 源时使用内置 fallback 列表。
+
+详细说明见 `docs/rss-provider-adapter.md`。
+
+## 11. 安全声明
 
 - **无硬编码 key**：所有 Supabase 凭据只通过环境变量传入
 - **构建安全**：`pnpm build` 不依赖 Supabase 连接，所有路由静态生成时使用 mock 数据

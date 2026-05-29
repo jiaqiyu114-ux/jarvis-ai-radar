@@ -6,10 +6,12 @@
  *   dryRun = false            — writes to Supabase if configured; throws if not
  */
 
-import { MockProviderAdapter } from '@/lib/providers'
+import { MockProviderAdapter, RssProviderAdapter } from '@/lib/providers'
+import { fetchRssProviderItems } from '@/lib/providers/rss-provider'
 import { calculateProviderSignal } from '@/lib/scoring/provider-signal'
 import { ingestNormalizedItemsToDatabase } from '@/lib/ingest/persist'
 import type { NormalizedIngestItem, ItemMention } from '@/types/provider'
+import type { FeedError, ItemError } from '@/lib/providers/rss-provider'
 
 // ── Deduplication ─────────────────────────────────────────────────────────────
 
@@ -132,4 +134,82 @@ export async function runMockProviderIngest(opts?: { dryRun?: boolean }): Promis
 
   // Write to DB
   return ingestNormalizedItemsToDatabase(unique, MockProviderAdapter.provider)
+}
+
+// ── RSS provider ingest ───────────────────────────────────────────────────────
+
+export type RssDryRunResult = {
+  ok:          true
+  mode:        'dry-run'
+  provider:    string
+  fetched:     number
+  uniqueItems: number
+  feedErrors:  FeedError[]
+  itemErrors:  ItemError[]
+  sample:      Array<{
+    title:          string
+    canonicalUrl:   string
+    providerRank:   number | null | undefined
+    providerSignal: number
+    originalSource: string
+    category:       string | null | undefined
+    publishedAt:    string | null | undefined
+  }>
+}
+
+export type RssWriteResult = import('./persist').PersistResult & {
+  feedErrors: FeedError[]
+  itemErrors: ItemError[]
+}
+
+export async function runRssProviderIngest(opts?: { dryRun?: boolean }): Promise<
+  RssDryRunResult | RssWriteResult
+> {
+  const dryRun = opts?.dryRun !== false   // default true
+
+  // 1. Fetch + normalise from all RSS sources
+  const { items: raw, feedErrors, itemErrors } = await fetchRssProviderItems()
+
+  // 2. Dedup by canonical URL
+  const unique = dedupeByCanonicalUrl(raw)
+
+  if (dryRun) {
+    const scored = unique.map(item => ({
+      ...item,
+      providerSignal: calculateProviderSignal({
+        providerTrustScore: item.providerTrustScore,
+        providerScore:      item.providerScore  ?? undefined,
+        providerRank:       item.providerRank   ?? undefined,
+        featured:           item.featured,
+        mentionCount:       1,
+      }),
+    }))
+
+    return {
+      ok:          true,
+      mode:        'dry-run',
+      provider:    RssProviderAdapter.provider.name,
+      fetched:     raw.length,
+      uniqueItems: unique.length,
+      feedErrors,
+      itemErrors,
+      sample:      scored.slice(0, 5).map(item => ({
+        title:          item.title,
+        canonicalUrl:   item.canonicalUrl,
+        providerRank:   item.providerRank,
+        providerSignal: item.providerSignal,
+        originalSource: item.originalSourceName ?? '(unknown)',
+        category:       item.category,
+        publishedAt:    item.publishedAt,
+      })),
+    }
+  }
+
+  // Write to DB
+  const persistResult = await ingestNormalizedItemsToDatabase(
+    unique,
+    RssProviderAdapter.provider,
+  )
+
+  return { ...persistResult, feedErrors, itemErrors }
 }

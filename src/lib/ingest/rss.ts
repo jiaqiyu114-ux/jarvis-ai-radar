@@ -115,25 +115,29 @@ function detectLanguage(title: string, summary: string): DbItemLanguage {
 
 function parseRssItem(raw: unknown): ParsedRssItem {
   const o = raw as Record<string, unknown>
-  const title = xmlText(o.title)
-  const url   = xmlText(o.link) || xmlText(o.guid) || ''
-  const author = xmlText(o['dc:creator'] ?? o.author) || null
-  const summary = clamp(stripHtml(xmlText(o.description ?? o.summary ?? o.content)), 300)
+  const title       = xmlText(o.title)
+  const rawGuid     = xmlText(o.guid)
+  const url         = xmlText(o.link) || rawGuid || ''
+  const guid        = rawGuid || null
+  const author      = xmlText(o['dc:creator'] ?? o.author) || null
+  const summary     = clamp(stripHtml(xmlText(o.description ?? o.summary ?? o.content)), 300)
   const publishedAt = safeIso(xmlText(o.pubDate ?? o['dc:date']))
-  return { title, url, author, summary, publishedAt }
+  return { title, url, guid, author, summary, publishedAt }
 }
 
 function parseAtomEntry(raw: unknown): ParsedRssItem {
   const o = raw as Record<string, unknown>
-  const title = xmlText(o.title)
-  const url   = xmlLink(o.link) || xmlText(o.id)
-  const authorNode = o.author
-  const author = authorNode
+  const title       = xmlText(o.title)
+  const rawId       = xmlText(o.id)
+  const url         = xmlLink(o.link) || rawId
+  const guid        = rawId || null
+  const authorNode  = o.author
+  const author      = authorNode
     ? xmlText((authorNode as Record<string, unknown>).name ?? authorNode)
     : null
-  const summary = clamp(stripHtml(xmlText(o.summary ?? o.content)), 300)
+  const summary     = clamp(stripHtml(xmlText(o.summary ?? o.content)), 300)
   const publishedAt = safeIso(xmlText(o.updated ?? o.published))
-  return { title, url, author: author || null, summary, publishedAt }
+  return { title, url, guid, author: author || null, summary, publishedAt }
 }
 
 // ── Public: parse RSS/Atom XML string → items array ──────────────────────────

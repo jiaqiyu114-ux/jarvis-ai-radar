@@ -2,6 +2,7 @@
 export type ParsedRssItem = {
   title:       string
   url:         string
+  guid?:       string | null   // RSS <guid> or Atom <id> — preferred externalId
   author:      string | null
   summary:     string
   publishedAt: string   // ISO 8601
