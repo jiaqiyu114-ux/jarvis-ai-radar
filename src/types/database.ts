@@ -1,0 +1,368 @@
+/**
+ * J.A.R.V.I.S. Database Types
+ *
+ * These types mirror the Supabase / PostgreSQL schema (snake_case).
+ * They are kept separate from src/types/index.ts which holds
+ * the camelCase frontend / mock-data types.
+ *
+ * Naming convention:
+ *   Db<TableName>       — full row (SELECT *)
+ *   Db<TableName>Insert — fields required for INSERT (no auto-generated fields)
+ *   Db<TableName>Update — partial fields for UPDATE
+ *
+ * NOTE: All object types here use `type` (not `interface`).
+ * TypeScript 6.0 changed behavior: `interface` no longer satisfies
+ * `Record<string, unknown>`, which Supabase-js requires for GenericTable.
+ * Using `type` aliases fixes the `never[]` insert/update errors.
+ */
+
+// ── Shared primitives ─────────────────────────────────────────────────────────
+
+export type DbSourceTier = 'S' | 'A' | 'B' | 'C' | 'D'
+
+export type DbItemStatus = 'new' | 'scored' | 'selected' | 'archived' | 'rejected'
+
+export type DbItemLanguage = 'zh' | 'en' | 'mixed'
+
+export type DbFeedbackEventType =
+  | 'view'
+  | 'click'
+  | 'read_30s'
+  | 'read_2m'
+  | 'save'
+  | 'useful'
+  | 'not_useful'
+  | 'add_to_topic'
+  | 'share'
+  | 'dismiss'
+  | 'block_source'
+
+export type DbTopicPlatform = '公众号' | '小红书' | '知乎' | '视频号' | '长文' | '其他'
+
+export type DbTopicStatus = '待判断' | '可写' | '正在写' | '已发布' | '放弃' | '归档'
+
+export type DbTopicPriority = 'high' | 'medium' | 'low'
+
+// ── sources ───────────────────────────────────────────────────────────────────
+
+export type DbSource = {
+  id:                string
+  name:              string
+  url:               string
+  platform:          string
+  source_tier:       DbSourceTier
+  base_score:        number
+  reliability_score: number
+  category:          string
+  is_official:       boolean
+  is_blocked:        boolean
+  last_fetched_at:   string | null
+  items_today:       number
+  description:       string | null
+  created_at:        string
+  updated_at:        string
+}
+
+export type DbSourceInsert = {
+  name:               string
+  url:                string
+  platform?:          string
+  source_tier?:       DbSourceTier
+  base_score?:        number
+  reliability_score?: number
+  category?:          string
+  is_official?:       boolean
+  description?:       string
+}
+
+export type DbSourceUpdate = Partial<Omit<DbSourceInsert, 'url'>> & {
+  is_blocked?: boolean
+  items_today?: number
+  last_fetched_at?: string | null
+}
+
+// ── items ─────────────────────────────────────────────────────────────────────
+
+export type DbItem = {
+  id:                      string
+  source_id:               string | null
+  title:                   string
+  url:                     string
+  raw_content:             string | null
+  clean_content:           string | null
+  summary:                 string
+  language:                DbItemLanguage
+  published_at:            string
+  fetched_at:              string
+
+  // AI-output dimension scores (0-100)
+  ai_relevance_score:      number
+  source_score:            number
+  importance_score:        number
+  novelty_score:           number
+  momentum_score:          number
+  credibility_score:       number
+  actionability_score:     number
+  content_potential_score: number
+  personal_fit_score:      number
+
+  // Code-computed penalties
+  duplicate_penalty:       number
+  clickbait_penalty:       number
+  marketing_penalty:       number
+  cognitive_load_penalty:  number
+
+  // Code-computed final score — NEVER set by AI directly
+  final_score:             number
+
+  category:                string
+  entities:                string[]
+  tags:                    string[]
+  embedding:               number[] | null
+  cluster_id:              string | null
+  status:                  DbItemStatus
+  created_at:              string
+  updated_at:              string
+}
+
+export type DbItemInsert = {
+  source_id?:              string
+  title:                   string
+  url:                     string
+  raw_content?:            string
+  clean_content?:          string
+  summary?:                string
+  language?:               DbItemLanguage
+  published_at:            string
+  category?:               string
+  entities?:               string[]
+  tags?:                   string[]
+}
+
+export type DbItemUpdate = Partial<DbItemInsert> & {
+  cluster_id?:              string | null
+  status?:                  DbItemStatus
+  fetched_at?:              string
+  // Scoring fields — updated together via updateItemScore()
+  ai_relevance_score?:      number
+  source_score?:            number
+  importance_score?:        number
+  novelty_score?:           number
+  momentum_score?:          number
+  credibility_score?:       number
+  actionability_score?:     number
+  content_potential_score?: number
+  personal_fit_score?:      number
+  duplicate_penalty?:       number
+  clickbait_penalty?:       number
+  marketing_penalty?:       number
+  cognitive_load_penalty?:  number
+  final_score?:             number
+}
+
+export type DbItemScoreUpdate = {
+  ai_relevance_score:      number
+  source_score:            number
+  importance_score:        number
+  novelty_score:           number
+  momentum_score:          number
+  credibility_score:       number
+  actionability_score:     number
+  content_potential_score: number
+  personal_fit_score:      number
+  duplicate_penalty:       number
+  clickbait_penalty:       number
+  marketing_penalty:       number
+  cognitive_load_penalty:  number
+  final_score:             number
+  status:                  DbItemStatus
+}
+
+// ── clusters ──────────────────────────────────────────────────────────────────
+
+export type DbCluster = {
+  id:                    string
+  main_item_id:          string | null
+  title:                 string
+  summary:               string
+  category:              string
+  entities:              string[]
+  source_count:          number
+  official_source_count: number
+  cluster_score:         number
+  momentum_score:        number
+  first_seen_at:         string
+  last_seen_at:          string
+  created_at:            string
+  updated_at:            string
+}
+
+export type DbClusterInsert = {
+  title:                  string
+  summary?:               string
+  category?:              string
+  entities?:              string[]
+  source_count?:          number
+  official_source_count?: number
+  cluster_score?:         number
+  momentum_score?:        number
+  first_seen_at?:         string
+  last_seen_at?:          string
+  main_item_id?:          string
+}
+
+export type DbClusterUpdate = Partial<DbClusterInsert>
+
+// ── user_feedback ─────────────────────────────────────────────────────────────
+
+export type DbUserFeedback = {
+  id:             string
+  item_id:        string
+  event_type:     DbFeedbackEventType
+  feedback_value: number
+  created_at:     string
+}
+
+export type DbUserFeedbackInsert = {
+  item_id:        string
+  event_type:     DbFeedbackEventType
+  feedback_value: number
+}
+
+export type DbUserFeedbackUpdate = Partial<DbUserFeedbackInsert>
+
+// ── scoring_config ────────────────────────────────────────────────────────────
+
+export type DbScoringWeights = {
+  relevance:         number
+  source:            number
+  importance:        number
+  novelty:           number
+  momentum:          number
+  credibility:       number
+  actionability:     number
+  content_potential: number
+  personal_fit:      number
+}
+
+export type DbScoringThresholds = {
+  selected_min:  number
+  display_min:   number
+  must_read_min: number
+  topic_worthy:  number
+}
+
+export type DbScoringConfig = {
+  id:              string
+  config_name:     string
+  weights_json:    DbScoringWeights
+  thresholds_json: DbScoringThresholds
+  active:          boolean
+  created_at:      string
+  updated_at:      string
+}
+
+export type DbScoringConfigInsert = {
+  config_name:      string
+  weights_json?:    DbScoringWeights
+  thresholds_json?: DbScoringThresholds
+  active?:          boolean
+}
+
+export type DbScoringConfigUpdate = {
+  weights_json?:    Partial<DbScoringWeights>
+  thresholds_json?: Partial<DbScoringThresholds>
+  active?:          boolean
+}
+
+// ── topics ────────────────────────────────────────────────────────────────────
+
+export type DbTopic = {
+  id:             string
+  source_item_id: string | null
+  title:          string
+  core_info:      string
+  angles:         string[]
+  platform:       DbTopicPlatform
+  target_reader:  string
+  pain_point:     string
+  controversy:    string | null
+  stance:         string | null
+  material_urls:  string[]
+  priority:       DbTopicPriority
+  status:         DbTopicStatus
+  created_at:     string
+  updated_at:     string
+}
+
+export type DbTopicInsert = {
+  source_item_id?: string
+  title:           string
+  core_info?:      string
+  angles?:         string[]
+  platform?:       DbTopicPlatform
+  target_reader?:  string
+  pain_point?:     string
+  controversy?:    string
+  stance?:         string
+  material_urls?:  string[]
+  priority?:       DbTopicPriority
+  status?:         DbTopicStatus
+}
+
+// ── Supabase Database helper type ──────────────────────────────────────────────
+// Used to type the SupabaseClient: createClient<Database>(url, key)
+//
+// Database['public'] must satisfy GenericSchema from @supabase/postgrest-js:
+//   { Tables: Record<string, GenericTable>; Views: ...; Functions: ... }
+//
+// GenericTable requires Row/Insert/Update to extend Record<string, unknown>.
+// In TypeScript 6.0, only `type` aliases satisfy this — `interface` does not.
+// The Relationships: [] empty tuple extends GenericRelationship[] safely.
+
+export type Database = {
+  public: {
+    Tables: {
+      sources: {
+        Row:           DbSource
+        Insert:        DbSourceInsert
+        Update:        DbSourceUpdate
+        Relationships: []
+      }
+      items: {
+        Row:           DbItem
+        Insert:        DbItemInsert
+        Update:        DbItemUpdate
+        Relationships: []
+      }
+      clusters: {
+        Row:           DbCluster
+        Insert:        DbClusterInsert
+        Update:        DbClusterUpdate
+        Relationships: []
+      }
+      user_feedback: {
+        Row:           DbUserFeedback
+        Insert:        DbUserFeedbackInsert
+        Update:        DbUserFeedbackUpdate
+        Relationships: []
+      }
+      scoring_config: {
+        Row:           DbScoringConfig
+        Insert:        DbScoringConfigInsert
+        Update:        DbScoringConfigUpdate
+        Relationships: []
+      }
+      topics: {
+        Row:           DbTopic
+        Insert:        DbTopicInsert
+        Update:        Partial<DbTopicInsert>
+        Relationships: []
+      }
+    }
+    Views:          { [_ in never]: never }
+    Functions:      { [_ in never]: never }
+    Enums:          { [_ in never]: never }
+    CompositeTypes: { [_ in never]: never }
+  }
+}

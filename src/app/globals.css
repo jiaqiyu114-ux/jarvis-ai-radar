@@ -118,8 +118,8 @@
   --color-success:              var(--success);
   --color-warning:              var(--warning);
   --color-danger:               var(--danger);
-  --font-sans:                  var(--font-geist-sans);
-  --font-mono:                  var(--font-geist-mono);
+  --font-sans:                  "PingFang SC", "Microsoft YaHei UI", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-mono:                  "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace, monospace;
   --radius-sm:                  calc(var(--radius) - 4px);
   --radius-md:                  calc(var(--radius) - 2px);
   --radius-lg:                  var(--radius);
@@ -137,14 +137,7 @@ body {
   background: var(--background);
   color: var(--foreground);
   /* CJK-friendly font stack */
-  font-family:
-    var(--font-geist-sans, "Geist"),
-    "PingFang SC",
-    "Microsoft YaHei UI",
-    "Noto Sans SC",
-    ui-sans-serif,
-    system-ui,
-    sans-serif;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -170,14 +163,7 @@ body {
   letter-spacing: -0.025em;
   line-height: 1.12;
   color: var(--foreground);
-  font-family:
-    var(--font-geist-sans, "Geist"),
-    "PingFang SC",
-    "Microsoft YaHei UI",
-    "Noto Sans SC",
-    ui-sans-serif,
-    system-ui,
-    sans-serif;
+  font-family: var(--font-sans);
 }
 
 /* Small uppercase label above page title */
@@ -213,7 +199,7 @@ body {
 
 /* Score numbers — always monospace */
 .score-number {
-  font-family: var(--font-geist-mono, ui-monospace, "Geist Mono", monospace);
+  font-family: var(--font-mono);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
