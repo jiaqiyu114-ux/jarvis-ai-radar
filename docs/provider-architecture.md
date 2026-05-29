@@ -121,30 +121,95 @@ curl http://localhost:3000/api/ingest/mock-provider
 注意 item 7（来源不明）：`originalSource: "(unknown)"`。
 这模拟了 `evidence_score` 惩罚场景，未来评分管道会对此扣分。
 
-## 6. 本轮没有做什么
+## 6. Provider Persistence v1（已实现）
+
+### 前置条件
+
+1. 在 Supabase SQL Editor 中依次执行：
+   ```
+   supabase/schema.sql
+   supabase/provider-architecture.sql
+   ```
+2. 配置 `.env.local`：
+   ```env
+   NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+   # 可选（生产 RLS 启用后需要）：
+   # SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+   ```
+
+### Dry-run 与 Write 模式
+
+| 调用方式 | 行为 | 是否需要 Supabase |
+|----------|------|:---:|
+| `GET /api/ingest/mock-provider` | dry-run，仅返回预览 | 否 |
+| `GET /api/ingest/mock-provider?write=true` | 写入 DB | 是 |
+| `POST /api/ingest/mock-provider` | 写入 DB | 是 |
+
+### 测试方式（PowerShell）
+
+```powershell
+pnpm dev
+
+# dry-run — 无需 Supabase
+Invoke-RestMethod -Uri "http://localhost:3000/api/ingest/mock-provider" |
+  ConvertTo-Json -Depth 10
+
+# write — 需要 Supabase 配置
+Invoke-RestMethod -Method Post -Uri "http://localhost:3000/api/ingest/mock-provider" |
+  ConvertTo-Json -Depth 10
+
+# 第二次 POST，验证幂等性
+# insertedItems 应为 0，reusedItems 增加，insertedMentions 为 0，skippedMentions 增加
+Invoke-RestMethod -Method Post -Uri "http://localhost:3000/api/ingest/mock-provider" |
+  ConvertTo-Json -Depth 10
+```
+
+### 写入链路
+
+```
+POST /api/ingest/mock-provider
+  ↓
+runMockProviderIngest({ dryRun: false })
+  ↓ MockProviderAdapter.fetchItems() → 7 items
+  ↓ dedupeByCanonicalUrl()
+  ↓
+ingestNormalizedItemsToDatabase(items, providerConfig)
+  ├─ upsertProvider(config)     → providers 表，providerDbId (UUID)
+  │    provider_key = config.id (e.g. 'mock-provider-001')
+  ├─ per item:
+  │  ├─ findOrCreateSource(originalSourceUrl)  → sources 表，sourceId
+  │  ├─ calculateProviderSignal(...)           → 0-100
+  │  ├─ calculateFinalScore(defaultDims, publishedAt) → 0-100
+  │  ├─ upsertItemByCanonicalUrl(DbItemInsert) → items 表，itemId (UUID)
+  │  │    lookup: canonical_url → url → INSERT
+  │  └─ upsertItemMention({ itemId, providerDbId, item })
+  │       UNIQUE(provider_id, external_id) → 幂等
+  └─ return PersistResult
+```
+
+### 幂等机制
+
+| 步骤 | 幂等方式 |
+|------|---------|
+| providers | `provider_key UNIQUE` → select-or-insert |
+| sources | `url UNIQUE` → select-or-insert (race: 23505 → retry) |
+| items | select by `canonical_url` → select by `url` → insert (race: 23505 → reuse) |
+| item_mentions | `UNIQUE(provider_id, external_id)` → insert, 23505 → 'existing' |
+
+## 7. 本轮未做的事
 
 | 未完成项 | 原因 |
 |---------|------|
-| 真实 AIHOT / AI 雷达 API 接入 | 需要 API key 和文档，不在本轮范围 |
-| item_mentions 实际写入 DB | 依赖 items 表 upsert 返回真实 UUID |
-| provider_signal 接入 final_score | 需要先完成 AI 评分管道 |
+| 真实 AIHOT / AI 雷达 API 接入 | 需要 API key 和文档，下一轮 |
+| provider_signal 接入 final_score | 需要 AI 评分管道 |
 | evidence_score 计算 | 需要 Source 可信度数据库 |
 | embedding / 语义聚类 | 需要向量模型，后续阶段 |
+| RssProviderAdapter 包装 | 复用 rss.ts，下一轮 |
 
-## 7. 下一轮：接入真实外部 Provider
+## 8. 下一步
 
-1. **实现 RssProviderAdapter**：复用 `src/lib/ingest/rss.ts` 的解析逻辑，
-   包装成 `ProviderAdapter` 接口。
-
-2. **实现 AihotProviderAdapter**：调用 AIHOT REST API，
-   将响应映射为 `NormalizedIngestItem[]`。
-
-3. **items upsert + item_mentions 写入**：
-   - 按 `canonicalUrl` upsert items 表
-   - 使用返回的真实 UUID 写入 item_mentions
-
-4. **provider_signal 接入 final_score**：
-   在 `calculateFinalScore()` 中引入 `provider_signal` 作为输入维度之一。
-
-5. **POST /api/ingest/run**：替代 GET mock 路由，
-   支持实际 Provider 运行 + DB 写入 + 返回结果。
+1. **配置 Supabase** → 执行 schema → 测试 POST 幂等写入
+2. **实现 RssProviderAdapter**：把 `rss.ts` 包装成 `ProviderAdapter` 接口
+3. **provider_signal 接入评分**：在 `calculateFinalScore()` 加 provider_signal 维度
+4. **源名称解析**：通过 sources JOIN 替换 source_id UUID 显示

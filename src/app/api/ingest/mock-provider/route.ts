@@ -1,37 +1,76 @@
-import { NextResponse } from 'next/server'
+import { type NextRequest, NextResponse } from 'next/server'
 import { runMockProviderIngest } from '@/lib/ingest/ingest-service'
+import { isServerSupabaseConfigured } from '@/lib/supabase/server'
 
 /**
  * GET /api/ingest/mock-provider
+ * GET /api/ingest/mock-provider?write=true
  *
- * Runs the mock provider ingest pipeline and returns the result as JSON.
- * No network calls. No Supabase required. No API keys.
- * Safe to call during local development at any time.
+ * Default (no params): dry-run — returns pipeline preview, no DB writes.
+ * ?write=true          — writes to Supabase if configured; returns persist stats.
  *
- * Returns a sample of items (first 3) in the "sample" field to keep the
- * response readable without truncating the full items array.
+ * POST /api/ingest/mock-provider
+ *
+ * Always writes to Supabase.
+ * Returns { ok: false, error: "..." } if Supabase is not configured.
  */
-export async function GET() {
+
+function buildSample(result: Awaited<ReturnType<typeof runMockProviderIngest>>) {
+  if (result.mode === 'dry-run') {
+    return result.items.slice(0, 3).map(item => ({
+      title:          item.title,
+      canonicalUrl:   item.canonicalUrl,
+      providerRank:   item.providerRank,
+      providerScore:  item.providerScore,
+      providerSignal: item.providerSignal,
+      featured:       item.featured,
+      originalSource: item.originalSourceName ?? '(unknown)',
+      category:       item.category,
+      publishedAt:    item.publishedAt,
+    }))
+  }
+  return null   // persist result has no items array
+}
+
+export async function GET(req: NextRequest) {
   try {
-    const result = await runMockProviderIngest()
-    return NextResponse.json({
-      ...result,
-      // Full items array available; include a readable sample in the top-level
-      sample: result.items.slice(0, 3).map(item => ({
-        title:          item.title,
-        canonicalUrl:   item.canonicalUrl,
-        providerRank:   item.providerRank,
-        providerScore:  item.providerScore,
-        providerSignal: item.providerSignal,
-        featured:       item.featured,
-        originalSource: item.originalSourceName ?? '(unknown)',
-        category:       item.category,
-        publishedAt:    item.publishedAt,
-      })),
-    })
+    const { searchParams } = new URL(req.url)
+    const write = searchParams.get('write') === 'true'
+
+    if (write && !isServerSupabaseConfigured) {
+      return NextResponse.json({
+        ok:    false,
+        error: 'Supabase is not configured',
+        hint:  'Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY) in .env.local',
+      }, { status: 400 })
+    }
+
+    const result = await runMockProviderIngest({ dryRun: !write })
+    const sample = buildSample(result)
+
+    return NextResponse.json(sample ? { ...result, sample } : result)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
-    console.error('[api/ingest/mock-provider]', message)
+    console.error('[api/ingest/mock-provider GET]', message)
+    return NextResponse.json({ ok: false, error: message }, { status: 500 })
+  }
+}
+
+export async function POST() {
+  if (!isServerSupabaseConfigured) {
+    return NextResponse.json({
+      ok:    false,
+      error: 'Supabase is not configured',
+      hint:  'Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY) in .env.local',
+    }, { status: 400 })
+  }
+
+  try {
+    const result = await runMockProviderIngest({ dryRun: false })
+    return NextResponse.json(result)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    console.error('[api/ingest/mock-provider POST]', message)
     return NextResponse.json({ ok: false, error: message }, { status: 500 })
   }
 }

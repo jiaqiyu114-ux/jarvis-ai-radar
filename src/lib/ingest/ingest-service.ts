@@ -1,12 +1,14 @@
 /**
- * Ingest service — orchestrates provider → normalise → dedup → score → mentions.
+ * Ingest service — orchestrates provider → normalise → dedup → score → persist.
  *
- * Currently operates in-memory (no DB writes).
- * DB integration will be added once the provider architecture stabilises.
+ * Two modes:
+ *   dryRun = true  (default) — in-memory only, no DB writes, always works
+ *   dryRun = false            — writes to Supabase if configured; throws if not
  */
 
 import { MockProviderAdapter } from '@/lib/providers'
 import { calculateProviderSignal } from '@/lib/scoring/provider-signal'
+import { ingestNormalizedItemsToDatabase } from '@/lib/ingest/persist'
 import type { NormalizedIngestItem, ItemMention } from '@/types/provider'
 
 // ── Deduplication ─────────────────────────────────────────────────────────────
@@ -47,31 +49,25 @@ export function dedupeByCanonicalUrl(
     if (newRank === existingRank) {
       const existingScore = existing.providerScore ?? 0
       const newScore      = item.providerScore      ?? 0
-      if (newScore > existingScore) {
-        seen.set(key, item)
-      }
+      if (newScore > existingScore) seen.set(key, item)
     }
   }
 
   return Array.from(seen.values())
 }
 
-// ── Mention builder ───────────────────────────────────────────────────────────
+// ── Mention builder (dry-run only) ────────────────────────────────────────────
 
 /**
- * Build one ItemMention per NormalizedIngestItem.
- *
- * In production: itemId comes from the DB row returned after upsert.
- * In mock mode: itemId is derived from canonicalUrl as a stable surrogate.
- * Callers MUST replace the surrogate itemId before writing to the DB.
+ * Build in-memory ItemMention objects for dry-run previews.
+ * itemId is a surrogate — must be replaced with real DB UUID before writing.
  */
 export function buildMentionsFromNormalizedItems(
   items: NormalizedIngestItem[],
 ): ItemMention[] {
   return items.map(item => ({
     id:               `mention-${item.providerId}-${item.externalId}`,
-    // ⚠️ MOCK surrogate — replace with real DB item UUID in production
-    itemId:           `item-by-url:${item.canonicalUrl || item.url}`,
+    itemId:           `item-by-url:${item.canonicalUrl || item.url}`,  // ⚠️ surrogate
     providerId:       item.providerId,
     externalId:       item.externalId,
     providerScore:    item.providerScore   ?? null,
@@ -83,10 +79,11 @@ export function buildMentionsFromNormalizedItems(
   }))
 }
 
-// ── Mock provider ingest run ──────────────────────────────────────────────────
+// ── Result types ──────────────────────────────────────────────────────────────
 
-export type MockIngestResult = {
+export type DryRunResult = {
   ok:          true
+  mode:        'dry-run'
   provider:    string
   fetched:     number
   normalized:  number
@@ -95,41 +92,44 @@ export type MockIngestResult = {
   items:       Array<NormalizedIngestItem & { providerSignal: number }>
 }
 
-/**
- * Full mock ingest pipeline:
- *   fetch → dedup → provider_signal → mentions → stats
- *
- * No network calls. No DB writes. Safe to call during build-time checks.
- */
-export async function runMockProviderIngest(): Promise<MockIngestResult> {
+// ── Mock provider ingest ──────────────────────────────────────────────────────
+
+export async function runMockProviderIngest(opts?: { dryRun?: boolean }): Promise<
+  DryRunResult | import('./persist').PersistResult
+> {
+  const dryRun = opts?.dryRun !== false   // default true
+
   // 1. Fetch from mock provider
   const raw = await MockProviderAdapter.fetchItems()
 
   // 2. Dedup
   const unique = dedupeByCanonicalUrl(raw)
 
-  // 3. Compute provider_signal per item
-  const scored = unique.map(item => ({
-    ...item,
-    providerSignal: calculateProviderSignal({
-      providerTrustScore: item.providerTrustScore,
-      providerScore:      item.providerScore  ?? undefined,
-      providerRank:       item.providerRank   ?? undefined,
-      featured:           item.featured,
-      mentionCount:       1,
-    }),
-  }))
-
-  // 4. Build mentions
-  const mentions = buildMentionsFromNormalizedItems(unique)
-
-  return {
-    ok:          true,
-    provider:    MockProviderAdapter.provider.name,
-    fetched:     raw.length,
-    normalized:  raw.length,
-    uniqueItems: unique.length,
-    mentions:    mentions.length,
-    items:       scored,
+  if (dryRun) {
+    // In-memory only — safe without DB, works at build time
+    const scored = unique.map(item => ({
+      ...item,
+      providerSignal: calculateProviderSignal({
+        providerTrustScore: item.providerTrustScore,
+        providerScore:      item.providerScore  ?? undefined,
+        providerRank:       item.providerRank   ?? undefined,
+        featured:           item.featured,
+        mentionCount:       1,
+      }),
+    }))
+    const mentions = buildMentionsFromNormalizedItems(unique)
+    return {
+      ok:          true,
+      mode:        'dry-run',
+      provider:    MockProviderAdapter.provider.name,
+      fetched:     raw.length,
+      normalized:  raw.length,
+      uniqueItems: unique.length,
+      mentions:    mentions.length,
+      items:       scored,
+    }
   }
+
+  // Write to DB
+  return ingestNormalizedItemsToDatabase(unique, MockProviderAdapter.provider)
 }

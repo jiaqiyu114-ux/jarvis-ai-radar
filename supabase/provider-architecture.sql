@@ -32,6 +32,9 @@ CREATE INDEX IF NOT EXISTS items_canonical_url_idx ON items(canonical_url);
 
 CREATE TABLE IF NOT EXISTS providers (
   id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  -- provider_key is the stable business identifier (e.g. 'mock-ai-radar', 'aihot').
+  -- id is the DB-generated UUID used for FK references.
+  provider_key     text        NOT NULL UNIQUE,
   name             text        NOT NULL,
   type             text        NOT NULL
                                CHECK (type IN (
@@ -79,12 +82,6 @@ CREATE INDEX IF NOT EXISTS item_mentions_seen_at_idx    ON item_mentions(seen_at
 
 -- ── Seed example provider ──────────────────────────────────────────────────────
 -- (Mock AI Radar for local testing — not a real external service)
-INSERT INTO providers (id, name, type, trust_score, enabled)
-VALUES (
-  '00000000-0000-0000-0000-000000000001',
-  'Mock AI Radar',
-  'rest_api',
-  78,
-  true
-)
-ON CONFLICT (id) DO NOTHING;
+INSERT INTO providers (provider_key, name, type, trust_score, enabled)
+VALUES ('mock-provider-001', 'Mock AI Radar', 'rest_api', 78, true)
+ON CONFLICT (provider_key) DO NOTHING;
