@@ -2,13 +2,35 @@ import { supabase, isSupabaseConfigured } from '@/lib/supabase/client'
 import { supabaseServer, isServerSupabaseConfigured } from '@/lib/supabase/server'
 import type { DbSource, DbSourceInsert, DbSourceUpdate } from '@/types/database'
 
-/** Find a source by its URL (unique column). */
+// ── URL normalisation ─────────────────────────────────────────────────────────
+
+/**
+ * Normalise a source URL before DB lookup/insert to prevent duplicates from
+ * trivial variants (trailing slash, uppercase hostname).
+ */
+function normalizeSourceUrl(raw: string): string {
+  const trimmed = raw.trim()
+  try {
+    const parsed = new URL(trimmed)
+    parsed.hostname = parsed.hostname.toLowerCase()
+    if (parsed.pathname !== '/' && parsed.pathname.endsWith('/')) {
+      parsed.pathname = parsed.pathname.slice(0, -1)
+    }
+    return parsed.toString()
+  } catch {
+    return trimmed
+  }
+}
+
+// ── Public read functions (use anon client — safe for UI data adapters) ────────
+
+/** Find a source by its URL. Uses the anon client (read-only). */
 export async function getSourceByUrl(url: string): Promise<DbSource | null> {
   if (!isSupabaseConfigured || !supabase) return null
   const { data, error } = await supabase
     .from('sources')
     .select('*')
-    .eq('url', url)
+    .eq('url', normalizeSourceUrl(url))
     .maybeSingle()
   if (error) { console.error('[db/sources] getSourceByUrl:', error.message); return null }
   return data ?? null
@@ -16,10 +38,15 @@ export async function getSourceByUrl(url: string): Promise<DbSource | null> {
 
 /**
  * Find a source by URL, creating it if it doesn't exist.
- * Returns { id, source_tier } or null if url is missing (can't create without URL).
+ * Uses supabaseServer consistently for both reads and writes.
  *
- * Used by the ingest pipeline to resolve originalSourceUrl → source_id.
- * Newly created sources get source_tier 'C' (unknown tier) and reliability_score 50.
+ * Dedup strategy (in order):
+ *   1. Exact match on normalised URL
+ *   2. Exact match on name (catches cases where same source has multiple URL representations)
+ *   3. INSERT if nothing found
+ *   4. On 23505 (race): retry lookup by URL
+ *
+ * Returns { id, source_tier } or null if url is missing or server client unavailable.
  */
 export async function findOrCreateSource(input: {
   name?:     string | null
@@ -27,37 +54,66 @@ export async function findOrCreateSource(input: {
   category?: string | null
 }): Promise<{ id: string; source_tier: string } | null> {
   if (!isServerSupabaseConfigured || !supabaseServer) return null
-  if (!input.url) return null   // sources table requires url NOT NULL
+  if (!input.url) return null   // sources.url is NOT NULL
 
-  // Look up by URL
-  const existing = await getSourceByUrl(input.url)
-  if (existing) return { id: existing.id, source_tier: existing.source_tier }
+  const normUrl = normalizeSourceUrl(input.url)
 
-  // Create new source with conservative defaults
+  // 1. Lookup by normalised URL (server client for consistency)
+  const { data: byUrl, error: e1 } = await supabaseServer
+    .from('sources')
+    .select('id, source_tier')
+    .eq('url', normUrl)
+    .maybeSingle()
+  if (e1) console.error('[db/sources] findOrCreateSource lookup by url:', e1.message)
+  if (byUrl?.id) return { id: byUrl.id, source_tier: byUrl.source_tier }
+
+  // 2. Fallback: lookup by name (avoids duplicate if URL changed but source name is same)
+  if (input.name) {
+    const { data: byName, error: e2 } = await supabaseServer
+      .from('sources')
+      .select('id, source_tier')
+      .eq('name', input.name)
+      .maybeSingle()
+    if (e2) console.error('[db/sources] findOrCreateSource lookup by name:', e2.message)
+    if (byName?.id) return { id: byName.id, source_tier: byName.source_tier }
+  }
+
+  // 3. Insert
+  const insertPayload = {
+    name:              input.name ?? normUrl,
+    url:               normUrl,
+    category:          input.category ?? '其他',
+    source_tier:       'C',
+    base_score:        50,
+    reliability_score: 50,
+  } satisfies DbSourceInsert
+
   const { data, error } = await supabaseServer
     .from('sources')
-    .insert({
-      name:              input.name ?? input.url,
-      url:               input.url,
-      category:          input.category ?? '其他',
-      source_tier:       'C',
-      base_score:        50,
-      reliability_score: 50,
-    } satisfies DbSourceInsert)
+    .insert(insertPayload)
     .select('id, source_tier')
     .single()
 
   if (error) {
-    // Race condition: another process just inserted this URL
+    // Race condition: another request already inserted this URL
     if (error.code === '23505') {
-      const retry = await getSourceByUrl(input.url)
-      return retry ? { id: retry.id, source_tier: retry.source_tier } : null
+      const { data: retry } = await supabaseServer
+        .from('sources')
+        .select('id, source_tier')
+        .eq('url', normUrl)
+        .maybeSingle()
+      if (retry?.id) return { id: retry.id, source_tier: retry.source_tier }
+      console.error('[db/sources] findOrCreateSource 23505 retry also failed')
+      return null
     }
-    console.error('[db/sources] findOrCreateSource:', error.message)
+    console.error('[db/sources] findOrCreateSource insert:', error.message, '| code:', error.code)
     return null
   }
+
   return data ? { id: data.id, source_tier: data.source_tier } : null
 }
+
+// ── General-purpose functions (anon client) ───────────────────────────────────
 
 export async function listSources(): Promise<DbSource[]> {
   if (!isSupabaseConfigured || !supabase) return []

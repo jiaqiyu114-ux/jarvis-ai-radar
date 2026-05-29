@@ -3,16 +3,14 @@ import { runMockProviderIngest } from '@/lib/ingest/ingest-service'
 import { isServerSupabaseConfigured } from '@/lib/supabase/server'
 
 /**
- * GET /api/ingest/mock-provider
- * GET /api/ingest/mock-provider?write=true
+ * GET /api/ingest/mock-provider          — dry-run, no DB writes, no Supabase needed
+ * GET /api/ingest/mock-provider?write=true — write to Supabase
+ * POST /api/ingest/mock-provider         — write to Supabase
  *
- * Default (no params): dry-run — returns pipeline preview, no DB writes.
- * ?write=true          — writes to Supabase if configured; returns persist stats.
- *
- * POST /api/ingest/mock-provider
- *
- * Always writes to Supabase.
- * Returns { ok: false, error: "..." } if Supabase is not configured.
+ * HTTP status conventions:
+ *   200: partial or full success (check ok + errors[] for details)
+ *   400: Supabase not configured (for write requests)
+ *   500: unexpected fatal error
  */
 
 function buildSample(result: Awaited<ReturnType<typeof runMockProviderIngest>>) {
@@ -29,7 +27,7 @@ function buildSample(result: Awaited<ReturnType<typeof runMockProviderIngest>>) 
       publishedAt:    item.publishedAt,
     }))
   }
-  return null   // persist result has no items array
+  return undefined
 }
 
 export async function GET(req: NextRequest) {
@@ -41,14 +39,16 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({
         ok:    false,
         error: 'Supabase is not configured',
-        hint:  'Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY) in .env.local',
+        hint:  'Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local',
       }, { status: 400 })
     }
 
-    const result = await runMockProviderIngest({ dryRun: !write })
-    const sample = buildSample(result)
+    const result  = await runMockProviderIngest({ dryRun: !write })
+    const sample  = buildSample(result)
+    const payload = sample ? { ...result, sample } : result
+    const status  = 'ok' in result && !result.ok ? 500 : 200
 
-    return NextResponse.json(sample ? { ...result, sample } : result)
+    return NextResponse.json(payload, { status })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     console.error('[api/ingest/mock-provider GET]', message)
@@ -61,13 +61,14 @@ export async function POST() {
     return NextResponse.json({
       ok:    false,
       error: 'Supabase is not configured',
-      hint:  'Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY) in .env.local',
+      hint:  'Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local',
     }, { status: 400 })
   }
 
   try {
     const result = await runMockProviderIngest({ dryRun: false })
-    return NextResponse.json(result)
+    const status = result.ok ? 200 : 500
+    return NextResponse.json(result, { status })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     console.error('[api/ingest/mock-provider POST]', message)
