@@ -11,6 +11,7 @@ import { isServerSupabaseConfigured } from '@/lib/supabase/server'
  *   - Does NOT require Supabase
  *   - Sources are read from DB if available; falls back to hardcoded feed list
  *   - Returns parsed items + feedErrors / itemErrors
+ *   - ok=false if all feeds failed; ok=true if at least one item was fetched
  *
  * Write (POST or GET?write=true):
  *   - Requires Supabase; returns 400 if not configured
@@ -20,10 +21,20 @@ import { isServerSupabaseConfigured } from '@/lib/supabase/server'
  * HTTP status:
  *   200 — success or partial success (check ok + errors[])
  *   400 — Supabase not configured (write requests only)
- *   500 — fatal / all items failed
+ *   500 — fatal / all items and all feeds failed
  *
+ * Debug field: included only outside of production (NODE_ENV !== 'production').
  * Note: legacy POST /api/fetch/rss remains unchanged and is still supported.
  */
+
+/** Remove the debug field from persist results in production. */
+function forResponse(result: object): Record<string, unknown> {
+  const body = result as Record<string, unknown>
+  if (process.env.NODE_ENV === 'production') {
+    return Object.fromEntries(Object.entries(body).filter(([k]) => k !== 'debug'))
+  }
+  return body
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -40,7 +51,7 @@ export async function GET(req: NextRequest) {
 
     const result = await runRssProviderIngest({ dryRun: !write })
     const status = 'ok' in result && !result.ok ? 500 : 200
-    return NextResponse.json(result, { status })
+    return NextResponse.json(forResponse(result), { status })
 
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
@@ -61,7 +72,7 @@ export async function POST() {
   try {
     const result = await runRssProviderIngest({ dryRun: false })
     const status = result.ok ? 200 : 500
-    return NextResponse.json(result, { status })
+    return NextResponse.json(forResponse(result), { status })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     console.error('[api/ingest/rss POST]', message)
