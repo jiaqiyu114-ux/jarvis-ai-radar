@@ -126,6 +126,24 @@ export async function listSources(): Promise<DbSource[]> {
   return data ?? []
 }
 
+/**
+ * Returns non-blocked sources that have platform='rss'.
+ * Used by RssProviderAdapter to determine which feeds to fetch.
+ * Sources added without an explicit platform default to 'rss' (schema default).
+ */
+export async function listRssSources(): Promise<DbSource[]> {
+  if (!isSupabaseConfigured || !supabase) return []
+  const { data, error } = await supabase
+    .from('sources')
+    .select('*')
+    .eq('is_blocked', false)
+    .eq('platform', 'rss')
+    .order('source_tier', { ascending: true })
+    .order('name', { ascending: true })
+  if (error) { console.error('[db/sources] listRssSources:', error.message); return [] }
+  return data ?? []
+}
+
 /** Returns only non-blocked sources — used by the ingest pipeline. */
 export async function listActiveSources(): Promise<DbSource[]> {
   if (!isSupabaseConfigured || !supabase) return []
