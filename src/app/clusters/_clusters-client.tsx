@@ -175,6 +175,9 @@ function ClusterRow({ cluster, items }: { cluster: MockCluster; items: Informati
   )
 }
 
+// Module-level constant: evaluated once per bundle load.
+// The stat cards that depend on this use suppressHydrationWarning to handle
+// the inevitable difference between server render time and client hydration time.
 const NOW = Date.now()
 
 export default function ClustersClient({ clusters, items }: { clusters: MockCluster[]; items: InformationItem[] }) {
@@ -206,13 +209,23 @@ export default function ClustersClient({ clusters, items }: { clusters: MockClus
           ].map(({ label, value }) => (
             <div key={label} className="border border-border rounded-lg px-4 py-2.5 bg-card">
               <p className="muted-label mb-1">{label}</p>
-              <p className="text-2xl font-bold font-mono leading-none tabular-nums">{value}</p>
+              {/* suppressHydrationWarning: counts derived from Date.now() differ between
+                  static-build server render and client hydration — cosmetic, not critical. */}
+              <p suppressHydrationWarning className="text-2xl font-bold font-mono leading-none tabular-nums">{value}</p>
             </div>
           ))}
         </div>
 
         <div className="space-y-3">
-          {sorted.map(cluster => <ClusterRow key={cluster.id} cluster={cluster} items={items} />)}
+          {sorted.length > 0
+            ? sorted.map(cluster => <ClusterRow key={cluster.id} cluster={cluster} items={items} />)
+            : (
+              <div className="border border-border rounded-lg py-12 text-center bg-card">
+                <p className="text-sm text-muted-foreground">暂无活跃事件簇</p>
+                <p className="text-xs text-muted-foreground/60 mt-1">信源抓取后，相关联的报道会自动聚合成事件簇</p>
+              </div>
+            )
+          }
         </div>
       </div>
     </AppShell>

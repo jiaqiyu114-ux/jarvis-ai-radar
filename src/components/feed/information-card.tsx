@@ -51,7 +51,6 @@ export function InformationCard({
   onFeedback,
 }: InformationCardProps) {
   const [showBreakdown, setShowBreakdown] = useState(variant === 'expanded')
-  const [hovered, setHovered] = useState(false)
 
   const timeAgo = formatDistanceToNow(new Date(item.publishedAt), {
     addSuffix: true,
@@ -116,8 +115,6 @@ export function InformationCard({
         "group border-b border-border transition-colors hover:bg-accent",
         isEmphasis ? "py-3.5 px-4" : "py-2.5 px-4"
       )}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
     >
       <div className="flex items-start gap-3">
         {/* Score badge — always left-anchored */}
@@ -183,7 +180,7 @@ export function InformationCard({
 
             {/* Right: actions — always shrink-0 at end, never wraps */}
             <div className="flex items-center gap-1 shrink-0">
-              <div className={cn("transition-opacity", hovered ? "opacity-100" : "opacity-0")}>
+              <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                 <FeedbackActions itemId={item.id} onAction={onFeedback} />
               </div>
               <button
