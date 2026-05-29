@@ -236,7 +236,35 @@ Invoke-RestMethod -Method Post -Uri "http://localhost:3000/api/fetch/rss" `
 | TechCrunch AI | `https://techcrunch.com/category/artificial-intelligence/feed/` |
 | Hugging Face Blog | `https://huggingface.co/blog/feed.xml` |
 
-## 9. 安全声明
+## 9. Provider Architecture v1 （2026-05-29 加入）
+
+Provider Architecture 引入了 Provider 与 Source 的分离概念，
+并新增了纯内存 mock provider 流水线，可无需 Supabase 验证逻辑。
+
+**新增内容：**
+
+| 项目 | 说明 |
+|------|------|
+| `src/types/provider.ts` | ProviderConfig、NormalizedIngestItem、ItemMention 等类型 |
+| `src/lib/scoring/provider-signal.ts` | provider_signal 计算函数（纯函数，可测试） |
+| `src/lib/ingest/normalize.ts` | canonicalizeUrl、normalizeTitle 工具函数 |
+| `src/lib/providers/mock-provider.ts` | Mock AI Radar 适配器（7 条 mock 信号，无网络调用） |
+| `src/lib/ingest/ingest-service.ts` | dedupeByCanonicalUrl、buildMentions、runMockProviderIngest |
+| `GET /api/ingest/mock-provider` | 本地验证入口，无需 Supabase 或 API key |
+| `supabase/provider-architecture.sql` | providers 表、item_mentions 表、items 新列 |
+
+**mock fallback 不受影响：** 所有现有页面仍正常使用 mock 数据。
+
+**本地验证：**
+```powershell
+pnpm dev
+# 新开终端
+Invoke-RestMethod -Uri "http://localhost:3000/api/ingest/mock-provider"
+```
+
+详细架构说明见 `docs/provider-architecture.md`。
+
+## 10. 安全声明
 
 - **无硬编码 key**：所有 Supabase 凭据只通过环境变量传入
 - **构建安全**：`pnpm build` 不依赖 Supabase 连接，所有路由静态生成时使用 mock 数据

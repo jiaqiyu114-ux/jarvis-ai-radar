@@ -1,8 +1,9 @@
 import { mockItems, mockStats } from '@/config/mock-data'
-import { listItems, listSelectedItems } from '@/lib/db/items'
+import { listItemsWithSource, listSelectedItemsWithSource, listItems } from '@/lib/db/items'
 import { shouldUseDatabase } from './runtime'
 import type { InformationItem, DashboardStats, Category, SourceTier } from '@/types'
-import type { DbItem, DbSourceTier } from '@/types/database'
+import type { DbItemWithSource } from '@/lib/db/items'
+import type { DbSourceTier } from '@/types/database'
 
 // ── Type-safe category validator ──────────────────────────────────────────────
 
@@ -20,17 +21,19 @@ function toSourceTier(t: DbSourceTier): SourceTier {
   return t === 'D' ? 'C' : t
 }
 
-// ── DbItem → InformationItem mapper ──────────────────────────────────────────
-// source name: stored as source_id UUID; will be resolved when sources join is added.
-// source_tier: now a direct column on items (cached from sources at write time).
+// ── DbItemWithSource → InformationItem mapper ─────────────────────────────────
+// sources JOIN provides name + tier; falls back to cached source_tier if JOIN is null.
 
-function mapDbItem(item: DbItem): InformationItem {
+function mapDbItem(item: DbItemWithSource): InformationItem {
+  const sourceName = item.sources?.name ?? item.source_id ?? '未知信源'
+  const sourceTier = item.sources?.source_tier ?? item.source_tier
+
   return {
     id:          item.id,
     title:       item.title,
     summary:     item.summary,
-    source:      item.source_id ?? '未知信源',
-    sourceTier:  toSourceTier(item.source_tier),
+    source:      sourceName,
+    sourceTier:  toSourceTier(sourceTier),
     publishedAt: item.published_at,
     category:    toCategory(item.category),
     tags:        item.tags ?? [],
@@ -54,15 +57,15 @@ function mapDbItem(item: DbItem): InformationItem {
 // ── Sync constants (Client Components) — always mock ─────────────────────────
 // Client Components cannot await at module load; they use these as initial data.
 
-export const allItems:     InformationItem[] = mockItems
-export const dashboardStats: DashboardStats = mockStats
+export const allItems:       InformationItem[] = mockItems
+export const dashboardStats: DashboardStats    = mockStats
 
 // ── Async functions (Server Components + DB integration) ──────────────────────
 // Pattern: try DB first; fall back to mock if DB returns nothing or is unconfigured.
 
 export async function getFeedItems(): Promise<InformationItem[]> {
   if (shouldUseDatabase()) {
-    const rows = await listItems()
+    const rows = await listItemsWithSource()
     if (rows.length > 0) return rows.map(mapDbItem)
   }
   return mockItems
@@ -70,7 +73,7 @@ export async function getFeedItems(): Promise<InformationItem[]> {
 
 export async function getSelectedItems(): Promise<InformationItem[]> {
   if (shouldUseDatabase()) {
-    const rows = await listSelectedItems()
+    const rows = await listSelectedItemsWithSource()
     if (rows.length > 0) return rows.map(mapDbItem)
   }
   return mockItems.filter(item => item.finalScore >= 75)
@@ -84,10 +87,10 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     ])
     if (all.length > 0) {
       return {
-        todayTotal:    all.length,
+        todayTotal:     all.length,
         highScoreCount: selected.length,
-        newClusters:   0,
-        pendingTopics: 0,
+        newClusters:    0,
+        pendingTopics:  0,
       }
     }
   }
