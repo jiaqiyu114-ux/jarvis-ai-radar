@@ -68,6 +68,20 @@ export function canonicalizeUrl(input: string): string {
  *
  * Does NOT: rewrite semantics, remove entity names, version numbers, model names.
  */
+/**
+ * Heuristic language detection based on CJK character ratio.
+ * Returns DbItemLanguage ('zh' | 'en' | 'mixed').
+ */
+export function detectLanguage(title: string, summary: string): 'zh' | 'en' | 'mixed' {
+  const text = title + ' ' + summary
+  const zh = (text.match(/[一-鿿]/g) ?? []).length
+  const total = text.replace(/\s/g, '').length || 1
+  const ratio = zh / total
+  if (ratio > 0.3) return 'zh'
+  if (ratio > 0.1) return 'mixed'
+  return 'en'
+}
+
 export function normalizeTitle(input: string): string {
   return input
     .trim()

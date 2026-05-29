@@ -38,6 +38,14 @@ export default async function SourcesPage() {
               </tr>
             </thead>
             <tbody>
+              {sources.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-5 py-10 text-center">
+                    <p className="text-sm text-muted-foreground">暂无信源</p>
+                    <p className="text-xs text-muted-foreground/60 mt-1">配置 Supabase 后在 sources 表中添加信源，或运行 seed 脚本导入示例数据</p>
+                  </td>
+                </tr>
+              )}
               {sources.map(source => {
                 const lastFetch = formatDistanceToNow(new Date(source.lastFetchedAt), {
                   addSuffix: true,

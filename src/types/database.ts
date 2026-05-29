@@ -350,6 +350,7 @@ export type DbProviderType = 'aihot' | 'rest_api' | 'rss' | 'manual' | 'official
 
 export type DbProvider = {
   id:              string
+  provider_key:    string   // stable business key (e.g. 'mock-provider-001')
   name:            string
   type:            DbProviderType
   base_url:        string | null
@@ -361,6 +362,7 @@ export type DbProvider = {
 }
 
 export type DbProviderInsert = {
+  provider_key:     string   // required; used as upsert conflict key
   name:             string
   type:             DbProviderType
   base_url?:        string

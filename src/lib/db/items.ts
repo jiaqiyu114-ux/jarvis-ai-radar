@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured } from '@/lib/supabase/client'
+import { supabaseServer, isServerSupabaseConfigured } from '@/lib/supabase/server'
 import type { DbItem, DbItemInsert, DbItemScoreUpdate, DbItemStatus, DbSourceTier } from '@/types/database'
 
 /** Items row enriched with source name and tier via JOIN. */
@@ -153,4 +154,60 @@ export async function rejectItem(id: string): Promise<boolean> {
     .eq('id', id)
   if (error) { console.error('[db/items] rejectItem:', error.message); return false }
   return true
+}
+
+/**
+ * Upsert an item by canonical URL (dedup-safe, no UNIQUE constraint on canonical_url).
+ *
+ * Lookup order:
+ *   1. canonical_url match (if provided)
+ *   2. url match (UNIQUE constraint)
+ *   3. Insert new item
+ *
+ * Returns { itemId, inserted } or null on error.
+ * Uses supabaseServer so API routes can write even when RLS is added later.
+ */
+export async function upsertItemByCanonicalUrl(
+  row: DbItemInsert,
+): Promise<{ itemId: string; inserted: boolean } | null> {
+  if (!isServerSupabaseConfigured || !supabaseServer) return null
+
+  // 1. Try canonical_url lookup
+  if (row.canonical_url) {
+    const { data: byCanonical } = await supabaseServer
+      .from('items')
+      .select('id')
+      .eq('canonical_url', row.canonical_url)
+      .limit(1)
+      .maybeSingle()
+    if (byCanonical?.id) return { itemId: byCanonical.id, inserted: false }
+  }
+
+  // 2. Try url lookup (UNIQUE)
+  const { data: byUrl } = await supabaseServer
+    .from('items')
+    .select('id')
+    .eq('url', row.url)
+    .maybeSingle()
+  if (byUrl?.id) return { itemId: byUrl.id, inserted: false }
+
+  // 3. Insert
+  const { data, error } = await supabaseServer
+    .from('items')
+    .insert(row)
+    .select('id')
+    .single()
+
+  if (error) {
+    // Race condition on the url UNIQUE constraint
+    if (error.code === '23505') {
+      const { data: race } = await supabaseServer
+        .from('items').select('id').eq('url', row.url).maybeSingle()
+      return race?.id ? { itemId: race.id, inserted: false } : null
+    }
+    console.error('[db/items] upsertItemByCanonicalUrl:', error.message)
+    return null
+  }
+
+  return data?.id ? { itemId: data.id, inserted: true } : null
 }

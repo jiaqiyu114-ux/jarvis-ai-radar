@@ -77,8 +77,13 @@ export function TopStatusBar({
         </>
       )}
 
-      {/* Date — flush right */}
-      <div className="shrink-0 text-[11px] text-muted-foreground font-mono ml-auto">
+      {/* Date — flush right.
+          suppressHydrationWarning: static build bakes the build-time date;
+          the client re-renders with the correct current date on hydration. */}
+      <div
+        suppressHydrationWarning
+        className="shrink-0 text-[11px] text-muted-foreground font-mono ml-auto"
+      >
         {new Date().toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', weekday: 'short' })}
       </div>
     </header>
