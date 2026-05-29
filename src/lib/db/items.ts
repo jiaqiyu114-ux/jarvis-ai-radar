@@ -1,6 +1,11 @@
 import { supabase, isSupabaseConfigured } from '@/lib/supabase/client'
 import type { DbItem, DbItemInsert, DbItemScoreUpdate, DbItemStatus, DbSourceTier } from '@/types/database'
 
+/** Items row enriched with source name and tier via JOIN. */
+export type DbItemWithSource = DbItem & {
+  sources: { name: string; source_tier: DbSourceTier } | null
+}
+
 export type ListItemsOptions = {
   category?:   string
   sourceTier?: DbSourceTier
@@ -39,6 +44,43 @@ export async function listItems(options: ListItemsOptions = {}): Promise<DbItem[
 
 export async function listSelectedItems(options: Omit<ListItemsOptions, 'minScore' | 'status'> = {}): Promise<DbItem[]> {
   return listItems({ ...options, minScore: 75, status: 'selected' })
+}
+
+/**
+ * Same as listItems but includes a sources JOIN for name + tier enrichment.
+ * Used by the feed adapter to display source names instead of UUIDs.
+ */
+export async function listItemsWithSource(
+  options: ListItemsOptions = {},
+): Promise<DbItemWithSource[]> {
+  if (!isSupabaseConfigured || !supabase) return []
+  const {
+    category, sourceTier, minScore, maxScore,
+    limit = 50, offset = 0, search, status,
+  } = options
+
+  let query = supabase
+    .from('items')
+    .select('*, sources!items_source_id_fkey(name, source_tier)')
+    .order('published_at', { ascending: false })
+    .range(offset, offset + limit - 1)
+
+  if (category)               query = query.eq('category', category)
+  if (sourceTier)             query = query.eq('source_tier', sourceTier)
+  if (minScore !== undefined) query = query.gte('final_score', minScore)
+  if (maxScore !== undefined) query = query.lte('final_score', maxScore)
+  if (status)                 query = query.eq('status', status)
+  if (search)                 query = query.or(`title.ilike.%${search}%,summary.ilike.%${search}%`)
+
+  const { data, error } = await query
+  if (error) { console.error('[db/items] listItemsWithSource:', error.message); return [] }
+  return (data ?? []) as unknown as DbItemWithSource[]
+}
+
+export async function listSelectedItemsWithSource(
+  options: Omit<ListItemsOptions, 'minScore' | 'status'> = {},
+): Promise<DbItemWithSource[]> {
+  return listItemsWithSource({ ...options, minScore: 75, status: 'selected' })
 }
 
 export async function getItemById(id: string): Promise<DbItem | null> {

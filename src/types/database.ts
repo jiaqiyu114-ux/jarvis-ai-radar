@@ -117,6 +117,12 @@ export type DbItem = {
   // Code-computed final score — NEVER set by AI directly
   final_score:             number
 
+  // Provider architecture additions
+  canonical_url:           string | null
+  provider_signal:         number | null
+  evidence_score:          number | null
+  raw_payload:             Record<string, unknown> | null
+
   category:                string
   entities:                string[]
   tags:                    string[]
@@ -158,6 +164,11 @@ export type DbItemInsert = {
   marketing_penalty?:       number
   cognitive_load_penalty?:  number
   final_score?:             number
+  // Provider architecture additions (optional)
+  canonical_url?:           string
+  provider_signal?:         number
+  evidence_score?:          number
+  raw_payload?:             Record<string, unknown>
 }
 
 export type DbItemUpdate = Partial<DbItemInsert> & {
@@ -333,6 +344,62 @@ export type DbTopicInsert = {
   status?:         DbTopicStatus
 }
 
+// ── providers ─────────────────────────────────────────────────────────────────
+
+export type DbProviderType = 'aihot' | 'rest_api' | 'rss' | 'manual' | 'official_feed' | 'newsletter' | 'unknown'
+
+export type DbProvider = {
+  id:              string
+  name:            string
+  type:            DbProviderType
+  base_url:        string | null
+  trust_score:     number
+  enabled:         boolean
+  last_fetched_at: string | null
+  created_at:      string
+  updated_at:      string
+}
+
+export type DbProviderInsert = {
+  name:             string
+  type:             DbProviderType
+  base_url?:        string
+  trust_score?:     number
+  enabled?:         boolean
+}
+
+export type DbProviderUpdate = Partial<DbProviderInsert> & {
+  last_fetched_at?: string | null
+}
+
+// ── item_mentions ─────────────────────────────────────────────────────────────
+
+export type DbItemMention = {
+  id:                string
+  item_id:           string
+  provider_id:       string
+  external_id:       string
+  provider_score:    number | null
+  provider_rank:     number | null
+  provider_category: string | null
+  provider_tags:     string[]
+  raw_payload:       Record<string, unknown> | null
+  seen_at:           string
+  created_at:        string
+}
+
+export type DbItemMentionInsert = {
+  item_id:            string
+  provider_id:        string
+  external_id:        string
+  provider_score?:    number
+  provider_rank?:     number
+  provider_category?: string
+  provider_tags?:     string[]
+  raw_payload?:       Record<string, unknown>
+  seen_at?:           string
+}
+
 // ── Supabase Database helper type ──────────────────────────────────────────────
 // Used to type the SupabaseClient: createClient<Database>(url, key)
 //
@@ -380,6 +447,18 @@ export type Database = {
         Row:           DbTopic
         Insert:        DbTopicInsert
         Update:        Partial<DbTopicInsert>
+        Relationships: []
+      }
+      providers: {
+        Row:           DbProvider
+        Insert:        DbProviderInsert
+        Update:        DbProviderUpdate
+        Relationships: []
+      }
+      item_mentions: {
+        Row:           DbItemMention
+        Insert:        DbItemMentionInsert
+        Update:        Partial<DbItemMentionInsert>
         Relationships: []
       }
     }
