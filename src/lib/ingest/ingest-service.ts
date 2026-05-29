@@ -11,7 +11,7 @@ import { fetchRssProviderItems } from '@/lib/providers/rss-provider'
 import { calculateProviderSignal } from '@/lib/scoring/provider-signal'
 import { ingestNormalizedItemsToDatabase } from '@/lib/ingest/persist'
 import type { NormalizedIngestItem, ItemMention } from '@/types/provider'
-import type { FeedError, ItemError } from '@/lib/providers/rss-provider'
+import type { FeedError, ItemError, SourceLoadDebug } from '@/lib/providers/rss-provider'
 
 // ── Deduplication ─────────────────────────────────────────────────────────────
 
@@ -139,15 +139,16 @@ export async function runMockProviderIngest(opts?: { dryRun?: boolean }): Promis
 // ── RSS provider ingest ───────────────────────────────────────────────────────
 
 export type RssDryRunResult = {
-  ok:          boolean   // false when all feeds failed; true if at least one item was fetched
-  mode:        'dry-run'
-  provider:    string
-  fetched:     number
-  uniqueItems: number
-  sourceMode:  'database' | 'fallback'
-  sourceCount: number
-  feedErrors:  FeedError[]
-  itemErrors:  ItemError[]
+  ok:              boolean   // false when all feeds failed; true if at least one item was fetched
+  mode:            'dry-run'
+  provider:        string
+  fetched:         number
+  uniqueItems:     number
+  sourceMode:      'database' | 'fallback'
+  sourceCount:     number
+  sourceLoadDebug: SourceLoadDebug
+  feedErrors:      FeedError[]
+  itemErrors:      ItemError[]
   sample:      Array<{
     title:          string
     canonicalUrl:   string
@@ -160,10 +161,11 @@ export type RssDryRunResult = {
 }
 
 export type RssWriteResult = import('./persist').PersistResult & {
-  feedErrors:  FeedError[]
-  itemErrors:  ItemError[]
-  sourceMode:  'database' | 'fallback'
-  sourceCount: number
+  feedErrors:      FeedError[]
+  itemErrors:      ItemError[]
+  sourceMode:      'database' | 'fallback'
+  sourceCount:     number
+  sourceLoadDebug: SourceLoadDebug
 }
 
 export async function runRssProviderIngest(opts?: { dryRun?: boolean }): Promise<
@@ -172,7 +174,7 @@ export async function runRssProviderIngest(opts?: { dryRun?: boolean }): Promise
   const dryRun = opts?.dryRun !== false   // default true
 
   // 1. Fetch + normalise from all RSS sources
-  const { items: raw, feedErrors, itemErrors, sourceMode, sourceCount } = await fetchRssProviderItems()
+  const { items: raw, feedErrors, itemErrors, sourceMode, sourceCount, sourceLoadDebug } = await fetchRssProviderItems()
 
   // 2. Dedup by canonical URL
   const unique = dedupeByCanonicalUrl(raw)
@@ -194,12 +196,13 @@ export async function runRssProviderIngest(opts?: { dryRun?: boolean }): Promise
 
     return {
       ok,
-      mode:        'dry-run',
-      provider:    RssProviderAdapter.provider.name,
-      fetched:     raw.length,
-      uniqueItems: unique.length,
+      mode:            'dry-run',
+      provider:        RssProviderAdapter.provider.name,
+      fetched:         raw.length,
+      uniqueItems:     unique.length,
       sourceMode,
       sourceCount,
+      sourceLoadDebug,
       feedErrors,
       itemErrors,
       sample:      scored.slice(0, 5).map(item => ({
@@ -220,5 +223,5 @@ export async function runRssProviderIngest(opts?: { dryRun?: boolean }): Promise
     RssProviderAdapter.provider,
   )
 
-  return { ...persistResult, feedErrors, itemErrors, sourceMode, sourceCount }
+  return { ...persistResult, feedErrors, itemErrors, sourceMode, sourceCount, sourceLoadDebug }
 }

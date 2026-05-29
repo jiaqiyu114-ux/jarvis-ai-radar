@@ -12,7 +12,8 @@
  * inside ingestNormalizedItemsToDatabase to look up or create the source row.
  */
 
-import { listRssSources } from '@/lib/db/sources'
+import { listRssSourcesWithDiag } from '@/lib/db/sources'
+import type { RssSourceLoadResult } from '@/lib/db/sources'
 import { fetchRssFeed, parseRssFeed } from '@/lib/ingest/rss'
 import { canonicalizeUrl, normalizeTitle } from '@/lib/ingest/normalize'
 import type { ProviderAdapter, ProviderConfig, NormalizedIngestItem } from '@/types/provider'
@@ -72,12 +73,21 @@ export type ItemError = {
   message:    string
 }
 
+export type SourceLoadDebug = {
+  attemptedDatabase:    boolean
+  databaseSourceCount:  number
+  fallbackSourceCount:  number
+  sourcePreview:        Array<{ name: string; url: string; platform: string; sourceTier: string; isBlocked: boolean | null }>
+  sourceLoadError?:     { message: string; code?: string; details?: string; hint?: string }
+}
+
 export type RssFetchResult = {
-  items:       NormalizedIngestItem[]
-  feedErrors:  FeedError[]
-  itemErrors:  ItemError[]
-  sourceMode:  'database' | 'fallback'
-  sourceCount: number
+  items:           NormalizedIngestItem[]
+  feedErrors:      FeedError[]
+  itemErrors:      ItemError[]
+  sourceMode:      'database' | 'fallback'
+  sourceCount:     number
+  sourceLoadDebug: SourceLoadDebug
 }
 
 // ── NormalizedIngestItem builder ──────────────────────────────────────────────
@@ -153,8 +163,23 @@ export async function fetchRssProviderItems(): Promise<RssFetchResult> {
   const itemErrors: ItemError[] = []
   const items:      NormalizedIngestItem[] = []
 
-  // ── Resolve feed list ─────────────────────────────────────────────────────
-  const dbSources = await listRssSources()
+  // ── Resolve feed list with full diagnostics ───────────────────────────────
+  const dbResult: RssSourceLoadResult = await listRssSourcesWithDiag()
+  const dbSources = dbResult.sources
+
+  const sourceLoadDebug: SourceLoadDebug = {
+    attemptedDatabase:   dbResult.attempted,
+    databaseSourceCount: dbSources.length,
+    fallbackSourceCount: FALLBACK_FEEDS.length,
+    sourcePreview:       dbSources.slice(0, 5).map((s: DbSource) => ({
+      name:       s.name,
+      url:        s.url,
+      platform:   s.platform,
+      sourceTier: s.source_tier,
+      isBlocked:  s.is_blocked,
+    })),
+    sourceLoadError: dbResult.error ?? undefined,
+  }
 
   type FeedSpec = {
     name:           string
@@ -248,7 +273,7 @@ export async function fetchRssProviderItems(): Promise<RssFetchResult> {
     }
   }
 
-  return { items, feedErrors, itemErrors, sourceMode, sourceCount: feeds.length }
+  return { items, feedErrors, itemErrors, sourceMode, sourceCount: feeds.length, sourceLoadDebug }
 }
 
 // ── ProviderAdapter interface ─────────────────────────────────────────────────

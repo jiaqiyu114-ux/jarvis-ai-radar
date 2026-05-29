@@ -126,22 +126,54 @@ export async function listSources(): Promise<DbSource[]> {
   return data ?? []
 }
 
+export type RssSourceLoadResult = {
+  sources:    DbSource[]
+  error:      { message: string; code?: string; details?: string; hint?: string } | null
+  attempted:  boolean   // true if a DB query was actually attempted
+}
+
 /**
- * Returns non-blocked sources that have platform='rss'.
- * Used by RssProviderAdapter to determine which feeds to fetch.
- * Sources added without an explicit platform default to 'rss' (schema default).
+ * Returns non-blocked sources that have platform='rss', with full diagnostic info.
+ * Use this instead of listRssSources() when you need to know WHY the result is empty.
+ *
+ * is_blocked filter: accepts false OR null (some rows may have NULL from older seeds).
  */
-export async function listRssSources(): Promise<DbSource[]> {
-  if (!isSupabaseConfigured || !supabase) return []
+export async function listRssSourcesWithDiag(): Promise<RssSourceLoadResult> {
+  if (!isSupabaseConfigured || !supabase) {
+    return {
+      sources:   [],
+      error:     { message: 'Supabase anon client not configured (missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY)' },
+      attempted: false,
+    }
+  }
+
   const { data, error } = await supabase
     .from('sources')
     .select('*')
-    .eq('is_blocked', false)
+    .or('is_blocked.eq.false,is_blocked.is.null')   // handles false AND null
     .eq('platform', 'rss')
     .order('source_tier', { ascending: true })
     .order('name', { ascending: true })
-  if (error) { console.error('[db/sources] listRssSources:', error.message); return [] }
-  return data ?? []
+
+  if (error) {
+    console.error('[db/sources] listRssSourcesWithDiag:', error.message)
+    return {
+      sources:   [],
+      error:     { message: error.message, code: error.code ?? undefined, details: error.details ?? undefined, hint: error.hint ?? undefined },
+      attempted: true,
+    }
+  }
+
+  return { sources: data ?? [], error: null, attempted: true }
+}
+
+/**
+ * Returns non-blocked RSS sources. Convenience wrapper — errors are logged to console.
+ * Use listRssSourcesWithDiag() when you need error details in the response.
+ */
+export async function listRssSources(): Promise<DbSource[]> {
+  const { sources } = await listRssSourcesWithDiag()
+  return sources
 }
 
 /** Returns only non-blocked sources — used by the ingest pipeline. */
