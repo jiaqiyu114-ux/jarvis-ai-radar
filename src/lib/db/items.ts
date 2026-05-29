@@ -63,6 +63,22 @@ export async function createItem(input: DbItemInsert): Promise<DbItem | null> {
   return data
 }
 
+/**
+ * Insert an item only if its URL has not been seen before.
+ * Returns 'inserted' | 'duplicate' | 'error'.
+ * The URL column has a UNIQUE constraint; code 23505 = unique_violation.
+ */
+export async function insertItemIfNew(
+  input: DbItemInsert,
+): Promise<'inserted' | 'duplicate' | 'error'> {
+  if (!isSupabaseConfigured || !supabase) return 'error'
+  const { error } = await supabase.from('items').insert(input)
+  if (!error) return 'inserted'
+  if (error.code === '23505') return 'duplicate'
+  console.error('[db/items] insertItemIfNew:', error.message)
+  return 'error'
+}
+
 /** Apply AI dimension scores + code-computed final_score.
  *  Caller MUST compute final_score via calculateFinalScore() before calling this. */
 export async function updateItemScore(id: string, scoreInput: DbItemScoreUpdate): Promise<DbItem | null> {

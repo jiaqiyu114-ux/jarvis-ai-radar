@@ -130,7 +130,113 @@ pnpm dev
 # 项目自动检测环境变量，切换到 database mode
 ```
 
-## 8. 安全声明
+## 8. RSS 抓取 API
+
+### 路由
+
+```
+POST /api/fetch/rss
+```
+
+只支持 POST。页面构建时不会触发抓取。
+
+### 前置条件
+
+1. **sources 表必须有数据**，且 `url` 字段必须填写 RSS/Atom feed 地址（不是网站主页）。
+   - MVP 阶段 `source.url` 暂时要求填 RSS/Atom feed URL。
+   - 如果填的是普通网页 URL，API 会记录错误并跳过该信源，不影响其他信源。
+   - 后续版本可加入普通网页抓取（需 headless browser）。
+2. **Supabase 已配置**（见第 7 节），否则返回 `skipped: true`。
+
+### 可选安全保护
+
+```bash
+# .env.local
+JARVIS_FETCH_SECRET=your-strong-random-secret
+```
+
+设置后，所有 POST 请求必须携带 header：
+```
+x-jarvis-secret: your-strong-random-secret
+```
+未携带则返回 401。不设置时本地开发可直接调用。
+
+### 调用示例
+
+**curl（macOS / Linux）：**
+```bash
+# 无 secret
+curl -X POST http://localhost:3000/api/fetch/rss
+
+# 有 secret
+curl -X POST http://localhost:3000/api/fetch/rss \
+  -H "x-jarvis-secret: your-secret"
+```
+
+**PowerShell（Windows）：**
+```powershell
+# 无 secret
+Invoke-RestMethod -Method Post -Uri "http://localhost:3000/api/fetch/rss"
+
+# 有 secret
+Invoke-RestMethod -Method Post -Uri "http://localhost:3000/api/fetch/rss" `
+  -Headers @{ "x-jarvis-secret" = "your-secret" }
+```
+
+### 返回格式
+
+**Supabase 未配置时：**
+```json
+{
+  "ok": true,
+  "skipped": true,
+  "reason": "Supabase is not configured ...",
+  "mode": "mock"
+}
+```
+
+**正常抓取：**
+```json
+{
+  "ok": true,
+  "mode": "database",
+  "sourcesChecked": 5,
+  "itemsParsed": 42,
+  "itemsInserted": 28,
+  "itemsSkipped": 14,
+  "errors": [
+    { "source": "某信源名", "message": "HTTP 404 from ..." }
+  ]
+}
+```
+
+### 去重规则
+
+1. **URL 完全一致**：跳过（`items.url` 有 UNIQUE 约束，数据库层自动拦截）。
+2. 部分抓取失败不影响整体：每个信源独立 try/catch。
+
+### 评分逻辑
+
+当前版本不调用 AI。使用规则评分：
+
+| 字段 | 来源 |
+|------|------|
+| `source_score` | S→90, A→80, B→65, C→50, D→35 |
+| `credibility_score` | `source.reliability_score` |
+| 其余维度 | 默认 50 |
+| `final_score` | `calculateFinalScore(dimensions, publishedAt)` — 包含时效性衰减 |
+
+接入 AI 模型后，可在 pipeline 中覆盖这些维度分，再调用 `updateItemScore()` 更新 `final_score`。
+
+### 推荐的示例 RSS 源
+
+| 信源 | RSS URL |
+|------|---------|
+| The Verge AI | `https://www.theverge.com/rss/ai-artificial-intelligence/index.xml` |
+| TechCrunch AI | `https://techcrunch.com/category/artificial-intelligence/feed/` |
+| Hugging Face Blog | `https://huggingface.co/blog/feed.xml` |
+
+## 9. 安全声明
 
 - **无硬编码 key**：所有 Supabase 凭据只通过环境变量传入
 - **构建安全**：`pnpm build` 不依赖 Supabase 连接，所有路由静态生成时使用 mock 数据

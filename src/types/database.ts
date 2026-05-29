@@ -128,19 +128,36 @@ export type DbItem = {
 }
 
 export type DbItemInsert = {
-  source_id?:              string
-  source_tier?:            DbSourceTier
-  title:                   string
-  url:                     string
-  author?:                 string
-  raw_content?:            string
-  clean_content?:          string
-  summary?:                string
-  language?:               DbItemLanguage
-  published_at:            string
-  category?:               string
-  entities?:               string[]
-  tags?:                   string[]
+  source_id?:               string
+  source_tier?:             DbSourceTier
+  title:                    string
+  url:                      string
+  author?:                  string
+  raw_content?:             string
+  clean_content?:           string
+  summary?:                 string
+  language?:                DbItemLanguage
+  published_at:             string
+  category?:                string
+  entities?:                string[]
+  tags?:                    string[]
+  status?:                  DbItemStatus
+  // Scoring fields — optional; DB defaults to 0 if omitted.
+  // Ingest pipeline provides these via calculateFinalScore().
+  ai_relevance_score?:      number
+  source_score?:            number
+  importance_score?:        number
+  novelty_score?:           number
+  momentum_score?:          number
+  credibility_score?:       number
+  actionability_score?:     number
+  content_potential_score?: number
+  personal_fit_score?:      number
+  duplicate_penalty?:       number
+  clickbait_penalty?:       number
+  marketing_penalty?:       number
+  cognitive_load_penalty?:  number
+  final_score?:             number
 }
 
 export type DbItemUpdate = Partial<DbItemInsert> & {

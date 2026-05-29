@@ -12,6 +12,19 @@ export async function listSources(): Promise<DbSource[]> {
   return data ?? []
 }
 
+/** Returns only non-blocked sources — used by the ingest pipeline. */
+export async function listActiveSources(): Promise<DbSource[]> {
+  if (!isSupabaseConfigured || !supabase) return []
+  const { data, error } = await supabase
+    .from('sources')
+    .select('*')
+    .eq('is_blocked', false)
+    .order('source_tier', { ascending: true })
+    .order('name', { ascending: true })
+  if (error) { console.error('[db/sources] listActiveSources:', error.message); return [] }
+  return data ?? []
+}
+
 export async function getSourceById(id: string): Promise<DbSource | null> {
   if (!isSupabaseConfigured || !supabase) return null
   const { data, error } = await supabase
