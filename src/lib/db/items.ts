@@ -73,13 +73,13 @@ export async function listSelectedItems(options: Omit<ListItemsOptions, 'minScor
  * Used by the feed adapter to display source names instead of UUIDs.
  */
 export async function listItemsWithSource(
-  options: ListItemsOptions & { sortByScore?: boolean } = {},
+  options: ListItemsOptions & { sortByScore?: boolean; sortByTime?: 'published_at' | 'fetched_at' } = {},
 ): Promise<DbItemWithSource[]> {
   if (!isSupabaseConfigured || !supabase) return []
   const {
     category, sourceTier, minScore, maxScore,
     limit = 50, offset = 0, search, status,
-    sortByScore = false,
+    sortByScore = false, sortByTime = 'published_at',
   } = options
 
   const selectClause = '*, sources!items_source_id_fkey(name, source_tier)'
@@ -95,7 +95,7 @@ export async function listItemsWithSource(
       .order('final_score', { ascending: false, nullsFirst: false })
       .order('published_at', { ascending: false, nullsFirst: false })
   } else {
-    query = query.order('published_at', { ascending: false })
+    query = query.order(sortByTime, { ascending: false, nullsFirst: false })
   }
 
   if (category)               query = query.eq('category', category)

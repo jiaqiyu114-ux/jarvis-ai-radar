@@ -38,6 +38,7 @@ function mapDbItem(item: DbItemWithSource): InformationItem {
     source:      sourceName,
     sourceTier:  toSourceTier(rawTier),
     publishedAt: item.published_at,
+    fetchedAt:   item.fetched_at,
     category:    toCategory(item.category),
     tags:        item.tags ?? [],
     finalScore:  item.final_score,
@@ -192,11 +193,18 @@ export const dashboardStats: DashboardStats    = mockStats
  * Pass { includeDemo: true } to include all items (for debugging / preview).
  * Items without the data_origin column (pre-migration rows) pass through as-is.
  */
-export async function getFeedItems(opts?: { includeDemo?: boolean }): Promise<InformationItem[]> {
+export async function getFeedItems(opts?: {
+  includeDemo?: boolean
+  sortBy?:      'score' | 'time'
+  limit?:       number
+}): Promise<InformationItem[]> {
   const includeDemo = opts?.includeDemo ?? false
   if (shouldUseDatabase()) {
-    // Sort by final_score desc so highest-quality items appear first in the feed
-    const rows = await listItemsWithSource({ sortByScore: true })
+    const rows = await listItemsWithSource({
+      sortByScore: opts?.sortBy !== 'time',
+      sortByTime:  opts?.sortBy === 'time' ? 'fetched_at' : 'published_at',
+      limit:       opts?.limit,
+    })
     const relevant = includeDemo
       ? rows
       : rows.filter(r => {

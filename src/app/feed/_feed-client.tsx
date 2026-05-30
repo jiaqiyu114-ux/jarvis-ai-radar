@@ -24,7 +24,7 @@ export default function FeedClient({
   const [search, setSearch]                   = useState('')
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null)
   const [selectedTier, setSelectedTier]         = useState<SourceTier | null>(null)
-  const [sortBy, setSortBy]                     = useState<'time' | 'score'>('score')
+  const [sortBy, setSortBy]                     = useState<'time' | 'score'>('time')
 
   const filtered = items
     .filter(item => {
@@ -36,7 +36,7 @@ export default function FeedClient({
     .sort((a, b) =>
       sortBy === 'score'
         ? b.finalScore - a.finalScore
-        : new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
+        : new Date(b.fetchedAt ?? b.publishedAt).getTime() - new Date(a.fetchedAt ?? a.publishedAt).getTime()
     )
 
   return (
@@ -45,9 +45,9 @@ export default function FeedClient({
 
         {/* ── Header ── */}
         <div className="mb-5">
-          <p className="page-kicker mb-1">Full Feed</p>
+          <p className="page-kicker mb-1">Captured Timeline</p>
           <div className="flex items-end justify-between gap-4">
-            <h1 className="editorial-title text-3xl">全量流</h1>
+            <h1 className="editorial-title text-3xl">全量捕捉流</h1>
             <div className="flex items-center gap-3 pb-0.5">
               {mode === 'all' ? (
                 <span className="text-[10px] text-warning border border-warning/30 bg-warning/10 rounded px-1.5 py-0.5">
@@ -61,6 +61,9 @@ export default function FeedClient({
               <p className="meta-text">{items.length} 条</p>
             </div>
           </div>
+          <p className="page-subtitle mt-1.5">
+            系统按时间捕捉到的原始信息，不代表全部都值得阅读。
+          </p>
         </div>
 
         {/* ── Filter bar ── */}

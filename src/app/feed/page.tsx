@@ -8,7 +8,7 @@ export default async function FeedPage({
 }) {
   const sp          = await searchParams
   const includeDemo = sp.includeDemo === 'true' || sp.mode === 'all'
-  const items       = await getFeedItems({ includeDemo })
+  const items       = await getFeedItems({ includeDemo, sortBy: 'time', limit: 50 })
   const topSignal   = items[0]
     ? { score: items[0].finalScore, title: items[0].title, category: items[0].category }
     : undefined

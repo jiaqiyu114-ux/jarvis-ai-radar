@@ -155,6 +155,7 @@ export interface InformationItem {
   source: string
   sourceTier: SourceTier
   publishedAt: string
+  fetchedAt?: string | null
   category: Category
   tags: string[]
   finalScore: number
