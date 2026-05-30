@@ -15,25 +15,44 @@ const TRACKING_QUERY_KEYS = new Set([
 ])
 
 const ENTITY_PATTERNS: Array<{ token: string; pattern: RegExp }> = [
-  { token: 'openai', pattern: /\bopenai\b/i },
-  { token: 'anthropic', pattern: /\banthropic\b/i },
-  { token: 'claude', pattern: /\bclaude\b/i },
-  { token: 'opus', pattern: /\bopus\b/i },
-  { token: 'gemini', pattern: /\bgemini\b/i },
-  { token: 'google', pattern: /\bgoogle\b/i },
-  { token: 'meta', pattern: /\bmeta\b/i },
-  { token: 'apple', pattern: /\bapple\b/i },
-  { token: 'microsoft', pattern: /\bmicrosoft\b/i },
+  // AI labs / major tech companies
+  { token: 'openai',     pattern: /\bopenai\b/i },
+  { token: 'anthropic',  pattern: /\banthropic\b/i },
+  { token: 'claude',     pattern: /\bclaude\b/i },
+  { token: 'opus',       pattern: /\bopus\b/i },
+  { token: 'gemini',     pattern: /\bgemini\b/i },
+  { token: 'google',     pattern: /\bgoogle\b/i },
+  { token: 'meta',       pattern: /\bmeta\b/i },
+  { token: 'apple',      pattern: /\bapple\b/i },
+  { token: 'microsoft',  pattern: /\bmicrosoft\b/i },
   { token: 'perplexity', pattern: /\bperplexity\b/i },
-  { token: 'aws', pattern: /\baws\b|amazon web services/i },
+  { token: 'aws',        pattern: /\baws\b|amazon web services/i },
   { token: 'cloudflare', pattern: /\bcloudflare\b/i },
-  { token: 'nvidia', pattern: /\bnvidia\b/i },
-  { token: 'replit', pattern: /\breplit\b/i },
-  { token: 'stackai', pattern: /\bstackai\b/i },
-  { token: 'sesame', pattern: /\bsesame\b/i },
-  { token: 'cnn', pattern: /\bcnn\b/i },
-  { token: 'agent', pattern: /\bai\s+agent(s)?\b|\bagent(s)?\b/i },
-  { token: 'model', pattern: /\b(gpt[\w-]*|claude[\w-]*|gemini[\w-]*|llama[\w-]*|qwen[\w-]*|deepseek[\w-]*)\b/i },
+  { token: 'nvidia',     pattern: /\bnvidia\b/i },
+  { token: 'amd',        pattern: /\bamd\b/i },
+  { token: 'intel',      pattern: /\bintel\b/i },
+  { token: 'tesla',      pattern: /\btesla\b/i },
+  { token: 'xai',        pattern: /\bxai\b|\bx\.ai\b/i },
+  { token: 'grok',       pattern: /\bgrok\b/i },
+  { token: 'mistral',    pattern: /\bmistral\b/i },
+  { token: 'deepseek',   pattern: /\bdeepseek\b/i },
+  { token: 'huggingface',pattern: /hugging\s*face/i },
+  { token: 'salesforce', pattern: /\bsalesforce\b/i },
+  { token: 'oracle',     pattern: /\boracle\b/i },
+  // AI-focused startups / products
+  { token: 'replit',     pattern: /\breplit\b/i },
+  { token: 'cursor',     pattern: /\bcursor\b/i },
+  { token: 'windsurf',   pattern: /\bwindsurf\b/i },
+  { token: 'stackai',    pattern: /\bstackai\b|stack\s+ai/i },
+  { token: 'sesame',     pattern: /\bsesame\b/i },
+  { token: 'asana',      pattern: /\basana\b/i },
+  { token: 'visa',       pattern: /\bvisa\b/i },
+  { token: 'github',     pattern: /\bgithub\b/i },
+  { token: 'openrouter', pattern: /\bopenrouter\b/i },
+  { token: 'aihot',      pattern: /\baihot\b/i },
+  // Generic model/agent patterns
+  { token: 'agent',      pattern: /\bai\s+agent(s)?\b/i },
+  { token: 'model',      pattern: /\b(gpt[\w-]*|claude[\w-]*|gemini[\w-]*|llama[\w-]*|qwen[\w-]*|deepseek[\w-]*)\b/i },
 ]
 
 const TIER_WEIGHT: Record<string, number> = {
@@ -112,12 +131,30 @@ type WorkingCluster = {
 
 function decodeHtmlEntities(input: string): string {
   return input
+    // Named entities
     .replace(/&amp;/gi, '&')
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
     .replace(/&#39;/gi, "'")
     .replace(/&nbsp;/gi, ' ')
+    .replace(/&mdash;/gi, '—')
+    .replace(/&ndash;/gi, '–')
+    .replace(/&rsquo;/gi, '’')
+    .replace(/&lsquo;/gi, '‘')
+    .replace(/&rdquo;/gi, '”')
+    .replace(/&ldquo;/gi, '“')
+    // Decimal numeric entities &#NNN;
+    .replace(/&#(\d{1,6});/g, (_, code) => {
+      const n = parseInt(code, 10)
+      try { return String.fromCodePoint(n) } catch { return '' }
+    })
+    // Hex numeric entities &#xHHHH;
+    .replace(/&#x([0-9a-fA-F]{1,6});/g, (_, hex) => {
+      const n = parseInt(hex, 16)
+      try { return String.fromCodePoint(n) } catch { return '' }
+    })
 }
 
 function normalizeSpaces(input: string): string {
@@ -274,7 +311,7 @@ function confidenceFromCluster(cluster: WorkingCluster): number {
   if (cluster.sourceIds.size >= 2) score += 10
   if (spanHours <= 24) score += 5
 
-  if (cluster.items.length === 1) score = Math.min(score, 35)
+  if (cluster.items.length === 1) score = Math.min(score, 20)
   else if (cluster.sourceIds.size === 1) score = Math.min(score, 55)
 
   return clampInt(score, 0, 100)
@@ -490,13 +527,19 @@ export function buildEventClusters(
     const clusterKey = buildClusterKey(cluster)
 
     const summary = (primary.summary ?? '').trim() || null
-    const title = primary.title.trim()
+    // Decode HTML entities in title before storing
+    const title = decodeHtmlEntities(primary.title.trim()).replace(/\s+/g, ' ').trim()
 
-    const matchReason = cluster.urlMatchCount > 0
-      ? 'URL 规范化后一致，事件链路清晰'
-      : cluster.maxSharedEntityCount >= 2
-        ? `共享核心实体，标题相似度 ${clampInt(cluster.maxTitleSimilarity * 100, 0, 100)}%`
-        : `标题相似度 ${clampInt(cluster.maxTitleSimilarity * 100, 0, 100)}%`
+    let matchReason: string
+    if (itemCount === 1) {
+      matchReason = '单条观察，尚未形成多源事件'
+    } else if (cluster.urlMatchCount > 0) {
+      matchReason = 'URL 规范化后一致，事件链路清晰'
+    } else if (cluster.maxSharedEntityCount >= 2) {
+      matchReason = `共享核心实体，标题相似度 ${clampInt(cluster.maxTitleSimilarity * 100, 0, 100)}%`
+    } else {
+      matchReason = `标题相似度 ${clampInt(cluster.maxTitleSimilarity * 100, 0, 100)}%`
+    }
 
     const firstSeenAt = cluster.firstSeenMs > 0 ? new Date(cluster.firstSeenMs).toISOString() : null
     const lastSeenAt = cluster.lastSeenMs > 0 ? new Date(cluster.lastSeenMs).toISOString() : null

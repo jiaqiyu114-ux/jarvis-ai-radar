@@ -15,15 +15,7 @@ import type {
 
 const DEFAULT_WINDOW_HOURS = 168
 const DEFAULT_LIMIT = 300
-const MAX_LIMIT = 500
-
-const CANDIDATE_OR = [
-  'should_enter_daily_report.eq.true',
-  'final_score.gte.75',
-  'analysis_tier.in.(standard,deep,cluster)',
-  'ev_score.gte.55',
-  'truth_score.gte.55',
-].join(',')
+const MAX_LIMIT = 1000
 
 const CANDIDATE_SELECT = [
   'id',
@@ -305,12 +297,14 @@ async function fetchClusterItems(clusterIds: string[]): Promise<ClusterItemJoinR
 async function fetchCandidateItems(windowStartIso: string, limit: number): Promise<EventClusterInputItem[]> {
   if (!supabaseServer) return []
 
+  // Scan ALL real items in the window — no quality gate here.
+  // The clustering algorithm handles prioritization via confidence scoring.
   const { data, error } = await supabaseServer
     .from('items')
     .select(CANDIDATE_SELECT)
     .eq('data_origin', 'real')
     .gte('fetched_at', windowStartIso)
-    .or(CANDIDATE_OR)
+    .not('title', 'is', null)
     .order('fetched_at', { ascending: false, nullsFirst: false })
     .order('final_score', { ascending: false, nullsFirst: false })
     .limit(limit)

@@ -9,6 +9,7 @@ type ItemCluster = {
   title: string
   status: string
   itemCount: number
+  sourceCount: number
   confidence: number
 }
 
@@ -20,6 +21,7 @@ type ItemClusterResponse = {
     title: string
     status: string
     itemCount: number
+    sourceCount: number
     confidence: number
   }>
   error?: string
@@ -56,6 +58,7 @@ export function ItemClusterLink({ itemId }: { itemId: string }) {
           title: cluster.title,
           status: cluster.status,
           itemCount: cluster.itemCount,
+          sourceCount: cluster.sourceCount ?? 1,
           confidence: cluster.confidence,
         }))
         setClusters(mapped)
@@ -92,12 +95,25 @@ export function ItemClusterLink({ itemId }: { itemId: string }) {
   }
 
   const primary = clusters[0]
+  const isSingleItem = primary.itemCount <= 1
+  const isMultiSource = primary.sourceCount >= 2
+
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0">
         <p className="text-xs text-foreground/85 line-clamp-2">
-          所属事件簇：{primary.title}
+          {isSingleItem ? '单条观察簇：' : '所属事件簇：'}{primary.title}
         </p>
+        {isSingleItem && (
+          <p className="mt-1 text-[10px] text-muted-foreground/70 italic">
+            当前为单条观察，尚未形成多源事件。
+          </p>
+        )}
+        {!isSingleItem && isMultiSource && (
+          <p className="mt-1 text-[10px] text-success/80">
+            已形成多来源事件，可查看时间线。
+          </p>
+        )}
         <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
           <span className={cn("text-[10px] px-1.5 py-0.5 rounded border", statusClass(primary.status))}>
             {primary.status}
@@ -118,7 +134,7 @@ export function ItemClusterLink({ itemId }: { itemId: string }) {
         href={`/clusters/${primary.id}`}
         className="shrink-0 text-[10px] text-primary border border-primary/20 bg-primary/5 hover:bg-primary/12 rounded px-2 py-1 transition-colors font-medium whitespace-nowrap"
       >
-        查看事件时间线 →
+        {isSingleItem ? '查看观察记录 →' : '查看事件时间线 →'}
       </Link>
     </div>
   )

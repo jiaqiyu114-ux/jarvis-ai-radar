@@ -79,6 +79,19 @@ function ClusterCard({ cluster }: { cluster: EventClusterListItem }) {
         <span className={cn("rounded border px-1.5 py-0.5 text-[10px] font-medium", statusClass(cluster.status))}>
           {statusLabel(cluster.status)}
         </span>
+        {cluster.itemCount <= 1 ? (
+          <span className="rounded border border-muted-foreground/25 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            单条观察
+          </span>
+        ) : cluster.sourceCount >= 2 ? (
+          <span className="rounded border border-success/25 bg-success/8 px-1.5 py-0.5 text-[10px] text-success">
+            多来源跟进
+          </span>
+        ) : (
+          <span className="rounded border border-sky-400/25 bg-sky-400/8 px-1.5 py-0.5 text-[10px] text-sky-500">
+            多条信息
+          </span>
+        )}
         <span className="rounded border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
           items {cluster.itemCount}
         </span>
@@ -172,23 +185,26 @@ export default function ClustersClient({
   const [running, setRunning] = useState<"dry" | "write" | null>(null)
   const [lastResult, setLastResult] = useState<GenerateResponse | null>(null)
 
-  const filteredClusters = useMemo(() => (
-    statusFilter === "all"
-      ? clusters
-      : clusters.filter(cluster => cluster.status === statusFilter)
-  ), [clusters, statusFilter])
+  const filteredClusters = useMemo(() => {
+    if (statusFilter === "all") return clusters
+    if (statusFilter === "multi_source") return clusters.filter(c => c.sourceCount >= 2 || c.itemCount >= 2)
+    if (statusFilter === "single") return clusters.filter(c => c.itemCount <= 1)
+    return clusters.filter(cluster => cluster.status === statusFilter)
+  }, [clusters, statusFilter])
 
   const stats = useMemo(() => {
-    const source = filteredClusters
+    // Always use full cluster list for stats (not filtered)
+    const source = clusters
     return {
-      total: source.length,
-      active: source.filter(cluster => cluster.status === "active").length,
-      watching: source.filter(cluster => cluster.status === "watching").length,
-      cooling: source.filter(cluster => cluster.status === "cooling").length,
-      relatedItems: source.reduce((sum, cluster) => sum + cluster.itemCount, 0),
-      multiSource: source.filter(cluster => cluster.sourceCount >= 2).length,
+      total:       source.length,
+      active:      source.filter(c => c.status === "active").length,
+      watching:    source.filter(c => c.status === "watching").length,
+      cooling:     source.filter(c => c.status === "cooling").length,
+      relatedItems:source.reduce((sum, c) => sum + c.itemCount, 0),
+      multiSource: source.filter(c => c.sourceCount >= 2 || c.itemCount >= 2).length,
+      singleItem:  source.filter(c => c.itemCount <= 1).length,
     }
-  }, [filteredClusters])
+  }, [clusters])
 
   async function runGenerate(dryRun: boolean) {
     if (running) return
@@ -241,30 +257,34 @@ export default function ClustersClient({
           </div>
         )}
 
-        <div className="mb-5 grid grid-cols-6 gap-3">
+        <div className="mb-5 grid grid-cols-7 gap-3">
           <div className="rounded border border-border bg-card px-3 py-2.5">
-            <p className="muted-label mb-1">事件簇总数</p>
+            <p className="muted-label mb-1">总计</p>
             <p className="text-2xl font-mono font-semibold tabular-nums">{stats.total}</p>
           </div>
           <div className="rounded border border-border bg-card px-3 py-2.5">
             <p className="muted-label mb-1">active</p>
-            <p className="text-2xl font-mono font-semibold tabular-nums">{stats.active}</p>
+            <p className="text-2xl font-mono font-semibold tabular-nums text-success">{stats.active}</p>
           </div>
           <div className="rounded border border-border bg-card px-3 py-2.5">
             <p className="muted-label mb-1">watching</p>
-            <p className="text-2xl font-mono font-semibold tabular-nums">{stats.watching}</p>
+            <p className="text-2xl font-mono font-semibold tabular-nums text-primary">{stats.watching}</p>
           </div>
           <div className="rounded border border-border bg-card px-3 py-2.5">
             <p className="muted-label mb-1">cooling</p>
-            <p className="text-2xl font-mono font-semibold tabular-nums">{stats.cooling}</p>
+            <p className="text-2xl font-mono font-semibold tabular-nums text-warning">{stats.cooling}</p>
           </div>
           <div className="rounded border border-border bg-card px-3 py-2.5">
-            <p className="muted-label mb-1">相关信息总数</p>
-            <p className="text-2xl font-mono font-semibold tabular-nums">{stats.relatedItems}</p>
-          </div>
-          <div className="rounded border border-border bg-card px-3 py-2.5">
-            <p className="muted-label mb-1">多来源事件</p>
+            <p className="muted-label mb-1">多来源/多条</p>
             <p className="text-2xl font-mono font-semibold tabular-nums">{stats.multiSource}</p>
+          </div>
+          <div className="rounded border border-border bg-card px-3 py-2.5">
+            <p className="muted-label mb-1">单条观察</p>
+            <p className="text-2xl font-mono font-semibold tabular-nums text-muted-foreground">{stats.singleItem}</p>
+          </div>
+          <div className="rounded border border-border bg-card px-3 py-2.5">
+            <p className="muted-label mb-1">相关信息</p>
+            <p className="text-2xl font-mono font-semibold tabular-nums">{stats.relatedItems}</p>
           </div>
         </div>
 
@@ -292,9 +312,11 @@ export default function ClustersClient({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">全部</SelectItem>
+                  <SelectItem value="multi_source">多来源/多条</SelectItem>
                   <SelectItem value="active">active</SelectItem>
                   <SelectItem value="watching">watching</SelectItem>
                   <SelectItem value="cooling">cooling</SelectItem>
+                  <SelectItem value="single">单条观察</SelectItem>
                 </SelectContent>
               </Select>
             </div>

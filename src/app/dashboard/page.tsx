@@ -138,9 +138,14 @@ export default async function DashboardPage() {
 
   let eventClusters: EventClusterListItem[] = []
   try {
-    const result = await listEventClusters({ limit: 8, includeItems: false })
+    const result = await listEventClusters({ limit: 20, includeItems: false })
+    // Only show clusters with real multi-item/multi-source signal
+    // confidence > 20 is above the single-item cap (max 20), indicating ≥2 items or URL match
     eventClusters = result.clusters
-      .filter(cluster => cluster.status === "active" || cluster.status === "watching")
+      .filter(cluster =>
+        (cluster.status === "active" || cluster.status === "watching") &&
+        (cluster.confidence > 20 || cluster.itemCount >= 2 || cluster.sourceCount >= 2)
+      )
       .slice(0, 5)
   } catch {
     eventClusters = []
@@ -309,8 +314,8 @@ export default async function DashboardPage() {
               items={highScoreReference}
             />
             <ClusterSideSection
-              title="事件候选"
-              empty="暂无真实事件候选"
+              title="多源事件候选"
+              empty="暂无多源事件候选（单条观察簇不在此展示）"
               clusters={eventClusters}
             />
             <SideSection
