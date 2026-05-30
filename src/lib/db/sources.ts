@@ -265,41 +265,106 @@ export async function listRssSourcesWithHealth(): Promise<DbSource[]> {
   return data ?? []
 }
 
+// ── Health score helpers ──────────────────────────────────────────────────────
+
+function nextHealthScore(current: number | null, success: boolean, latencyMs?: number): number {
+  let score = current ?? 50
+  if (success) {
+    score = Math.min(100, score + 10)
+    if (latencyMs !== undefined && latencyMs > 8000) score = Math.max(0, score - 5)
+  } else {
+    score = Math.max(0, score - 15)
+  }
+  return Math.round(score)
+}
+
+function healthStatusFromFailures(failureCount: number, isBlocked: boolean): string {
+  if (isBlocked)          return 'blocked'
+  if (failureCount === 0) return 'healthy'
+  if (failureCount <= 2)  return 'degraded'
+  return 'failing'
+}
+
+// ── Insert fetch log ──────────────────────────────────────────────────────────
+
+type FetchLogPayload = {
+  sourceId?:      string
+  sourceName?:    string
+  feedUrl?:       string
+  success:        boolean
+  httpStatus?:    number
+  latencyMs?:     number
+  errorStage?:    string
+  errorMessage?:  string
+  itemsFound?:    number
+  itemsInserted?: number
+  itemsSkipped?:  number
+}
+
+export async function insertFetchLog(payload: FetchLogPayload): Promise<void> {
+  if (!isServerSupabaseConfigured || !supabaseServer) return
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabaseServer as any).from('rss_source_fetch_logs').insert({
+    source_id:      payload.sourceId ?? null,
+    source_name:    payload.sourceName ?? null,
+    feed_url:       payload.feedUrl ?? null,
+    success:        payload.success,
+    http_status:    payload.httpStatus ?? null,
+    latency_ms:     payload.latencyMs ?? null,
+    error_stage:    payload.errorStage ?? null,
+    error_message:  payload.errorMessage ?? null,
+    items_found:    payload.itemsFound ?? 0,
+    items_inserted: payload.itemsInserted ?? 0,
+    items_skipped:  payload.itemsSkipped ?? 0,
+  })
+  if (error) {
+    // Log write failure is non-fatal — don't rethrow
+    console.error('[db/sources] insertFetchLog:', error.message)
+  }
+}
+
 /**
- * Records a successful fetch for a source.
- * Resets failure_count, updates health_status to 'healthy', records latency.
+ * Records a successful fetch for a source. (v2)
+ * Resets failure_count; updates health_status, health_score, counters, latency.
  * Throws on DB error so callers can catch and log without blocking main flow.
  */
 export async function updateSourceFetchSuccess(
-  sourceId:  string,
+  sourceId:   string,
   latencyMs?: number,
+  httpStatus?: number,
 ): Promise<void> {
   if (!isServerSupabaseConfigured || !supabaseServer) return
 
-  let newAvg: number | null = null
-  if (latencyMs !== undefined) {
-    const { data: cur } = await supabaseServer
-      .from('sources')
-      .select('avg_latency_ms')
-      .eq('id', sourceId)
-      .single()
-    const existing = cur?.avg_latency_ms ?? null
-    newAvg = existing === null
-      ? latencyMs
-      : Math.round(existing * 0.7 + latencyMs * 0.3)
-  }
+  const { data: cur } = await supabaseServer
+    .from('sources')
+    .select('avg_latency_ms, total_fetch_count, successful_fetch_count, health_score')
+    .eq('id', sourceId)
+    .single()
 
-  const now = new Date().toISOString()
+  const existing      = (cur?.avg_latency_ms as number | null) ?? null
+  const newAvg        = latencyMs !== undefined
+    ? (existing === null ? latencyMs : Math.round(existing * 0.7 + latencyMs * 0.3))
+    : null
+  const currentScore  = (cur?.health_score as number | null) ?? 50
+  const newScore      = nextHealthScore(currentScore, true, latencyMs)
+  const now           = new Date().toISOString()
+
   const { error } = await supabaseServer
     .from('sources')
     .update({
-      health_status:      'healthy',
-      failure_count:      0,
-      last_fetch_at:      now,
-      last_success_at:    now,
-      last_error_message: null,
-      ...(latencyMs !== undefined && { last_latency_ms: latencyMs }),
-      ...(newAvg !== null      && { avg_latency_ms: newAvg }),
+      health_status:          'healthy',
+      health_score:           newScore,
+      failure_count:          0,
+      last_fetch_at:          now,
+      last_success_at:        now,
+      last_fetch_status:      'success',
+      last_fetch_error_stage: null,
+      last_error_message:     null,
+      total_fetch_count:      ((cur?.total_fetch_count as number | null) ?? 0) + 1,
+      successful_fetch_count: ((cur?.successful_fetch_count as number | null) ?? 0) + 1,
+      ...(latencyMs  !== undefined && { last_latency_ms:  latencyMs }),
+      ...(newAvg     !== null      && { avg_latency_ms:   newAvg }),
+      ...(httpStatus !== undefined && { last_http_status: httpStatus }),
     })
     .eq('id', sourceId)
 
@@ -310,52 +375,57 @@ export async function updateSourceFetchSuccess(
 }
 
 /**
- * Records a failed fetch for a source.
- * Increments failure_count, sets health_status to 'degraded' (or 'blocked' if
- * the source is already marked blocked), records error info.
+ * Records a failed fetch for a source. (v2)
+ * Increments failure_count, updates health_status/score, classifies error.
  * Throws on DB error so callers can catch and log without blocking main flow.
  */
 export async function updateSourceFetchFailure(
   sourceId:     string,
   errorMessage: string,
-  latencyMs?:   number,
-  httpStatus?:  number,
+  opts?: {
+    latencyMs?:  number
+    httpStatus?: number
+    errorStage?: 'fetch' | 'parse' | 'persist' | 'health_update'
+  },
 ): Promise<void> {
   if (!isServerSupabaseConfigured || !supabaseServer) return
 
   const { data: cur } = await supabaseServer
     .from('sources')
-    .select('failure_count, avg_latency_ms, is_blocked')
+    .select('failure_count, avg_latency_ms, is_blocked, total_fetch_count, failed_fetch_count, health_score')
     .eq('id', sourceId)
     .single()
 
-  const currentFailures = cur?.failure_count ?? 0
-  const isBlocked       = cur?.is_blocked    ?? false
+  const currentFailures = (cur?.failure_count as number | null) ?? 0
+  const isBlocked       = (cur?.is_blocked as boolean | null) ?? false
   const newFailureCount = currentFailures + 1
+  const currentScore    = (cur?.health_score as number | null) ?? 50
+  const newScore        = nextHealthScore(currentScore, false, opts?.latencyMs)
+  const newHealthStatus = healthStatusFromFailures(newFailureCount, isBlocked)
 
-  let newAvg: number | null = null
-  if (latencyMs !== undefined) {
-    const existing = cur?.avg_latency_ms ?? null
-    newAvg = existing === null
-      ? latencyMs
-      : Math.round(existing * 0.7 + latencyMs * 0.3)
-  }
-
-  const newHealthStatus = isBlocked ? 'blocked' : 'degraded'
-  const truncated       = errorMessage.slice(0, 500)
-  const now             = new Date().toISOString()
+  const existing = (cur?.avg_latency_ms as number | null) ?? null
+  const newAvg   = opts?.latencyMs !== undefined
+    ? (existing === null ? opts.latencyMs : Math.round(existing * 0.7 + opts.latencyMs * 0.3))
+    : null
+  const truncated = errorMessage.slice(0, 500)
+  const now       = new Date().toISOString()
 
   const { error } = await supabaseServer
     .from('sources')
     .update({
-      health_status:      newHealthStatus,
-      failure_count:      newFailureCount,
-      last_fetch_at:      now,
-      last_error_at:      now,
-      last_error_message: truncated,
-      ...(latencyMs  !== undefined && { last_latency_ms:  latencyMs }),
-      ...(newAvg     !== null      && { avg_latency_ms:   newAvg }),
-      ...(httpStatus !== undefined && { last_http_status: httpStatus }),
+      health_status:          newHealthStatus,
+      health_score:           newScore,
+      failure_count:          newFailureCount,
+      last_fetch_at:          now,
+      last_error_at:          now,
+      last_fetch_status:      'failed',
+      last_fetch_error_stage: opts?.errorStage ?? 'fetch',
+      last_error_message:     truncated,
+      total_fetch_count:      ((cur?.total_fetch_count as number | null) ?? 0) + 1,
+      failed_fetch_count:     ((cur?.failed_fetch_count as number | null) ?? 0) + 1,
+      ...(opts?.latencyMs  !== undefined && { last_latency_ms:  opts.latencyMs }),
+      ...(newAvg           !== null      && { avg_latency_ms:   newAvg }),
+      ...(opts?.httpStatus !== undefined && { last_http_status: opts.httpStatus }),
     })
     .eq('id', sourceId)
 

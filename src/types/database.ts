@@ -20,7 +20,7 @@
 
 export type DbSourceTier = 'S' | 'A' | 'B' | 'C' | 'D'
 
-export type SourceHealthStatus = 'unknown' | 'healthy' | 'degraded' | 'blocked'
+export type SourceHealthStatus = 'unknown' | 'healthy' | 'degraded' | 'failing' | 'blocked'
 
 export type DataOrigin = 'real' | 'demo' | 'seed' | 'mock' | 'unknown'
 
@@ -81,6 +81,13 @@ export type DbSource = {
   last_latency_ms:   number | null
   last_http_status:  number | null
   disabled_reason:   string | null
+  // RSS Source Health v2 fields
+  last_fetch_status:      string | null
+  last_fetch_error_stage: string | null
+  total_fetch_count:      number
+  successful_fetch_count: number
+  failed_fetch_count:     number
+  health_score:           number
 }
 
 export type DbSourceInsert = {
@@ -112,6 +119,13 @@ export type DbSourceUpdate = Partial<Omit<DbSourceInsert, 'url'>> & {
   last_latency_ms?:   number | null
   last_http_status?:  number | null
   disabled_reason?:   string | null
+  // RSS Source Health v2
+  last_fetch_status?:      string | null
+  last_fetch_error_stage?: string | null
+  total_fetch_count?:      number
+  successful_fetch_count?: number
+  failed_fetch_count?:     number
+  health_score?:           number | null
 }
 
 // ── items ─────────────────────────────────────────────────────────────────────

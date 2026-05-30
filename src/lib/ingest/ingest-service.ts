@@ -139,7 +139,8 @@ export async function runMockProviderIngest(opts?: { dryRun?: boolean }): Promis
 // ── RSS provider ingest ───────────────────────────────────────────────────────
 
 export type RssDryRunResult = {
-  ok:                  boolean   // false when all feeds failed; true if at least one item was fetched
+  ok:                  boolean
+  runStatus:           'full_success' | 'partial_success' | 'full_failure'
   mode:                'dry-run'
   provider:            string
   fetched:             number
@@ -162,6 +163,7 @@ export type RssDryRunResult = {
 }
 
 export type RssWriteResult = import('./persist').PersistResult & {
+  runStatus:           'full_success' | 'partial_success' | 'full_failure'
   feedErrors:          FeedError[]
   itemErrors:          ItemError[]
   sourceMode:          'database' | 'fallback'
@@ -198,9 +200,13 @@ export async function runRssProviderIngest(opts?: { dryRun?: boolean; recordHeal
 
     // ok=false only when there were feeds to process but ALL of them failed
     const ok = unique.length > 0 || feedErrors.length === 0
+    const runStatus = feedErrors.length === 0 ? 'full_success'
+      : unique.length > 0 ? 'partial_success'
+      : 'full_failure'
 
     return {
       ok,
+      runStatus,
       mode:                'dry-run',
       provider:            RssProviderAdapter.provider.name,
       fetched:             raw.length,
@@ -229,5 +235,8 @@ export async function runRssProviderIngest(opts?: { dryRun?: boolean; recordHeal
     RssProviderAdapter.provider,
   )
 
-  return { ...persistResult, feedErrors, itemErrors, sourceMode, sourceCount, sourceLoadDebug, sourceHealthSummary }
+  const writeRunStatus = feedErrors.length === 0 ? 'full_success'
+    : persistResult.insertedItems > 0 ? 'partial_success'
+    : 'full_failure'
+  return { ...persistResult, runStatus: writeRunStatus, feedErrors, itemErrors, sourceMode, sourceCount, sourceLoadDebug, sourceHealthSummary }
 }

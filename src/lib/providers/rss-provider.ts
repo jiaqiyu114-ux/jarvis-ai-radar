@@ -12,7 +12,7 @@
  * inside ingestNormalizedItemsToDatabase to look up or create the source row.
  */
 
-import { listRssSourcesWithDiag, updateSourceFetchSuccess, updateSourceFetchFailure } from '@/lib/db/sources'
+import { listRssSourcesWithDiag, updateSourceFetchSuccess, updateSourceFetchFailure, insertFetchLog } from '@/lib/db/sources'
 import type { RssSourceLoadResult } from '@/lib/db/sources'
 import { fetchRssFeed, parseRssFeed } from '@/lib/ingest/rss'
 import { canonicalizeUrl, normalizeTitle } from '@/lib/ingest/normalize'
@@ -88,21 +88,49 @@ export type SourceLoadDebug = {
 }
 
 export type PerSourceHealth = {
-  id?:           string
-  name:          string
-  url:           string
-  success:       boolean
-  latencyMs?:    number
-  httpStatus?:   number
-  errorMessage?: string
+  id?:                     string
+  name:                    string
+  url:                     string
+  success:                 boolean
+  latencyMs?:              number
+  httpStatus?:             number
+  errorStage?:             'fetch' | 'parse' | 'persist' | 'health_update'
+  errorClass?:             'timeout' | 'aborted' | 'http_error' | 'parse_error' | 'db_error' | 'unknown'
+  errorMessage?:           string
+  itemsFound?:             number
+  itemsInserted?:          number
+  itemsSkipped?:           number
+  healthStatus?:           string
+  healthScore?:            number
 }
 
 export type SourceHealthSummary = {
   total:            number
   succeededThisRun: number
   failedThisRun:    number
+  healthy:          number
+  degraded:         number
+  failing:          number
+  unknown:          number
   perSource:        PerSourceHealth[]
 }
+
+// ── Error classification ──────────────────────────────────────────────────────
+
+type ErrorClass = 'timeout' | 'aborted' | 'http_error' | 'parse_error' | 'db_error' | 'unknown'
+
+function classifyFetchError(err: unknown, httpStatus?: number): ErrorClass {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  if (msg.includes('timeout') || msg.includes('aborted') || msg.includes('abort')) {
+    // distinguish explicit timeout from generic abort
+    if (msg.includes('timeout')) return 'timeout'
+    return 'aborted'
+  }
+  if (httpStatus !== undefined && httpStatus >= 400) return 'http_error'
+  return 'unknown'
+}
+
+function classifyParseError(): ErrorClass { return 'parse_error' }
 
 export type RssFetchResult = {
   items:               NormalizedIngestItem[]
@@ -244,6 +272,9 @@ export async function fetchRssProviderItems(opts?: {
     const start = Date.now()
     let latencyMs:  number | undefined
     let httpStatus: number | undefined
+    const itemsFound    = 0
+    const itemsInserted = 0
+    const itemsSkipped  = 0
 
     // Stage 1: network fetch with per-source timeout
     let xml: string
@@ -254,36 +285,34 @@ export async function fetchRssProviderItems(opts?: {
       latencyMs  = Date.now() - start
     } catch (err) {
       latencyMs = Date.now() - start
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg        = err instanceof Error ? err.message : String(err)
+      const errClass   = classifyFetchError(err, httpStatus)
+      const shortMsg   = errClass === 'timeout' ? 'timeout'
+        : errClass === 'aborted' ? 'aborted'
+        : msg.slice(0, 300)
 
       feedErrors.push({
         sourceId:   feed.sourceId,
         sourceName: feed.name,
         feedUrl:    feed.feedUrl,
         stage:      'fetch',
-        message:    msg,
+        message:    shortMsg,
         latencyMs,
         httpStatus,
       })
 
       if (recordHealth && feed.sourceId) {
         try {
-          await updateSourceFetchFailure(feed.sourceId, msg, latencyMs, httpStatus)
+          await updateSourceFetchFailure(feed.sourceId, shortMsg, { latencyMs, httpStatus, errorStage: 'fetch' })
         } catch (hErr) {
           const hMsg = hErr instanceof Error ? hErr.message : String(hErr)
-          console.error('[rss-provider] health update (failure) failed for', feed.name, ':', hMsg)
-          feedErrors.push({
-            sourceId:   feed.sourceId,
-            sourceName: feed.name,
-            feedUrl:    feed.feedUrl,
-            stage:      'health_update',
-            message:    hMsg,
-          })
+          console.error('[rss-provider] health update (fetch failure) failed for', feed.name, ':', hMsg)
         }
+        insertFetchLog({ sourceId: feed.sourceId, sourceName: feed.name, feedUrl: feed.feedUrl, success: false, httpStatus, latencyMs, errorStage: 'fetch', errorMessage: shortMsg }).catch(() => {})
       }
 
       failedThisRun++
-      healthPerSource.push({ id: feed.sourceId, name: feed.name, url: feed.feedUrl, success: false, latencyMs, httpStatus, errorMessage: msg })
+      healthPerSource.push({ id: feed.sourceId, name: feed.name, url: feed.feedUrl, success: false, latencyMs, httpStatus, errorStage: 'fetch', errorClass: errClass, errorMessage: shortMsg })
       continue
     }
 
@@ -293,36 +322,31 @@ export async function fetchRssProviderItems(opts?: {
       parsed = parseRssFeed(xml)
     } catch (err) {
       latencyMs = Date.now() - start
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg      = err instanceof Error ? err.message : String(err)
+      const errClass = classifyParseError()
 
       feedErrors.push({
         sourceId:   feed.sourceId,
         sourceName: feed.name,
         feedUrl:    feed.feedUrl,
         stage:      'parse',
-        message:    msg,
+        message:    msg.slice(0, 300),
         latencyMs,
         httpStatus,
       })
 
       if (recordHealth && feed.sourceId) {
         try {
-          await updateSourceFetchFailure(feed.sourceId, msg, latencyMs, httpStatus)
+          await updateSourceFetchFailure(feed.sourceId, msg.slice(0, 300), { latencyMs, httpStatus, errorStage: 'parse' })
         } catch (hErr) {
           const hMsg = hErr instanceof Error ? hErr.message : String(hErr)
           console.error('[rss-provider] health update (parse failure) failed for', feed.name, ':', hMsg)
-          feedErrors.push({
-            sourceId:   feed.sourceId,
-            sourceName: feed.name,
-            feedUrl:    feed.feedUrl,
-            stage:      'health_update',
-            message:    hMsg,
-          })
         }
+        insertFetchLog({ sourceId: feed.sourceId, sourceName: feed.name, feedUrl: feed.feedUrl, success: false, httpStatus, latencyMs, errorStage: 'parse', errorMessage: msg.slice(0, 300) }).catch(() => {})
       }
 
       failedThisRun++
-      healthPerSource.push({ id: feed.sourceId, name: feed.name, url: feed.feedUrl, success: false, latencyMs, httpStatus, errorMessage: msg })
+      healthPerSource.push({ id: feed.sourceId, name: feed.name, url: feed.feedUrl, success: false, latencyMs, httpStatus, errorStage: 'parse', errorClass: errClass, errorMessage: msg.slice(0, 300) })
       continue
     }
 
@@ -331,7 +355,7 @@ export async function fetchRssProviderItems(opts?: {
 
     if (recordHealth && feed.sourceId) {
       try {
-        await updateSourceFetchSuccess(feed.sourceId, latencyMs)
+        await updateSourceFetchSuccess(feed.sourceId, latencyMs, httpStatus)
       } catch (hErr) {
         const hMsg = hErr instanceof Error ? hErr.message : String(hErr)
         console.error('[rss-provider] health update (success) failed for', feed.name, ':', hMsg)
@@ -346,7 +370,7 @@ export async function fetchRssProviderItems(opts?: {
     }
 
     succeededThisRun++
-    healthPerSource.push({ id: feed.sourceId, name: feed.name, url: feed.feedUrl, success: true, latencyMs, httpStatus })
+    healthPerSource.push({ id: feed.sourceId, name: feed.name, url: feed.feedUrl, success: true, latencyMs, httpStatus, itemsFound, itemsInserted, itemsSkipped })
 
     // Stage 3: normalise individual items
     let rank = 0
@@ -383,11 +407,40 @@ export async function fetchRssProviderItems(opts?: {
     }
   }
 
+  // Count healthy/degraded/failing/unknown from DB state after updates
+  // For a lightweight count, derive from perSource results this run
+  const healthCounts = { healthy: 0, degraded: 0, failing: 0, unknown: 0 }
+  if (recordHealth && usingDb) {
+    // Re-read health statuses from DB would be ideal but adds latency.
+    // Approximate from this-run results: succeeded → healthy, failed → degraded/failing based on error count
+    for (const ph of healthPerSource) {
+      if (ph.success) {
+        healthCounts.healthy++
+      } else {
+        // We don't know consecutive count here; use 'degraded' as safe default
+        healthCounts.degraded++
+      }
+    }
+  }
+
   const sourceHealthSummary: SourceHealthSummary = {
     total:            feeds.length,
     succeededThisRun,
     failedThisRun,
+    healthy:          healthCounts.healthy,
+    degraded:         healthCounts.degraded,
+    failing:          healthCounts.failing,
+    unknown:          healthCounts.unknown,
     perSource:        healthPerSource,
+  }
+
+  // Log successful fetches
+  if (recordHealth) {
+    for (const ph of healthPerSource) {
+      if (ph.success && ph.id) {
+        insertFetchLog({ sourceId: ph.id, sourceName: ph.name, feedUrl: ph.url, success: true, httpStatus: ph.httpStatus, latencyMs: ph.latencyMs, itemsFound: ph.itemsFound, itemsInserted: ph.itemsInserted, itemsSkipped: ph.itemsSkipped }).catch(() => {})
+      }
+    }
   }
 
   return { items, feedErrors, itemErrors, sourceMode, sourceCount: feeds.length, sourceLoadDebug, sourceHealthSummary }

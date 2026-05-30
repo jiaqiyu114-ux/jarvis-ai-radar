@@ -71,7 +71,9 @@ export async function POST() {
 
   try {
     const result = await runRssProviderIngest({ dryRun: false, recordHealth: true })
-    const status = result.ok ? 200 : 500
+    // Return 200 for partial success — callers check runStatus + feedErrors for details.
+    // Only return 500 when all sources failed AND no items were processed.
+    const status = (result as { runStatus?: string }).runStatus === 'full_failure' ? 500 : 200
     return NextResponse.json(forResponse(result), { status })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
