@@ -16,7 +16,7 @@ import type { InformationItem, FeedbackAction } from "@/types"
 interface InformationCardProps {
   item: InformationItem
   /** compact: feed default | expanded: detail pre-opened | minimal: narrow columns | emphasis: selected/dashboard */
-  variant?: 'compact' | 'expanded' | 'minimal' | 'emphasis'
+  variant?:  'compact' | 'expanded' | 'minimal' | 'emphasis'
   scoreSize?: 'sm' | 'md'
   onFeedback?: (action: FeedbackAction, itemId: string) => void
 }
@@ -36,35 +36,31 @@ const categoryColors: Record<string, string> = {
 
 export function InformationCard({
   item,
-  variant = 'compact',
+  variant   = 'compact',
   scoreSize = 'sm',
   onFeedback,
 }: InformationCardProps) {
-  // `open` controls the detail dialog.
-  // variant='expanded' pre-opens the dialog (used by cluster detail view).
   const [open, setOpen] = useState(variant === 'expanded')
 
-  // Build score explanation for the folded card chips
   const explanation = buildScoreExplanation(item.scoreBreakdown, item.finalScore, item.penalties)
 
   const timeAgo = formatDistanceToNow(new Date(item.publishedAt), {
     addSuffix: true,
-    locale: zhCN,
+    locale:    zhCN,
   })
 
   const categoryClass = categoryColors[item.category] ?? categoryColors['其他']
   const visibleTags   = item.tags.slice(0, 3)
   const extraTagCount = item.tags.length - 3
 
-  // Driver chips shown in the folded card
   const foldedPositive = explanation.topPositiveDrivers.slice(0, 2)
   const foldedNegative = explanation.topNegativeDrivers
     .filter(d => !d.includes('分惩罚'))
     .slice(0, 1)
 
   /* ──────────────────────────────────────────
-     MINIMAL variant — for narrow columns (dashboard sidebars).
-     Title links to original URL in this compact context.
+     MINIMAL variant — narrow columns (dashboard sidebars).
+     Title is an <a> link in this compact context.
      ────────────────────────────────────────── */
   if (variant === 'minimal') {
     return (
@@ -101,32 +97,34 @@ export function InformationCard({
   /* ──────────────────────────────────────────
      STANDARD variants: compact / emphasis / expanded
 
-     Interaction contract:
-       • Clicking the card background or title (non-interactive area) → opens detail dialog.
-       • Clicking the ExternalLink <a> → navigates to original URL, does NOT open dialog.
-       • Clicking FeedbackAction buttons → action only, does NOT open dialog.
-       • Clicking the chevron button → opens/closes dialog (same as card click).
-       • Title is plain text <span> — the ExternalLink icon is the ONLY external navigation.
+     Layout (two sub-rows inside the same flex container):
 
-     Implementation: outer div checks e.target.closest('a, button') before opening dialog.
+       [Score col] [Content col]
+                   ┣━ <button onClick=openDialog>
+                   ┃    Row 1: TierBadge + Title (span)
+                   ┃    Row 2: Source · Summary
+                   ┃    Row 4: Driver chips
+                   ┗━ Row 3 (div, sibling of button):
+                        Category · Time · ExternalLink · Tags · Feedback · Chevron
+
+     Why this structure:
+       • <button> wraps only the readable content area — the most natural "click here to read".
+       • Row 3 is a sibling div, NOT nested inside the button.
+       • ExternalLink <a> is in Row 3 — no <a> inside <button>.
+       • No nested interactive elements → clean interaction model.
+       • Clicking title / summary / chips → button onClick → setOpen(true).
+       • Clicking ExternalLink → opens original URL in new tab, does NOT open dialog.
+       • Clicking FeedbackActions buttons → action only, does NOT open dialog.
+       • Clicking chevron button → setOpen toggle.
      ────────────────────────────────────────── */
   const isEmphasis = variant === 'emphasis'
 
   return (
     <>
-      {/* ── Card row (list view) ── */}
-      <div
-        className={cn(
-          "group border-b border-border transition-colors hover:bg-accent cursor-pointer",
-          isEmphasis ? "py-3.5 px-4" : "py-2.5 px-4"
-        )}
-        onClick={(e) => {
-          // Skip if user clicked an actual link or button (ExternalLink, FeedbackActions, chevron)
-          const t = e.target as HTMLElement
-          if (!t.closest('a, button')) setOpen(true)
-        }}
-      >
-        <div className="flex items-start gap-3">
+      {/* ── Card list row ── */}
+      <div className="group border-b border-border transition-colors hover:bg-accent">
+
+        <div className={cn("flex items-start gap-3 px-4", isEmphasis ? "pt-3.5" : "pt-2.5")}>
 
           {/* Score column: badge + band label */}
           <div className="flex flex-col items-center gap-0.5 shrink-0">
@@ -139,47 +137,88 @@ export function InformationCard({
             </span>
           </div>
 
-          {/* Content block */}
-          <div className="flex-1 min-w-0 space-y-1">
+          {/* Right column: button area + meta row */}
+          <div className="flex-1 min-w-0">
 
-            {/* Row 1: TierBadge + Title (plain text, NOT a link) */}
-            <div className="flex items-start gap-1.5">
-              <SourceTierBadge tier={item.sourceTier} />
-              <span
-                className={cn(
+            {/* ── Button: the main readable area — clicks open the detail dialog ── */}
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
+              className="w-full text-left space-y-1 cursor-pointer"
+            >
+              {/* Row 1: TierBadge + Title */}
+              <div className="flex items-start gap-1.5">
+                <SourceTierBadge tier={item.sourceTier} />
+                <span className={cn(
                   "flex-1 min-w-0 text-sm text-foreground leading-snug",
                   isEmphasis ? "font-semibold" : "font-medium"
-                )}
-              >
-                {item.title}
-              </span>
-            </div>
+                )}>
+                  {item.title}
+                </span>
+              </div>
 
-            {/* Row 2: Source · Summary */}
-            <p className="text-xs text-muted-foreground line-clamp-1">
-              <span className="text-foreground/65 font-medium">{item.source}</span>
-              {' · '}
-              {item.summary}
-            </p>
+              {/* Row 2: Source · Summary */}
+              <p className="text-xs text-muted-foreground line-clamp-1">
+                <span className="text-foreground/65 font-medium">{item.source}</span>
+                {' · '}
+                {item.summary}
+              </p>
 
-            {/* Row 3: meta + ExternalLink + feedback + chevron */}
-            <div className="flex items-center gap-1.5">
+              {/* Row 4: Driver chips */}
+              {(foldedPositive.length > 0 || foldedNegative.length > 0 || explanation.isRuleBasedOnly) && (
+                <div className="flex flex-wrap items-center gap-1">
+                  {foldedPositive.map(d => (
+                    <span
+                      key={d}
+                      className="text-[10px] px-1.5 py-px rounded border text-success border-success/25 bg-success/8 whitespace-nowrap"
+                    >
+                      ↑ {d}
+                    </span>
+                  ))}
+                  {foldedNegative.map(d => (
+                    <span
+                      key={d}
+                      className="text-[10px] px-1.5 py-px rounded border text-muted-foreground border-border bg-muted/50 whitespace-nowrap"
+                    >
+                      ↓ {d}
+                    </span>
+                  ))}
+                  {foldedPositive.length === 0 && foldedNegative.length === 0 && explanation.isRuleBasedOnly && (
+                    <span className="text-[10px] text-muted-foreground/55 px-1 py-px rounded border border-border/40 whitespace-nowrap">
+                      规则基线
+                    </span>
+                  )}
+                  {(foldedPositive.length > 0 || foldedNegative.length > 0) && explanation.isRuleBasedOnly && (
+                    <span className="text-[9px] text-muted-foreground/40 whitespace-nowrap">
+                      · 规则基线
+                    </span>
+                  )}
+                </div>
+              )}
+            </button>
+
+            {/* ── Row 3: meta row — NOT inside the button ── */}
+            {/* ExternalLink <a> lives here, sibling of the button, never nested inside it. */}
+            <div className={cn("flex items-center gap-1.5 mt-0.5", isEmphasis ? "pb-1.5" : "pb-1.5")}>
               <div className="flex items-center gap-1 flex-wrap flex-1 min-w-0">
                 <span className={cn("text-[10px] px-1.5 py-px rounded font-medium whitespace-nowrap", categoryClass)}>
                   {item.category}
                 </span>
                 <span className="text-muted-foreground/40 text-[10px]">·</span>
                 <span className="text-[10px] text-muted-foreground whitespace-nowrap">{timeAgo}</span>
-                {/* ExternalLink: the ONLY way to navigate to the original URL */}
+
+                {/* ExternalLink: the ONLY route to the original URL */}
                 <a
                   href={item.originalUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-muted-foreground/40 hover:text-primary transition-colors"
-                  title="查看原文"
+                  title="查看原文（新标签页）"
+                  onClick={e => e.stopPropagation()}
                 >
                   <ExternalLink className="h-3 w-3" />
                 </a>
+
                 {visibleTags.map(tag => (
                   <span key={tag} className="text-[10px] text-muted-foreground bg-[var(--tag-bg)] px-1.5 py-px rounded whitespace-nowrap">
                     {tag}
@@ -195,12 +234,13 @@ export function InformationCard({
                 )}
               </div>
 
-              {/* Right: feedback + chevron */}
+              {/* Feedback + chevron */}
               <div className="flex items-center gap-1 shrink-0">
                 <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                   <FeedbackActions itemId={item.id} onAction={onFeedback} />
                 </div>
                 <button
+                  type="button"
                   onClick={() => setOpen(prev => !prev)}
                   className="text-muted-foreground/40 hover:text-muted-foreground transition-colors p-1"
                   title="查看详情"
@@ -210,48 +250,13 @@ export function InformationCard({
               </div>
             </div>
 
-            {/* Row 4: driver chips */}
-            {(foldedPositive.length > 0 || foldedNegative.length > 0 || explanation.isRuleBasedOnly) && (
-              <div className="flex flex-wrap items-center gap-1">
-                {foldedPositive.map(d => (
-                  <span
-                    key={d}
-                    className="text-[10px] px-1.5 py-px rounded border text-success border-success/25 bg-success/8 whitespace-nowrap"
-                  >
-                    ↑ {d}
-                  </span>
-                ))}
-                {foldedNegative.map(d => (
-                  <span
-                    key={d}
-                    className="text-[10px] px-1.5 py-px rounded border text-muted-foreground border-border bg-muted/50 whitespace-nowrap"
-                  >
-                    ↓ {d}
-                  </span>
-                ))}
-                {foldedPositive.length === 0 && foldedNegative.length === 0 && explanation.isRuleBasedOnly && (
-                  <span className="text-[10px] text-muted-foreground/55 px-1 py-px rounded border border-border/40 whitespace-nowrap">
-                    规则基线
-                  </span>
-                )}
-                {(foldedPositive.length > 0 || foldedNegative.length > 0) && explanation.isRuleBasedOnly && (
-                  <span className="text-[9px] text-muted-foreground/40 whitespace-nowrap">
-                    · 规则基线
-                  </span>
-                )}
-              </div>
-            )}
-
           </div>
         </div>
       </div>
 
       {/* ── Detail dialog ── */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent
-          className="max-w-2xl w-full max-h-[88vh] overflow-y-auto p-0 gap-0"
-        >
-          {/* DialogTitle is required for accessibility */}
+        <DialogContent className="max-w-2xl w-full max-h-[88vh] overflow-y-auto p-0 gap-0">
           <DialogTitle className="sr-only">{item.title}</DialogTitle>
 
           {/* Sticky header */}
@@ -261,7 +266,7 @@ export function InformationCard({
             </p>
           </div>
 
-          {/* Scrollable content */}
+          {/* Content */}
           <div className="px-6 py-5">
             <ItemDetailPanel item={item} />
           </div>
