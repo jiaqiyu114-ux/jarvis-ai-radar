@@ -67,53 +67,123 @@ function Divider() {
   return <div className="h-px bg-border/60" />
 }
 
-// ── Reading intro builder ─────────────────────────────────────────────────────
-// Generates a concise reading intro (~280 chars) from available content fields.
-// Priority: article excerpt → RSS summary → cleanText slice → title fallback.
+// ── Readable lead builder ─────────────────────────────────────────────────────
+// Replaces buildReadingIntro. Generates a Chinese reading lead (~160-300 chars).
+// For Chinese content: clips the best available text directly.
+// For English content: builds a Chinese structural template wrapping key fields.
 
-function buildReadingIntro(
+function isMostlyEnglish(s: string): boolean {
+  if (!s || s.length < 20) return false
+  const cjk = (s.match(/[一-鿿぀-ヿ]/g) ?? []).length
+  return cjk < s.length * 0.1
+}
+
+function cleanForDisplay(s: string): string {
+  return normalizeDisplayText(s)
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+function safeClip(s: string, maxLen: number): string {
+  if (s.length <= maxLen) return s
+  const cnEnd = s.lastIndexOf('。', maxLen)
+  if (cnEnd >= maxLen * 0.55) return s.slice(0, cnEnd + 1)
+  const spEnd = s.lastIndexOf(' ', maxLen)
+  return (spEnd >= maxLen * 0.55 ? s.slice(0, spEnd) : s.slice(0, maxLen)) + '…'
+}
+
+const CATEGORY_CONTEXT: Record<string, string> = {
+  'AI技术':   '涉及 AI 技术进展、工具链或能力变化',
+  '商业动态': '反映行业商业格局或企业战略调整',
+  '产品发布': '代表最新产品动态或功能更新',
+  '监管政策': '涉及监管动态，可能影响行业合规边界',
+  '融资并购': '反映资本流向和行业整合趋势',
+  '行业趋势': '展示行业整体发展方向或技术路线',
+  '开源项目': '涉及开源生态和工具链演变',
+  '研究报告': '包含研究发现或数据洞察',
+  '人物动态': '涉及关键人物动态或行业观点',
+  '其他':     '值得关注相关背景和后续动态',
+}
+
+const CLAIM_STATUS_CONTEXT: Record<string, string> = {
+  reported:       '属于一手媒体报道',
+  source_claimed: '来自官方声明或公告',
+  confirmed:      '内容已得到交叉验证',
+  unverified:     '目前尚待多方验证',
+  rumor:          '属于传言性质，需谨慎对待',
+}
+
+function buildReadableLead(
   item: InformationItem,
   localContent?: ArticleContent,
 ): { text: string; dataNote: string } {
   const ac = localContent ?? item.articleContent
-  const MAX = 320
 
-  function clip(s: string): string {
-    const cleaned = normalizeDisplayText(s).replace(/\s+/g, ' ').trim()
-    if (cleaned.length <= MAX) return cleaned
-    const idx = cleaned.lastIndexOf(' ', MAX)
-    return (idx > MAX * 0.6 ? cleaned.slice(0, idx) : cleaned.slice(0, MAX)) + '…'
-  }
+  const fullText  = ac?.cleanText ? cleanForDisplay(ac.cleanText) : ''
+  const excerptTx = ac?.excerpt   ? cleanForDisplay(ac.excerpt)   : ''
+  const summaryTx = item.summary  ? cleanForDisplay(item.summary) : ''
+  const titleTx   = cleanForDisplay(normalizeDisplayText(item.title))
 
-  // 1. Article excerpt (from fetched content) — most reliable short summary
-  if (ac?.fetchStatus === 'fetched' && ac.excerpt && ac.excerpt.trim().length > 30) {
-    const wordNote = ac.wordCount ? ` · 原文约 ${ac.wordCount} 字` : ''
+  const hasFetched = ac?.fetchStatus === 'fetched'
+  const wordCount  = ac?.wordCount ?? 0
+
+  // Best available body: prefer cleanText when long enough, then excerpt, then summary
+  const bestBody =
+    fullText.length  >= 120 ? fullText  :
+    excerptTx.length >= 40  ? excerptTx :
+    summaryTx.length >= 30  ? summaryTx : ''
+
+  // ── Chinese content: use directly ────────────────────────────────────────────
+  if (bestBody && !isMostlyEnglish(bestBody)) {
     return {
-      text:     clip(ac.excerpt),
-      dataNote: `基于已抓取正文摘要${wordNote}。`,
+      text:     safeClip(bestBody, 320),
+      dataNote: hasFetched && wordCount > 0
+        ? `基于已抓取正文生成 · 原文约 ${wordCount} 字`
+        : '基于摘要生成 · 正文尚未完整抓取',
     }
   }
 
-  // 2. RSS summary
-  if (item.summary && item.summary.trim().length >= 30) {
-    return {
-      text:     clip(item.summary),
-      dataNote: '基于 RSS 摘要，尚未抓取完整正文。',
-    }
+  // ── English content: Chinese structural template ─────────────────────────────
+  const category   = item.category as string
+  const catContext = CATEGORY_CONTEXT[category] ?? CATEGORY_CONTEXT['其他']
+  const parts: string[] = []
+
+  // Sentence 1: Chinese structural opening with title + source + category
+  parts.push(`这篇来自 ${item.source} 的报道（${category}方向），标题为「${titleTx}」。`)
+
+  // Sentence 2: category-based context (always Chinese, no fabrication)
+  parts.push(`这类内容${catContext}。`)
+
+  // Sentence 3: English original clearly labeled — keeps it honest
+  const quoteSrc = excerptTx.length >= 40 ? excerptTx
+    : summaryTx.length >= 30              ? summaryTx
+    : ''
+  if (quoteSrc && quoteSrc.toLowerCase() !== titleTx.toLowerCase()) {
+    parts.push(`原文指出：${safeClip(quoteSrc, 160)}`)
   }
 
-  // 3. cleanText front slice
-  if (ac?.fetchStatus === 'fetched' && ac.cleanText && ac.cleanText.trim().length > 60) {
-    return {
-      text:     clip(ac.cleanText),
-      dataNote: '正文前段内容。',
-    }
+  // Sentence 4: evidence note (from evidenceProfile if available)
+  const ep = item.evidenceProfile
+  if (ep) {
+    const claimNote = CLAIM_STATUS_CONTEXT[ep.claimStatus] ?? ''
+    if (claimNote) parts.push(`从信源角度看，该条信息${claimNote}。`)
   }
 
-  // 4. Title fallback — explicit about the limitation
+  // Sentence 5: content completeness
+  if (hasFetched && wordCount >= 300) {
+    parts.push(`原文约 ${wordCount} 字，内容较为完整。`)
+  } else if (hasFetched && wordCount > 0) {
+    parts.push(`原文约 ${wordCount} 字，篇幅较短。`)
+  } else {
+    parts.push('目前仅有摘要，建议阅读原文获取完整信息。')
+  }
+
   return {
-    text:     normalizeDisplayText(item.title),
-    dataNote: '当前正文抓取信息不足，仅基于标题和摘要判断。',
+    text:     safeClip(parts.join(''), 400),
+    dataNote: hasFetched && wordCount > 0
+      ? `基于规则生成中文导读 · 原文约 ${wordCount} 字（英文）`
+      : '基于标题和摘要生成中文导读',
   }
 }
 
@@ -466,7 +536,7 @@ export function ItemDetailPanel({
   const noiseResult  = detectLowValueNoise(item.title, item.summary, localContent?.wordCount ?? null)
   const explanation  = buildScoreExplanation(item.scoreBreakdown, item.finalScore, item.penalties)
   const detail       = buildInformationDetail(item, explanation, localContent)
-  const readingIntro = buildReadingIntro(item, localContent)
+  const readingIntro = buildReadableLead(item, localContent)
 
   const categoryClass = categoryColors[item.category] ?? categoryColors['其他']
   const publishedAgo  = formatDistanceToNow(new Date(item.publishedAt), { addSuffix: true, locale: zhCN })
