@@ -198,11 +198,15 @@ export async function runRssProviderIngest(opts?: { dryRun?: boolean; recordHeal
       }),
     }))
 
-    // ok=false only when there were feeds to process but ALL of them failed
-    const ok = unique.length > 0 || feedErrors.length === 0
-    const runStatus = feedErrors.length === 0 ? 'full_success'
-      : unique.length > 0 ? 'partial_success'
-      : 'full_failure'
+    // partial_success when at least one source fetched items, even if others failed
+    const dryRunProcessedAny = unique.length > 0 || sourceHealthSummary.succeededThisRun > 0
+    const ok = dryRunProcessedAny || feedErrors.length === 0
+    const runStatus: 'full_success' | 'partial_success' | 'full_failure' =
+      feedErrors.length === 0
+        ? 'full_success'
+        : dryRunProcessedAny
+          ? 'partial_success'
+          : 'full_failure'
 
     return {
       ok,
@@ -235,8 +239,19 @@ export async function runRssProviderIngest(opts?: { dryRun?: boolean; recordHeal
     RssProviderAdapter.provider,
   )
 
-  const writeRunStatus = feedErrors.length === 0 ? 'full_success'
-    : persistResult.insertedItems > 0 ? 'partial_success'
-    : 'full_failure'
+  // runStatus rules:
+  //   full_success   — no feedErrors at all
+  //   partial_success — at least one source succeeded (succeededThisRun > 0), even if others failed
+  //                     NOTE: insertedItems=0 + reusedItems>0 is a VALID success (deduplication)
+  //   full_failure   — ALL sources failed, zero items were processed (no fetched/reused/inserted)
+  const processedAny = (persistResult.insertedItems + persistResult.reusedItems) > 0
+    || sourceHealthSummary.succeededThisRun > 0
+  const writeRunStatus: 'full_success' | 'partial_success' | 'full_failure' =
+    feedErrors.length === 0
+      ? 'full_success'
+      : processedAny
+        ? 'partial_success'
+        : 'full_failure'
+
   return { ...persistResult, runStatus: writeRunStatus, feedErrors, itemErrors, sourceMode, sourceCount, sourceLoadDebug, sourceHealthSummary }
 }
