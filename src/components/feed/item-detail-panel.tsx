@@ -15,6 +15,7 @@ import { detectLowValueNoise } from "@/lib/scoring/noise"
 import { normalizeDisplayText } from "@/lib/text/normalize-display-text"
 import type { DimensionStatus } from "@/lib/scoring/explanation"
 import type { InsightType } from "@/lib/content/detail-explanation"
+import { ItemFeedbackActions } from "@/components/feedback/item-feedback-actions"
 
 // ── Colors / maps ─────────────────────────────────────────────────────────────
 
@@ -346,13 +347,13 @@ const CLAIM_STATUS_LABELS: Record<string, { label: string; color: string }> = {
 
 const SOURCE_NATURE_LABELS: Record<string, string> = {
   official:         '官方发布',
-  primary_report:   '一手报道',
-  secondary_report: '二手转载',
-  research:         '学术预印本',
+  primary_report:   '媒体报道',   // 媒体原创报道，非官方来源
+  secondary_report: '转载/二手',
+  research:         '研究论文',
   analysis:         '分析/观点',
   marketing:        '商业宣传',
   rumor:            '传言',
-  unknown:          '来源未知',
+  unknown:          '来源不明',
 }
 
 const EVIDENCE_LEVEL_LABELS: Record<string, string> = {
@@ -525,11 +526,14 @@ export function ItemDetailPanel({
   item,
   isReal = true,
   recommendationReason: overrideReason,
+  contextPage = 'feed',
 }: {
   item: InformationItem
   isReal?: boolean
   /** When provided, shown verbatim in "为什么值得关注" instead of the rule-based explanation. */
   recommendationReason?: string
+  /** Which page this panel is opened from — recorded with feedback annotations. */
+  contextPage?: string
 }) {
   const [localContent, setLocalContent] = useState<ArticleContent | undefined>(item.articleContent)
 
@@ -642,7 +646,12 @@ export function ItemDetailPanel({
 
       <Divider />
 
-      {/* ── 5. 来源与原文 ── */}
+      {/* ── 5. 我的判断标注 ── */}
+      <ItemFeedbackActions itemId={item.id} contextPage={contextPage} />
+
+      <Divider />
+
+      {/* ── 6. 来源与原文 ── */}
       <Section label="来源与原文">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5 min-w-0">
@@ -705,7 +714,7 @@ export function ItemDetailPanel({
 
       <Divider />
 
-      {/* ── 6. 媒体信息 — no repeat of hero cover image ── */}
+      {/* ── 7. 媒体信息 — no repeat of hero cover image ── */}
       <Section label="媒体信息">
         {hasCoverImg ? (
           <p className="text-xs text-muted-foreground/60">

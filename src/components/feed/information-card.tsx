@@ -21,6 +21,8 @@ interface InformationCardProps {
   onFeedback?: (action: FeedbackAction, itemId: string) => void
   /** When provided, shown in "为什么值得关注" instead of rule-based explanation. */
   recommendationReason?: string
+  /** Which page context this card is shown in — recorded with feedback annotations. */
+  contextPage?: string
 }
 
 const categoryColors: Record<string, string> = {
@@ -42,6 +44,7 @@ export function InformationCard({
   scoreSize = 'sm',
   onFeedback,
   recommendationReason,
+  contextPage = 'feed',
 }: InformationCardProps) {
   const [open, setOpen] = useState(variant === 'expanded')
 
@@ -300,7 +303,7 @@ export function InformationCard({
 
           {/* Content */}
           <div className="px-6 py-5">
-            <ItemDetailPanel item={item} recommendationReason={recommendationReason} />
+            <ItemDetailPanel item={item} recommendationReason={recommendationReason} contextPage={contextPage} />
           </div>
         </DialogContent>
       </Dialog>

@@ -64,6 +64,7 @@ function SnapshotItemCard({ item }: { item: DailyRecommendationSnapshotItem }) {
         variant="emphasis"
         scoreSize="md"
         recommendationReason={item.recommendationReason || undefined}
+        contextPage="reports"
       />
     </div>
   )

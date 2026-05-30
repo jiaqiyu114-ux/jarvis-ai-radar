@@ -405,6 +405,43 @@ export type DbUserFeedbackInsert = {
 
 export type DbUserFeedbackUpdate = Partial<DbUserFeedbackInsert>
 
+// ── item_feedback ─────────────────────────────────────────────────────────────
+// Semantic annotation feedback — deliberate quality/intent judgments.
+// Separate from user_feedback (behavioural events).
+
+export type DbItemFeedbackType =
+  | 'save_reference'
+  | 'add_to_watch'
+  | 'worth_writing'
+  | 'project_related'
+  | 'strong_evidence'
+  | 'weak_evidence'
+  | 'overestimated'
+  | 'underestimated'
+  | 'clickbait_or_marketing'
+  | 'duplicate_info'
+  | 'not_worth_reading'
+
+export type DbItemFeedback = {
+  id:             string
+  item_id:        string
+  feedback_type:  DbItemFeedbackType
+  feedback_value: number
+  feedback_note:  string | null
+  context_page:   string | null
+  created_at:     string
+  updated_at:     string
+}
+
+export type DbItemFeedbackInsert = {
+  item_id:         string
+  feedback_type:   DbItemFeedbackType
+  feedback_value?: number
+  feedback_note?:  string | null
+  context_page?:   string | null
+  updated_at?:     string
+}
+
 // ── scoring_config ────────────────────────────────────────────────────────────
 
 export type DbScoringWeights = {
@@ -692,6 +729,12 @@ export type Database = {
         Row:           DbDailyRecommendationItem
         Insert:        DbDailyRecommendationItemInsert
         Update:        DbDailyRecommendationItemUpdate
+        Relationships: []
+      }
+      item_feedback: {
+        Row:           DbItemFeedback
+        Insert:        DbItemFeedbackInsert
+        Update:        Partial<DbItemFeedbackInsert>
         Relationships: []
       }
     }

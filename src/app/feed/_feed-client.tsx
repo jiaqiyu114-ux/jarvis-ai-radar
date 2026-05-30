@@ -145,7 +145,7 @@ export default function FeedClient({
         {/* ── Feed list ── */}
         <div className="bg-card rounded-lg overflow-hidden border border-border/60">
           {filtered.length > 0
-            ? filtered.map(item => <InformationCard key={item.id} item={item} />)
+            ? filtered.map(item => <InformationCard key={item.id} item={item} contextPage="feed" />)
             : (
               <div className="py-10 text-center">
                 <p className="text-sm text-muted-foreground">没有符合条件的内容</p>
