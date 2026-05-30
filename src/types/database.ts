@@ -47,6 +47,10 @@ export type DbTopicStatus = '待判断' | '可写' | '正在写' | '已发布' |
 
 export type DbTopicPriority = 'high' | 'medium' | 'low'
 
+export type DbDailyRecommendationRunStatus = 'generated' | 'dry_run' | 'failed'
+
+export type DbDailyRecommendationSection = 'must_read' | 'high_value' | 'observe'
+
 // ── sources ───────────────────────────────────────────────────────────────────
 
 export type DbSource = {
@@ -526,6 +530,71 @@ export type DbItemMentionInsert = {
   seen_at?:           string
 }
 
+// 鈹€鈹€ daily recommendation snapshots 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+export type DbDailyRecommendationRun = {
+  id:                string
+  run_date:          string
+  status:            DbDailyRecommendationRunStatus
+  generated_at:      string
+  window_start:      string | null
+  window_end:        string | null
+  total_candidates:  number
+  selected_count:    number
+  must_read_count:   number
+  high_value_count:  number
+  observe_count:     number
+  notes:             string | null
+  created_at:        string
+  updated_at:        string
+}
+
+export type DbDailyRecommendationRunInsert = {
+  run_date:          string
+  status?:           DbDailyRecommendationRunStatus
+  generated_at?:     string
+  window_start?:     string | null
+  window_end?:       string | null
+  total_candidates?: number
+  selected_count?:   number
+  must_read_count?:  number
+  high_value_count?: number
+  observe_count?:    number
+  notes?:            string | null
+}
+
+export type DbDailyRecommendationRunUpdate = Partial<DbDailyRecommendationRunInsert> & {
+  updated_at?: string
+}
+
+export type DbDailyRecommendationItem = {
+  id:                    string
+  run_id:                string
+  item_id:               string
+  rank:                  number
+  section:               DbDailyRecommendationSection
+  recommendation_reason: string | null
+  reason_tags:           string[]
+  score_snapshot:        Record<string, unknown>
+  source_snapshot:       Record<string, unknown>
+  item_snapshot:         Record<string, unknown>
+  created_at:            string
+}
+
+export type DbDailyRecommendationItemInsert = {
+  run_id:                string
+  item_id:               string
+  rank:                  number
+  section:               DbDailyRecommendationSection
+  recommendation_reason?: string | null
+  reason_tags?:          string[]
+  score_snapshot?:       Record<string, unknown>
+  source_snapshot?:      Record<string, unknown>
+  item_snapshot?:        Record<string, unknown>
+}
+
+export type DbDailyRecommendationItemUpdate = Partial<DbDailyRecommendationItemInsert>
+
 // ── Supabase Database helper type ──────────────────────────────────────────────
 // Used to type the SupabaseClient: createClient<Database>(url, key)
 //
@@ -585,6 +654,18 @@ export type Database = {
         Row:           DbItemMention
         Insert:        DbItemMentionInsert
         Update:        Partial<DbItemMentionInsert>
+        Relationships: []
+      }
+      daily_recommendation_runs: {
+        Row:           DbDailyRecommendationRun
+        Insert:        DbDailyRecommendationRunInsert
+        Update:        DbDailyRecommendationRunUpdate
+        Relationships: []
+      }
+      daily_recommendation_items: {
+        Row:           DbDailyRecommendationItem
+        Insert:        DbDailyRecommendationItemInsert
+        Update:        DbDailyRecommendationItemUpdate
         Relationships: []
       }
     }
