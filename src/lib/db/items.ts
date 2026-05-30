@@ -372,6 +372,56 @@ export async function markItemContentFetchFailed(
   return true
 }
 
+// ── Analysis Queue / Token Budget Gate v1 ────────────────────────────────────
+
+export type AnalysisGatePayload = {
+  analysisTier:           string
+  analysisPriority:       string
+  analysisStage:          string
+  analysisReason:         string
+  tokenBudgetTier:        string
+  estimatedInputTokens:   number
+  estimatedOutputTokens:  number
+  estimatedTotalTokens:   number
+  shouldDeepAnalyze:      boolean
+  shouldTrackEvent:       boolean
+  shouldEnterDailyReport: boolean
+  shouldEnterTopicPool:   boolean
+}
+
+/**
+ * Write analysis gate decision to an item.
+ * Does NOT modify final_score, data_origin, or content fields.
+ */
+export async function updateItemAnalysisGate(
+  itemId:  string,
+  payload: AnalysisGatePayload,
+): Promise<boolean> {
+  if (!isServerSupabaseConfigured || !supabaseServer) return false
+  const now = new Date().toISOString()
+  const { error } = await supabaseServer
+    .from('items')
+    .update({
+      analysis_tier:              payload.analysisTier,
+      analysis_priority:          payload.analysisPriority,
+      analysis_stage:             payload.analysisStage,
+      analysis_reason:            payload.analysisReason,
+      token_budget_tier:          payload.tokenBudgetTier,
+      estimated_input_tokens:     payload.estimatedInputTokens,
+      estimated_output_tokens:    payload.estimatedOutputTokens,
+      estimated_total_tokens:     payload.estimatedTotalTokens,
+      should_deep_analyze:        payload.shouldDeepAnalyze,
+      should_track_event:         payload.shouldTrackEvent,
+      should_enter_daily_report:  payload.shouldEnterDailyReport,
+      should_enter_topic_pool:    payload.shouldEnterTopicPool,
+      analysis_queued_at:         now,
+      analysis_updated_at:        now,
+    })
+    .eq('id', itemId)
+  if (error) { console.error('[db/items] updateItemAnalysisGate:', error.message); return false }
+  return true
+}
+
 // ── Evidence & Truth Scoring v1 ───────────────────────────────────────────────
 
 export type EvidenceUpdatePayload = {

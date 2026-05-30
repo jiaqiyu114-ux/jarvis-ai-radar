@@ -160,6 +160,22 @@ export type DbItem = {
   status:                  DbItemStatus
   data_origin:             DataOrigin
 
+  // Analysis Queue / Token Budget Gate v1
+  analysis_priority:          string | null
+  analysis_stage:             string | null
+  analysis_tier:              string | null
+  analysis_reason:            string | null
+  token_budget_tier:          string | null
+  estimated_input_tokens:     number | null
+  estimated_output_tokens:    number | null
+  estimated_total_tokens:     number | null
+  should_deep_analyze:        boolean | null
+  should_track_event:         boolean | null
+  should_enter_daily_report:  boolean | null
+  should_enter_topic_pool:    boolean | null
+  analysis_queued_at:         string | null
+  analysis_updated_at:        string | null
+
   // Evidence & Truth Scoring v1
   truth_score:             number | null
   ev_score:                number | null   // evidence quality (avoids collision with rule scorer's evidence_score)
@@ -254,6 +270,21 @@ export type DbItemUpdate = Partial<DbItemInsert> & {
   marketing_penalty?:       number
   cognitive_load_penalty?:  number
   final_score?:             number
+  // Analysis Queue / Token Budget Gate v1
+  analysis_priority?:          string | null
+  analysis_stage?:             string | null
+  analysis_tier?:              string | null
+  analysis_reason?:            string | null
+  token_budget_tier?:          string | null
+  estimated_input_tokens?:     number | null
+  estimated_output_tokens?:    number | null
+  estimated_total_tokens?:     number | null
+  should_deep_analyze?:        boolean | null
+  should_track_event?:         boolean | null
+  should_enter_daily_report?:  boolean | null
+  should_enter_topic_pool?:    boolean | null
+  analysis_queued_at?:         string | null
+  analysis_updated_at?:        string | null
   // Evidence & Truth Scoring v1
   truth_score?:             number | null
   ev_score?:                number | null

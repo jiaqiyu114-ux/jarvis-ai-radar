@@ -57,6 +57,34 @@ export interface ItemPenalties {
   cognitiveLoad: number
 }
 
+// ── Analysis Queue / Token Budget Gate ───────────────────────────────────────
+
+export type AnalysisTier     = 'none' | 'light' | 'standard' | 'deep' | 'cluster'
+export type AnalysisPriority = 'low' | 'normal' | 'high' | 'urgent'
+export type AnalysisStage    =
+  | 'unprocessed' | 'skipped'
+  | 'light_ready'    | 'light_done'
+  | 'standard_ready' | 'standard_done'
+  | 'deep_ready'     | 'deep_done'
+  | 'cluster_ready'  | 'archived'
+export type TokenBudgetTier  = 'none' | 'cheap' | 'normal' | 'premium'
+
+export interface AnalysisGate {
+  analysisTier:           AnalysisTier
+  analysisPriority:       AnalysisPriority
+  analysisStage:          AnalysisStage
+  tokenBudgetTier:        TokenBudgetTier
+  estimatedInputTokens:   number
+  estimatedOutputTokens:  number
+  estimatedTotalTokens:   number
+  shouldDeepAnalyze:      boolean
+  shouldTrackEvent:       boolean
+  shouldEnterDailyReport: boolean
+  shouldEnterTopicPool:   boolean
+  analysisReason:         string
+  queuedAt:               string | null
+}
+
 // ── Evidence & Truth Scoring ──────────────────────────────────────────────────
 
 export type ClaimStatus =
@@ -135,7 +163,8 @@ export interface InformationItem {
   relatedReportCount: number
   penalties?: ItemPenalties         // populated from DB penalty columns
   articleContent?: ArticleContent   // populated after content extraction
-  evidenceProfile?: EvidenceProfile // populated after evidence scoring
+  evidenceProfile?: EvidenceProfile  // populated after evidence scoring
+  analysisGate?:   AnalysisGate     // populated after budget gate run
 }
 
 export interface MockSource {

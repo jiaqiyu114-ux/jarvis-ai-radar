@@ -1,7 +1,7 @@
 import { mockItems, mockStats } from '@/config/mock-data'
 import { listItemsWithSource, listItems } from '@/lib/db/items'
 import { shouldUseDatabase } from './runtime'
-import type { InformationItem, DashboardStats, Category, SourceTier, ArticleContent, ContentFetchStatus, EvidenceProfile, ClaimStatus, EvidenceLevel, SourceNature } from '@/types'
+import type { InformationItem, DashboardStats, Category, SourceTier, ArticleContent, ContentFetchStatus, EvidenceProfile, ClaimStatus, EvidenceLevel, SourceNature, AnalysisGate, AnalysisTier, AnalysisPriority, AnalysisStage, TokenBudgetTier } from '@/types'
 import type { DbItemWithSource } from '@/lib/db/items'
 import type { DbSourceTier } from '@/types/database'
 
@@ -62,6 +62,7 @@ function mapDbItem(item: DbItemWithSource): InformationItem {
     relatedReportCount: 0,
     articleContent:  mapArticleContent(item),
     evidenceProfile: mapEvidenceProfile(item),
+    analysisGate:    mapAnalysisGate(item),
   }
 }
 
@@ -117,6 +118,40 @@ function mapEvidenceProfile(item: DbItemWithSource): EvidenceProfile | undefined
     evidenceNotes:     i.evidence_notes       ?? '',
     truthNotes:        i.truth_notes          ?? '',
     checkedAt:         checked,
+  }
+}
+
+function mapAnalysisGate(item: DbItemWithSource): AnalysisGate | undefined {
+  const queued = (item as { analysis_queued_at?: string | null }).analysis_queued_at
+  if (!queued) return undefined
+  const i = item as {
+    analysis_tier?: string | null
+    analysis_priority?: string | null
+    analysis_stage?: string | null
+    analysis_reason?: string | null
+    token_budget_tier?: string | null
+    estimated_input_tokens?: number | null
+    estimated_output_tokens?: number | null
+    estimated_total_tokens?: number | null
+    should_deep_analyze?: boolean | null
+    should_track_event?: boolean | null
+    should_enter_daily_report?: boolean | null
+    should_enter_topic_pool?: boolean | null
+  }
+  return {
+    analysisTier:           (i.analysis_tier    as AnalysisTier)    ?? 'none',
+    analysisPriority:       (i.analysis_priority as AnalysisPriority) ?? 'low',
+    analysisStage:          (i.analysis_stage   as AnalysisStage)   ?? 'unprocessed',
+    tokenBudgetTier:        (i.token_budget_tier as TokenBudgetTier) ?? 'none',
+    estimatedInputTokens:   i.estimated_input_tokens  ?? 0,
+    estimatedOutputTokens:  i.estimated_output_tokens ?? 0,
+    estimatedTotalTokens:   i.estimated_total_tokens  ?? 0,
+    shouldDeepAnalyze:      i.should_deep_analyze      ?? false,
+    shouldTrackEvent:       i.should_track_event       ?? false,
+    shouldEnterDailyReport: i.should_enter_daily_report ?? false,
+    shouldEnterTopicPool:   i.should_enter_topic_pool  ?? false,
+    analysisReason:         i.analysis_reason          ?? '',
+    queuedAt:               queued,
   }
 }
 

@@ -109,6 +109,22 @@ CREATE TABLE IF NOT EXISTS items (
   -- Data origin: distinguishes real ingest from demo/mock/seed data
   data_origin             text        NOT NULL DEFAULT 'real',
 
+  -- Analysis Queue / Token Budget Gate v1
+  analysis_priority          text        DEFAULT 'normal',
+  analysis_stage             text        DEFAULT 'unprocessed',
+  analysis_tier              text        DEFAULT 'none',
+  analysis_reason            text,
+  token_budget_tier          text        DEFAULT 'none',
+  estimated_input_tokens     integer,
+  estimated_output_tokens    integer,
+  estimated_total_tokens     integer,
+  should_deep_analyze        boolean     DEFAULT false,
+  should_track_event         boolean     DEFAULT false,
+  should_enter_daily_report  boolean     DEFAULT false,
+  should_enter_topic_pool    boolean     DEFAULT false,
+  analysis_queued_at         timestamptz,
+  analysis_updated_at        timestamptz,
+
   -- Evidence & Truth Scoring v1 (ev_score avoids collision with rule-scorer's evidence_score)
   truth_score             integer,
   ev_score                integer,

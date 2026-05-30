@@ -58,6 +58,15 @@ export function InformationCard({
     .filter(d => !d.includes('分惩罚'))
     .slice(0, 1)
 
+  // Lightweight analysis gate badge for the list view
+  const ag = item.analysisGate
+  const analysisBadge = ag?.analysisTier === 'deep'    ? '可深读'
+    : ag?.analysisTier === 'cluster'                   ? '事件追踪'
+    : ag?.shouldEnterDailyReport                       ? '进日报'
+    : ag?.shouldEnterTopicPool                         ? '进选题池'
+    : ag?.analysisTier === 'standard'                  ? null   // don't clutter list for standard
+    : null
+
   // Lightweight evidence badge for the list view
   const ep = item.evidenceProfile
   const evidenceBadge = ep
@@ -206,6 +215,11 @@ export function InformationCard({
                   {evidenceBadge && (
                     <span className="text-[9px] text-muted-foreground/55 border border-border/40 rounded px-1 py-px whitespace-nowrap">
                       {evidenceBadge}
+                    </span>
+                  )}
+                  {analysisBadge && (
+                    <span className="text-[9px] text-primary/60 border border-primary/20 rounded px-1 py-px whitespace-nowrap">
+                      {analysisBadge}
                     </span>
                   )}
                 </div>

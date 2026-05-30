@@ -10,7 +10,7 @@ import { ScoreBadge } from "./score-badge"
 import { cn } from "@/lib/utils"
 import { buildScoreExplanation } from "@/lib/scoring/explanation"
 import { buildInformationDetail } from "@/lib/content/detail-explanation"
-import type { InformationItem, ArticleContent, EvidenceProfile } from "@/types"
+import type { InformationItem, ArticleContent, EvidenceProfile, AnalysisGate } from "@/types"
 import type { DimensionStatus } from "@/lib/scoring/explanation"
 import type { InsightType } from "@/lib/content/detail-explanation"
 
@@ -63,6 +63,81 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 
 function Divider() {
   return <div className="h-px bg-border/60" />
+}
+
+// ── Analysis gate section ─────────────────────────────────────────────────────
+
+const TIER_LABELS: Record<string, { label: string; color: string }> = {
+  none:     { label: '跳过',    color: 'text-muted-foreground/50 border-border/40 bg-muted/30' },
+  light:    { label: '轻量判断', color: 'text-muted-foreground border-border bg-muted/50' },
+  standard: { label: '标准解释', color: 'text-sky-600 border-sky-400/30 bg-sky-400/10 dark:text-sky-400' },
+  deep:     { label: '深度分析', color: 'text-primary border-primary/30 bg-primary/10' },
+  cluster:  { label: '事件追踪', color: 'text-success border-success/30 bg-success/10' },
+}
+
+const PRIORITY_LABELS: Record<string, string> = {
+  low: '低', normal: '正常', high: '高', urgent: '紧急',
+}
+
+const BUDGET_LABELS: Record<string, string> = {
+  none: '零消耗', cheap: '轻量档', normal: '标准档', premium: '高级档',
+}
+
+function AnalysisGateSection({ gate }: { gate: AnalysisGate }) {
+  const tierStyle = TIER_LABELS[gate.analysisTier] ?? TIER_LABELS.none
+  const showTokens = gate.estimatedTotalTokens > 0
+
+  return (
+    <Section label="处理策略">
+      {/* Tier + priority + budget badges */}
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium", tierStyle.color)}>
+          {tierStyle.label}
+        </span>
+        <span className="text-[10px] px-1.5 py-0.5 rounded border text-muted-foreground border-border bg-muted/50">
+          优先级：{PRIORITY_LABELS[gate.analysisPriority] ?? gate.analysisPriority}
+        </span>
+        <span className="text-[10px] px-1.5 py-0.5 rounded border text-muted-foreground border-border bg-muted/50">
+          {BUDGET_LABELS[gate.tokenBudgetTier] ?? gate.tokenBudgetTier}
+        </span>
+      </div>
+
+      {/* Reason */}
+      {gate.analysisReason && (
+        <p className="text-xs text-foreground/80 leading-relaxed mb-3">{gate.analysisReason}</p>
+      )}
+
+      {/* Boolean flags */}
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        {[
+          { label: '深度解释', value: gate.shouldDeepAnalyze },
+          { label: '进日报',   value: gate.shouldEnterDailyReport },
+          { label: '进选题池', value: gate.shouldEnterTopicPool },
+          { label: '事件追踪', value: gate.shouldTrackEvent },
+        ].map(({ label, value }) => (
+          <span
+            key={label}
+            className={cn(
+              "text-[10px] px-1.5 py-0.5 rounded border",
+              value
+                ? "text-success border-success/25 bg-success/8"
+                : "text-muted-foreground/40 border-border/40"
+            )}
+          >
+            {value ? '✓' : '✗'} {label}
+          </span>
+        ))}
+      </div>
+
+      {/* Token estimate */}
+      {showTokens && (
+        <p className="text-[10px] text-muted-foreground/60">
+          预估 token：输入 {gate.estimatedInputTokens.toLocaleString()} + 输出 {gate.estimatedOutputTokens.toLocaleString()} ≈ 共 {gate.estimatedTotalTokens.toLocaleString()}
+          <span className="ml-1 text-muted-foreground/40">（粗估，非实际消耗）</span>
+        </p>
+      )}
+    </Section>
+  )
 }
 
 // ── Evidence section ──────────────────────────────────────────────────────────
@@ -445,6 +520,12 @@ export function ItemDetailPanel({ item }: { item: InformationItem }) {
         <EvidenceSection profile={item.evidenceProfile} />
       )}
       {item.evidenceProfile && <Divider />}
+
+      {/* ── 6.8. 处理策略 ── */}
+      {item.analysisGate && (
+        <AnalysisGateSection gate={item.analysisGate} />
+      )}
+      {item.analysisGate && <Divider />}
 
       {/* ── 7. 事件追踪 ── */}
       <Section label="事件追踪">
