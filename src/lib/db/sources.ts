@@ -369,8 +369,11 @@ export async function updateSourceFetchSuccess(
     .eq('id', sourceId)
 
   if (error) {
-    console.error('[db/sources] updateSourceFetchSuccess:', error.message)
-    throw error
+    // Health update failure is non-fatal: log it but never throw.
+    // The ingest pipeline must not fail because a health column is missing or
+    // the migration hasn't been applied yet.
+    console.error('[db/sources] updateSourceFetchSuccess:', error.message,
+      '| hint: run supabase/rss-source-health-v2.sql if missing columns')
   }
 }
 
@@ -430,7 +433,8 @@ export async function updateSourceFetchFailure(
     .eq('id', sourceId)
 
   if (error) {
-    console.error('[db/sources] updateSourceFetchFailure:', error.message)
-    throw error
+    // Health update failure is non-fatal: log it but never throw.
+    console.error('[db/sources] updateSourceFetchFailure:', error.message,
+      '| hint: run supabase/rss-source-health-v2.sql if missing columns')
   }
 }

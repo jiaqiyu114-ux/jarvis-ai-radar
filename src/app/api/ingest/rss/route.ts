@@ -71,13 +71,23 @@ export async function POST() {
 
   try {
     const result = await runRssProviderIngest({ dryRun: false, recordHealth: true })
-    // Return 200 for partial success — callers check runStatus + feedErrors for details.
-    // Only return 500 when all sources failed AND no items were processed.
-    const status = (result as { runStatus?: string }).runStatus === 'full_failure' ? 500 : 200
+    // Return 200 for full_success and partial_success.
+    // Return 500 only when runStatus is full_failure (all sources failed, no items processed).
+    const runStatus = (result as { runStatus?: string }).runStatus
+    const status = runStatus === 'full_failure' ? 500 : 200
     return NextResponse.json(forResponse(result), { status })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error'
-    console.error('[api/ingest/rss POST]', message)
-    return NextResponse.json({ ok: false, error: message }, { status: 500 })
+    const message = err instanceof Error ? err.message : String(err)
+    const stack    = err instanceof Error ? err.stack   : undefined
+    // Always log the full error so the dev console shows the real root cause
+    console.error('[api/ingest/rss POST] unhandled exception:', message)
+    if (stack) console.error(stack)
+    // Always return a JSON body so PowerShell / curl can read it
+    return NextResponse.json({
+      ok:      false,
+      error:   message,
+      hint:    'Check the dev server console for the full stack trace.',
+      ...(process.env.NODE_ENV !== 'production' && stack ? { stack } : {}),
+    }, { status: 500 })
   }
 }

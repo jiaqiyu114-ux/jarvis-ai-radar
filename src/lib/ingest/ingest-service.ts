@@ -233,18 +233,49 @@ export async function runRssProviderIngest(opts?: { dryRun?: boolean; recordHeal
     }
   }
 
-  // Write to DB
-  const persistResult = await ingestNormalizedItemsToDatabase(
-    unique,
-    RssProviderAdapter.provider,
-  )
+  // Write to DB — wrapped in try-catch so a provider-upsert or DB failure
+  // does not crash the entire ingest when some sources already succeeded.
+  let persistResult: Awaited<ReturnType<typeof ingestNormalizedItemsToDatabase>>
+  try {
+    persistResult = await ingestNormalizedItemsToDatabase(
+      unique,
+      RssProviderAdapter.provider,
+    )
+  } catch (persistErr) {
+    const msg = persistErr instanceof Error ? persistErr.message : String(persistErr)
+    console.error('[ingest-service] ingestNormalizedItemsToDatabase failed:', msg)
+
+    // Even though persist failed, the sources that fetched successfully are known.
+    // Return a structured result so the route can return 200 for partial_success.
+    const anyFetched = raw.length > 0 || sourceHealthSummary.succeededThisRun > 0
+    return {
+      ok:               anyFetched,
+      runStatus:        anyFetched ? 'partial_success' as const : 'full_failure' as const,
+      mode:             'database' as const,
+      provider:         RssProviderAdapter.provider.name,
+      fetched:          raw.length,
+      uniqueItems:      unique.length,
+      insertedItems:    0,
+      reusedItems:      0,
+      insertedMentions: 0,
+      skippedMentions:  0,
+      errors:           [{ externalId: 'persist', stage: 'upsert_provider' as const, message: msg }],
+      debug:            { providerResolved: false, providerDbId: null, firstSourceResolved: false, firstSourceId: null, firstItemPayloadKeys: [] },
+      feedErrors,
+      itemErrors,
+      sourceMode,
+      sourceCount,
+      sourceLoadDebug,
+      sourceHealthSummary,
+    }
+  }
 
   // runStatus rules:
-  //   full_success   — no feedErrors at all
-  //   partial_success — at least one source succeeded (succeededThisRun > 0), even if others failed
-  //                     NOTE: insertedItems=0 + reusedItems>0 is a VALID success (deduplication)
-  //   full_failure   — ALL sources failed, zero items were processed (no fetched/reused/inserted)
+  //   full_success    — no feedErrors
+  //   partial_success — at least one source succeeded OR items were processed (incl. reused)
+  //   full_failure    — all sources failed AND no items were processed at all
   const processedAny = (persistResult.insertedItems + persistResult.reusedItems) > 0
+    || raw.length > 0
     || sourceHealthSummary.succeededThisRun > 0
   const writeRunStatus: 'full_success' | 'partial_success' | 'full_failure' =
     feedErrors.length === 0
