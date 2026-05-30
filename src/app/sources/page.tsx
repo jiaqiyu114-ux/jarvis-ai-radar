@@ -31,6 +31,13 @@ const FETCH_STATUS_LABEL: Record<string, string> = {
   db_error:    '数据库写入失败',
 }
 
+const ERROR_STAGE_LABEL: Record<string, string> = {
+  fetch:         'fetch',
+  parse:         'parse',
+  persist:       'persist',
+  health_update: 'health',
+}
+
 function fetchStatusLabel(status: string | null): string {
   if (!status) return '—'
   return FETCH_STATUS_LABEL[status] ?? status
@@ -219,12 +226,19 @@ export default async function SourcesPage() {
                     <td className="px-4 py-3.5">
                       {isRss ? (
                         <div className="space-y-0.5">
-                          <span className={cn(
-                            "text-[10px] block",
-                            source.lastFetchStatus === 'success' ? "text-success" : source.lastFetchStatus ? "text-warning" : "text-muted-foreground/40",
-                          )}>
-                            {fetchStatusLabel(source.lastFetchStatus)}
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span className={cn(
+                              "text-[10px]",
+                              source.lastFetchStatus === 'success' ? "text-success" : source.lastFetchStatus ? "text-warning" : "text-muted-foreground/40",
+                            )}>
+                              {fetchStatusLabel(source.lastFetchStatus)}
+                            </span>
+                            {source.lastFetchErrorStage && source.lastFetchStatus !== 'success' && (
+                              <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-danger/10 text-danger/70 border border-danger/15">
+                                {ERROR_STAGE_LABEL[source.lastFetchErrorStage] ?? source.lastFetchErrorStage}
+                              </span>
+                            )}
+                          </div>
                           {source.lastErrorMessage && source.lastFetchStatus !== 'success' && (
                             <span className="text-[9px] text-danger/70 truncate block max-w-[160px]" title={source.lastErrorMessage}>
                               {source.lastErrorMessage.slice(0, 40)}{source.lastErrorMessage.length > 40 ? '…' : ''}

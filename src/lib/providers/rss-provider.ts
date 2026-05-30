@@ -272,9 +272,6 @@ export async function fetchRssProviderItems(opts?: {
     const start = Date.now()
     let latencyMs:  number | undefined
     let httpStatus: number | undefined
-    const itemsFound    = 0
-    const itemsInserted = 0
-    const itemsSkipped  = 0
 
     // Stage 1: network fetch with per-source timeout
     let xml: string
@@ -370,7 +367,7 @@ export async function fetchRssProviderItems(opts?: {
     }
 
     succeededThisRun++
-    healthPerSource.push({ id: feed.sourceId, name: feed.name, url: feed.feedUrl, success: true, latencyMs, httpStatus, itemsFound, itemsInserted, itemsSkipped })
+    healthPerSource.push({ id: feed.sourceId, name: feed.name, url: feed.feedUrl, success: true, latencyMs, httpStatus, itemsFound: parsed.length, itemsInserted: 0, itemsSkipped: 0 })
 
     // Stage 3: normalise individual items
     let rank = 0
