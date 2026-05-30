@@ -1,41 +1,33 @@
-import { getDailyReport } from "@/lib/data/reports-adapter"
-import { getFeedItems } from "@/lib/data/feed-adapter"
-import { getTopics } from "@/lib/data/topics-adapter"
-import { AppShell } from "@/components/layout/app-shell"
-import ReportsClient from "./_reports-client"
+export const dynamic = 'force-dynamic'
 
-export default async function ReportsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ includeDemo?: string; mode?: string }>
-}) {
-  const sp          = await searchParams
-  const includeDemo = sp.includeDemo === 'true' || sp.mode === 'all'
+import { getDailyRecommendationSnapshot } from '@/lib/data/daily-recommendation-snapshot'
+import { getFeedItems } from '@/lib/data/feed-adapter'
+import { AppShell } from '@/components/layout/app-shell'
+import ReportsClient from './_reports-client'
 
-  const [report, items, topics] = await Promise.all([
-    getDailyReport({ includeDemo }),
-    getFeedItems({ includeDemo }),
-    getTopics({ includeDemo }),
+export default async function ReportsPage() {
+  const [snapshot, feedItems] = await Promise.all([
+    getDailyRecommendationSnapshot(),
+    getFeedItems(),
   ])
 
-  const topSignal = items[0]
-    ? { score: items[0].finalScore, title: items[0].title, category: items[0].category }
+  const topSignal = feedItems[0]
+    ? { score: feedItems[0].finalScore, title: feedItems[0].title, category: feedItems[0].category }
     : undefined
 
-  // No real report yet (pipeline not wired up) — show empty state
-  if (!report) {
+  if (!snapshot.hasSnapshot) {
     return (
       <AppShell topSignal={topSignal}>
         <div className="p-8 max-w-[900px]">
           <p className="page-kicker mb-1">Daily Brief</p>
           <h1 className="editorial-title text-[2.25rem]">今日日报</h1>
-          <div className="mt-8 rounded-lg border border-border py-16 text-center bg-card">
-            <p className="text-sm text-muted-foreground">真实日报尚未生成</p>
-            <p className="text-xs text-muted-foreground/60 mt-2">
-              日报需要完整管道（评分 → 聚类 → AI 摘要），当前尚未接入
+          <div className="mt-8 rounded-lg border border-border py-16 text-center bg-card space-y-2">
+            <p className="text-sm text-muted-foreground">今日推荐快照尚未生成</p>
+            <p className="text-xs text-muted-foreground/60">
+              请在处理队列完成分流后，到今日雷达页面生成今日推荐。
             </p>
-            <p className="text-[10px] text-muted-foreground/40 mt-3">
-              添加 ?includeDemo=true 可查看演示日报
+            <p className="text-[10px] text-muted-foreground/40 mt-2">
+              API: POST /api/today/recommendations/generate
             </p>
           </div>
         </div>
@@ -43,20 +35,5 @@ export default async function ReportsPage({
     )
   }
 
-  const highItems = items
-    .filter(i => i.finalScore >= 80)
-    .sort((a, b) => b.finalScore - a.finalScore)
-    .slice(0, 5)
-
-  const worthWritingCount = topics.filter(t => t.status === 'worth_writing').length
-
-  return (
-    <ReportsClient
-      report={report}
-      highItems={highItems}
-      worthWritingCount={worthWritingCount}
-      topSignal={topSignal}
-      includeDemo={includeDemo}
-    />
-  )
+  return <ReportsClient snapshot={snapshot} topSignal={topSignal} />
 }

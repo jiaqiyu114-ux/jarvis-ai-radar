@@ -1,254 +1,257 @@
 "use client"
 
-import { useState } from "react"
-import { Copy, Check, FileText, TrendingUp, Lightbulb, PenLine, BookOpen, ExternalLink } from "lucide-react"
+import { format } from "date-fns"
+import { zhCN } from "date-fns/locale"
 import { AppShell } from "@/components/layout/app-shell"
 import type { TopSignalData } from "@/components/layout/app-shell"
+import { InformationCard } from "@/components/feed/information-card"
 import { ScoreBadge } from "@/components/feed/score-badge"
-import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
-import type { DailyReport, InformationItem } from "@/types"
+import type { DailyRecommendationSnapshot, DailyRecommendationSnapshotItem } from "@/lib/data/daily-recommendation-snapshot"
+import type { InformationItem } from "@/types"
 
-function buildMarkdown(report: DailyReport): string {
-  return [
-    `# J.A.R.V.I.S. 日报 · ${report.date}`,
-    '',
-    '## 今日摘要',
-    ...report.summary.map(s => `- ${s}`),
-    '',
-    '## 重点报道',
-    ...report.topStories.map(s => `- **[${s.score}]** ${s.title}：${s.summary}`),
-    '',
-    '## 趋势话题',
-    report.trendingTopics.map(t => `#${t}`).join('  '),
-    '',
-    '## 内容选题建议',
-    ...report.contentAngles.map((a, i) => `${i + 1}. ${a}`),
-    '',
-    `---`,
-    `*由 J.A.R.V.I.S. 生成于 ${new Date(report.generatedAt).toLocaleString('zh-CN')}*`,
-  ].join('\n')
+// ── Category colors ───────────────────────────────────────────────────────────
+
+const categoryColors: Record<string, string> = {
+  'AI技术':   'text-blue-700 bg-blue-100 dark:text-blue-400 dark:bg-blue-400/10',
+  '商业动态': 'text-emerald-700 bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-400/10',
+  '产品发布': 'text-sky-700 bg-sky-100 dark:text-cyan-400 dark:bg-cyan-400/10',
+  '监管政策': 'text-amber-700 bg-amber-100 dark:text-orange-400 dark:bg-orange-400/10',
+  '融资并购': 'text-yellow-700 bg-yellow-100 dark:text-yellow-400 dark:bg-yellow-400/10',
+  '行业趋势': 'text-violet-700 bg-violet-100 dark:text-violet-400 dark:bg-violet-400/10',
+  '开源项目': 'text-green-700 bg-green-100 dark:text-green-400 dark:bg-green-400/10',
+  '研究报告': 'text-stone-600 bg-stone-100 dark:text-slate-400 dark:bg-slate-400/10',
+  '人物动态': 'text-rose-700 bg-rose-100 dark:text-pink-400 dark:bg-pink-400/10',
+  '其他':     'text-stone-500 bg-stone-100 dark:text-muted-foreground dark:bg-muted',
 }
 
-function buildWechatDraft(report: DailyReport): string {
-  return [
-    `【AI 日报 ${report.date}】`,
-    '',
-    '今日速览：',
-    ...report.summary.slice(0, 3).map(s => `▶ ${s}`),
-    '',
-    '重点关注：',
-    ...report.topStories.slice(0, 3).map(s => `📌 ${s.title}`),
-    '',
-    '---',
-    '更多内容见完整日报。',
-  ].join('\n')
-}
+// ── Section header ────────────────────────────────────────────────────────────
 
-function buildXhsTopics(report: DailyReport): string {
-  return [
-    `✨ 今日 AI 圈速览（${report.date}）`,
-    '',
-    ...report.contentAngles.map(a => `📝 ${a}`),
-    '',
-    report.trendingTopics.map(t => `#${t}`).join(' '),
-  ].join('\n')
-}
-
-function CopyItem({ label, getText, accent }: { label: string; getText: () => string; accent?: boolean }) {
-  const [copied, setCopied] = useState(false)
-  const handle = async () => {
-    await navigator.clipboard.writeText(getText())
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1800)
-  }
+function SectionHeader({ label, count, accent }: { label: string; count: number; accent?: string }) {
   return (
-    <button
-      onClick={handle}
-      className={cn(
-        "w-full flex items-center justify-between px-3 py-2.5 rounded-lg border text-sm transition-colors text-left",
-        accent
-          ? "bg-primary/8 border-primary/20 text-foreground hover:bg-primary/12"
-          : "bg-card border-border text-foreground hover:bg-accent"
-      )}
-    >
-      <span className="font-medium">{label}</span>
-      {copied
-        ? <Check className="h-3.5 w-3.5 text-success shrink-0" />
-        : <Copy className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-      }
-    </button>
+    <div className="flex items-center gap-2 mb-2">
+      <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", accent ?? "bg-primary")} />
+      <h2 className="section-title">{label}</h2>
+      <span className="meta-text">{count} 条</span>
+    </div>
   )
 }
 
-type Props = {
-  report:            DailyReport
-  highItems:         InformationItem[]
-  worthWritingCount: number
-  topSignal?:        TopSignalData
-  includeDemo?:      boolean
+// ── Snapshot item card ────────────────────────────────────────────────────────
+// Wraps InformationCard so the existing dialog/detail-card behaviour is preserved.
+// Click opens the in-app detail panel; "查看原文" lives inside the detail panel.
+
+function SnapshotItemCard({ item }: { item: DailyRecommendationSnapshotItem }) {
+  return (
+    <div>
+      {/* Recommendation reason strip */}
+      {item.recommendationReason && (
+        <div className="flex items-center gap-2 px-4 py-1 bg-surface border-b border-border/40">
+          <span className="text-[10px] text-muted-foreground/70 line-clamp-1">
+            {item.recommendationReason}
+          </span>
+          {item.shouldEnterDailyReport && (
+            <span className="ml-auto text-[9px] text-primary font-medium whitespace-nowrap">↗ 日报</span>
+          )}
+          {item.shouldTrackEvent && (
+            <span className="text-[9px] text-success font-medium whitespace-nowrap">↗ 追踪</span>
+          )}
+        </div>
+      )}
+      {/* InformationCard handles click→dialog, external link stays inside detail panel */}
+      <InformationCard item={item as unknown as InformationItem} variant="emphasis" scoreSize="md" />
+    </div>
+  )
 }
 
-export default function ReportsClient({ report, highItems, worthWritingCount, topSignal, includeDemo }: Props) {
+// ── Category direction aggregation ───────────────────────────────────────────
+
+function buildCategoryDistribution(items: DailyRecommendationSnapshotItem[]): Array<{ cat: string; count: number }> {
+  const map = new Map<string, number>()
+  for (const item of items) {
+    const cat = (item.category as string) || '其他'
+    map.set(cat, (map.get(cat) ?? 0) + 1)
+  }
+  return [...map.entries()]
+    .map(([cat, count]) => ({ cat, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 6)
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
+type Props = {
+  snapshot:  DailyRecommendationSnapshot
+  topSignal?: TopSignalData
+}
+
+export default function ReportsClient({ snapshot, topSignal }: Props) {
+  const { run, grouped, items } = snapshot
+
+  const generatedAt = run?.generated_at
+    ? format(new Date(run.generated_at), 'MM月dd日 HH:mm', { locale: zhCN })
+    : '—'
+
+  const reportDate = run?.run_date
+    ? format(new Date(run.run_date + 'T00:00:00'), 'yyyy年MM月dd日', { locale: zhCN })
+    : snapshot.date
+
+  const mustReadItems  = grouped.must_read
+  const highValueItems = grouped.high_value
+  const observeItems   = grouped.observe
+  const catDist        = buildCategoryDistribution(items)
+
   return (
     <AppShell topSignal={topSignal}>
-      <div className="p-8 max-w-[1240px] mx-auto">
+      <div className="p-6 md:p-8 max-w-[1280px]">
 
         {/* ── Editorial header ── */}
-        <div className="mb-8">
-          <p className="page-kicker mb-1">{report.date} · Editorial Brief</p>
-          <div className="flex items-end justify-between gap-4">
-            <h1 className="editorial-title text-[2.25rem]">今日日报</h1>
-            {includeDemo && (
-              <span className="text-[10px] text-warning border border-warning/30 bg-warning/10 rounded px-1.5 py-0.5 mb-1">
-                演示日报
-              </span>
-            )}
-          </div>
+        <div className="mb-6">
+          <p className="page-kicker mb-1">{reportDate} · Daily Brief</p>
+          <h1 className="editorial-title text-[2.25rem]">今日日报</h1>
           <p className="page-subtitle mt-1.5">
-            生成于 {new Date(report.generatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-            {' · '}{report.topStories.length} 条重点 · {report.trendingTopics.length} 个趋势话题
+            生成于 {generatedAt}
+            {run && (
+              <>
+                {' · '}候选 {run.total_candidates} 条
+                {' · '}精选 {run.selected_count} 条
+              </>
+            )}
           </p>
         </div>
+
+        {/* ── Stats bar ── */}
+        {run && (
+          <div className="grid grid-cols-4 gap-3 mb-6">
+            {[
+              { label: '必看',   value: run.must_read_count  },
+              { label: '高价值', value: run.high_value_count },
+              { label: '观察',   value: run.observe_count    },
+              { label: '候选池', value: run.total_candidates },
+            ].map(({ label, value }) => (
+              <div key={label} className="border border-border rounded-lg px-4 py-2.5 bg-card text-center">
+                <p className="text-2xl font-bold font-mono leading-none tabular-nums">{value}</p>
+                <p className="muted-label mt-1">{label}</p>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* ── Two-column layout ── */}
         <div className="flex gap-8 items-start">
 
-          {/* ══ LEFT: Report content ══ */}
+          {/* ══ LEFT: Main sections ══ */}
           <div className="flex-1 min-w-0 space-y-8">
 
-            <section>
-              <div className="flex items-center gap-2 mb-4">
-                <FileText className="h-4 w-4 text-primary" />
-                <h2 className="text-base font-semibold text-foreground">今日摘要</h2>
-              </div>
-              <ul className="space-y-2.5">
-                {report.summary.map((line, i) => (
-                  <li key={i} className="flex gap-3 text-sm text-foreground/85 leading-relaxed">
-                    <span className="text-primary font-mono font-bold shrink-0 mt-0.5 w-4 text-center">{i + 1}</span>
-                    <span>{line}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
+            {/* 今日必看 */}
+            {mustReadItems.length > 0 && (
+              <section>
+                <SectionHeader label="今日必看" count={mustReadItems.length} accent="bg-primary animate-pulse" />
+                <div className="border border-primary/15 rounded-lg overflow-hidden bg-primary/3">
+                  {mustReadItems.map(item => <SnapshotItemCard key={item.id} item={item} />)}
+                </div>
+              </section>
+            )}
 
-            <Separator />
+            {/* 高价值精选 */}
+            {highValueItems.length > 0 && (
+              <section>
+                <SectionHeader label="高价值精选" count={highValueItems.length} accent="bg-warning" />
+                <div className="border border-border/60 rounded-lg overflow-hidden bg-card">
+                  {highValueItems.map(item => <SnapshotItemCard key={item.id} item={item} />)}
+                </div>
+              </section>
+            )}
 
-            <section>
-              <div className="flex items-center gap-2 mb-4">
-                <TrendingUp className="h-4 w-4 text-warning" />
-                <h2 className="text-base font-semibold text-foreground">重点报道</h2>
-              </div>
-              <div className="space-y-0 border border-border/60 rounded-lg overflow-hidden bg-card">
-                {report.topStories.map((story, i) => (
-                  <div key={i} className="flex items-start gap-3 px-4 py-3 border-b border-border/40 last:border-0 hover:bg-accent transition-colors">
-                    <ScoreBadge score={story.score} size="sm" />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-foreground">{story.title}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{story.summary}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
+            {/* 观察名单 */}
+            {observeItems.length > 0 && (
+              <section>
+                <SectionHeader label="观察名单" count={observeItems.length} accent="bg-muted-foreground" />
+                <div className="border border-border/50 rounded-lg overflow-hidden bg-card opacity-90">
+                  {observeItems.map(item => <SnapshotItemCard key={item.id} item={item} />)}
+                </div>
+              </section>
+            )}
 
-            <Separator />
-
-            <section>
-              <div className="flex items-center gap-2 mb-4">
-                <TrendingUp className="h-4 w-4 text-sky-500 dark:text-sky-400" />
-                <h2 className="text-base font-semibold text-foreground">趋势话题</h2>
+            {/* 空状态 */}
+            {mustReadItems.length === 0 && highValueItems.length === 0 && observeItems.length === 0 && (
+              <div className="border border-border rounded-lg py-12 text-center bg-card">
+                <p className="text-sm text-muted-foreground">本次快照暂无推荐条目</p>
+                <p className="text-xs text-muted-foreground/60 mt-1">候选池可能不足，尝试扩大时间窗口后重新生成。</p>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {report.trendingTopics.map(topic => (
-                  <span
-                    key={topic}
-                    className="text-xs px-2.5 py-1 rounded-full border border-border bg-card text-foreground hover:border-primary/30 hover:text-primary transition-colors cursor-default"
-                  >
-                    #{topic}
-                  </span>
-                ))}
-              </div>
-            </section>
-
-            <Separator />
-
-            <section>
-              <div className="flex items-center gap-2 mb-4">
-                <Lightbulb className="h-4 w-4 text-violet-600 dark:text-violet-400" />
-                <h2 className="text-base font-semibold text-foreground">内容选题建议</h2>
-              </div>
-              <ul className="space-y-2">
-                {report.contentAngles.map((angle, i) => (
-                  <li key={i} className="flex gap-3 items-start py-2.5 border-b border-border/40 last:border-0">
-                    <span className="text-xs font-mono font-bold text-primary mt-0.5 shrink-0 w-4 text-center">{i + 1}</span>
-                    <span className="text-sm text-foreground/85">{angle}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
+            )}
 
           </div>
 
-          {/* ══ RIGHT: Conversion panel (sticky) ══ */}
-          <div className="w-[360px] shrink-0 sticky top-14 space-y-4">
+          {/* ══ RIGHT: Sidebar ══ */}
+          <div className="w-[320px] shrink-0 sticky top-14 space-y-5">
 
-            <div>
-              <p className="muted-label mb-1.5">内容转化工作台</p>
-              <h3 className="text-sm font-semibold text-foreground">信息 → 判断 → 选题 → 内容</h3>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { label: '可写选题', value: worthWritingCount },
-                { label: '趋势话题', value: report.trendingTopics.length },
-                { label: '内容方向', value: report.contentAngles.length },
-              ].map(({ label, value }) => (
-                <div key={label} className="border border-border rounded-lg px-3 py-2.5 bg-card text-center">
-                  <p className="text-xl font-bold font-mono text-primary tabular-nums">{value}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">{label}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="border border-border rounded-lg p-4 bg-card space-y-2">
-              <p className="muted-label mb-3">导出 / 生成草稿</p>
-              <CopyItem label="复制完整 Markdown" getText={() => buildMarkdown(report)} accent />
-              <CopyItem label="生成公众号草稿" getText={() => buildWechatDraft(report)} />
-              <CopyItem label="生成小红书选题" getText={() => buildXhsTopics(report)} />
-            </div>
-
-            <div className="border border-border rounded-lg p-4 bg-card space-y-3">
-              <p className="muted-label">今日内容方向</p>
-              {[
-                { icon: PenLine, platform: '公众号', angle: report.contentAngles[0] },
-                { icon: BookOpen, platform: '小红书', angle: report.contentAngles[2] },
-              ].filter(d => d.angle).map(({ platform, angle }) => (
-                <div key={platform} className="space-y-1">
-                  <p className="text-[10px] font-semibold text-primary">{platform}</p>
-                  <p className="text-xs text-foreground/75 leading-relaxed">{angle}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="border border-border rounded-lg p-4 bg-card">
-              <p className="muted-label mb-3">今日高分参考</p>
-              <div className="space-y-2">
-                {highItems.map(item => (
-                  <div key={item.id} className="flex items-center gap-2.5 py-1">
-                    <ScoreBadge score={item.finalScore} size="sm" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-foreground truncate">{item.title}</p>
-                      <p className="text-[10px] text-muted-foreground">{item.source}</p>
+            {/* 今日内容方向 */}
+            {catDist.length > 0 && (
+              <div className="border border-border rounded-lg p-4 bg-card">
+                <p className="muted-label mb-3">今日内容方向</p>
+                <div className="space-y-2">
+                  {catDist.map(({ cat, count }) => (
+                    <div key={cat} className="flex items-center gap-2">
+                      <span className={cn("text-[10px] px-1.5 py-px rounded font-medium shrink-0", categoryColors[cat] ?? categoryColors['其他'])}>
+                        {cat}
+                      </span>
+                      <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-primary/40"
+                          style={{ width: `${Math.round((count / (catDist[0]?.count || 1)) * 100)}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] font-mono text-muted-foreground tabular-nums w-4 text-right">{count}</span>
                     </div>
-                    <a href={item.originalUrl} target="_blank" rel="noopener noreferrer"
-                       className="text-muted-foreground/40 hover:text-primary transition-colors shrink-0">
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
-                  </div>
-                ))}
+                  ))}
+                </div>
+                <p className="text-[10px] text-muted-foreground/50 mt-3">
+                  基于今日 {items.length} 条推荐条目统计，不调用 LLM。
+                </p>
               </div>
-            </div>
+            )}
+
+            {/* 快照信息 */}
+            {run && (
+              <div className="border border-border rounded-lg p-4 bg-card">
+                <p className="muted-label mb-3">快照信息</p>
+                <div className="space-y-1.5 text-xs text-muted-foreground">
+                  <p>生成时间：{generatedAt}</p>
+                  <p>候选窗口：
+                    {run.window_start
+                      ? format(new Date(run.window_start), 'MM/dd HH:mm', { locale: zhCN })
+                      : '—'}
+                    {' → '}
+                    {run.window_end
+                      ? format(new Date(run.window_end), 'HH:mm', { locale: zhCN })
+                      : '—'}
+                  </p>
+                  <p>总候选：{run.total_candidates} · 精选：{run.selected_count}</p>
+                  {run.notes && (
+                    <p className="text-[10px] text-muted-foreground/60 mt-2">{run.notes}</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 顶部高分参考 */}
+            {items.length > 0 && (
+              <div className="border border-border rounded-lg p-4 bg-card">
+                <p className="muted-label mb-3">今日评分前三</p>
+                <div className="space-y-2">
+                  {[...items].sort((a, b) => b.finalScore - a.finalScore).slice(0, 3).map(item => (
+                    <div key={item.id} className="flex items-center gap-2.5 py-1">
+                      <ScoreBadge score={item.finalScore} size="sm" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-foreground truncate">{item.title}</p>
+                        <p className="text-[10px] text-muted-foreground">{item.source}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
           </div>
         </div>
