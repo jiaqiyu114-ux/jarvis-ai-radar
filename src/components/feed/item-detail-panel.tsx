@@ -11,6 +11,8 @@ import { cn } from "@/lib/utils"
 import { buildScoreExplanation } from "@/lib/scoring/explanation"
 import { buildInformationDetail } from "@/lib/content/detail-explanation"
 import type { InformationItem, ArticleContent, EvidenceProfile, AnalysisGate } from "@/types"
+import { detectLowValueNoise } from "@/lib/scoring/noise"
+import { normalizeDisplayText } from "@/lib/text/normalize-display-text"
 import type { DimensionStatus } from "@/lib/scoring/explanation"
 import type { InsightType } from "@/lib/content/detail-explanation"
 
@@ -412,6 +414,13 @@ export function ItemDetailPanel({ item, isReal = true }: { item: InformationItem
   // Local article content — updated after a successful fetch without page reload
   const [localContent, setLocalContent] = useState<ArticleContent | undefined>(item.articleContent)
 
+  // Noise detection (pure, no I/O)
+  const noiseResult = detectLowValueNoise(
+    item.title,
+    item.summary,
+    (item.articleContent?.wordCount) ?? null,
+  )
+
   const explanation = buildScoreExplanation(item.scoreBreakdown, item.finalScore, item.penalties)
   const detail      = buildInformationDetail(item, explanation, localContent)
 
@@ -442,7 +451,12 @@ export function ItemDetailPanel({ item, isReal = true }: { item: InformationItem
             </span>
           ))}
         </div>
-        <h2 className="text-base font-semibold text-foreground leading-snug">{item.title}</h2>
+        <h2 className="text-base font-semibold text-foreground leading-snug">
+          {normalizeDisplayText(item.title)}
+        </h2>
+        {noiseResult.isNoise && (
+          <p className="text-[10px] text-warning/80 italic">{noiseResult.reason}</p>
+        )}
         <div className="flex items-center gap-2 flex-wrap">
           <SourceTierBadge tier={item.sourceTier} />
           <span className="text-xs text-foreground/70 font-medium">{item.source}</span>

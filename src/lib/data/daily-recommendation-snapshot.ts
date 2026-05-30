@@ -1,5 +1,7 @@
 import { supabaseServer, isServerSupabaseConfigured } from '@/lib/supabase/server'
 import { getTodaySnapshot, type TodayRecommendationItem } from '@/lib/data/today-adapter'
+import { normalizeDisplayText } from '@/lib/text/normalize-display-text'
+import { detectLowValueNoise, type NoiseResult } from '@/lib/scoring/noise'
 import type {
   AnalysisGate,
   AnalysisPriority,
@@ -281,108 +283,174 @@ function isMissingRelationError(error: { code?: string | null; message?: string 
   return error.code === '42P01' || message.includes('daily_recommendation_') || message.includes('does not exist')
 }
 
-function rowTime(row: CandidateRow): number {
-  return row.fetched_at ? new Date(row.fetched_at).getTime() : 0
+
+// ── Recommendation score (ordering score for today's picks) ──────────────────
+// This is NOT final_score. It is a temporary ranking value used only during
+// snapshot generation to decide which items enter the recommendation output.
+
+function computeRecommendationScore(row: CandidateRow, noise: NoiseResult): number {
+  let score = numberOrZero(row.final_score)
+
+  // Evidence quality bonus
+  const ev = numberOrZero(row.ev_score)
+  if (ev >= 70)       score += 6
+  else if (ev >= 55)  score += 3
+
+  const truth = numberOrZero(row.truth_score)
+  if (truth >= 65)      score += 5
+  else if (truth >= 50) score += 2
+
+  // Content depth bonus
+  const wc = row.content_word_count ?? 0
+  if (wc >= 1200)     score += 6
+  else if (wc >= 600) score += 4
+  else if (wc >= 200) score += 2
+
+  // Source tier bonus
+  const tier = String(row.sources?.source_tier ?? '').toUpperCase()
+  if (tier === 'S')      score += 7
+  else if (tier === 'A') score += 5
+  else if (tier === 'B') score += 3
+
+  // Freshness bonus
+  const fetchedMs = row.fetched_at ? new Date(row.fetched_at).getTime() : 0
+  const hoursAgo  = fetchedMs > 0 ? (Date.now() - fetchedMs) / 3_600_000 : 999
+  if (hoursAgo < 24)      score += 4
+  else if (hoursAgo < 72) score += 2
+
+  // Signal flags
+  if (row.should_enter_daily_report === true) score += 5
+  if (row.should_track_event === true)        score += 3
+
+  // Noise penalty
+  score -= noise.penalty
+
+  return Math.max(0, Math.min(100, Math.round(score)))
 }
 
-const tierRank: Record<string, number> = {
-  cluster: 5,
-  deep: 4,
-  standard: 3,
-  light: 2,
-  none: 1,
+// Section caps: don't force-fill sections if good candidates aren't available
+const SECTION_CAPS: Record<DbDailyRecommendationSection, number> = {
+  must_read:  3,
+  high_value: 8,
+  observe:    5,
+}
+
+function sectionFor(
+  row:   CandidateRow,
+  score: number,
+  noise: NoiseResult,
+): DbDailyRecommendationSection | null {
+  const strongNoise = noise.penalty >= 15
+  const evOk   = numberOrZero(row.ev_score) >= 65 || numberOrZero(row.truth_score) >= 65
+  const trackOk = row.should_track_event === true
+
+  // must_read: high rec score + not strong noise + evidence or event signal
+  if (!strongNoise && score >= 78 && (evOk || trackOk)) return 'must_read'
+
+  // high_value: good score + not strong noise
+  if (!strongNoise && score >= 65) return 'high_value'
+
+  // observe: moderate score, no dominant noise
+  if (score >= 50 && noise.penalty < 15) return 'observe'
+
+  return null  // excluded from snapshot
 }
 
 function sortCandidates(rows: CandidateRow[]): CandidateRow[] {
-  return [...rows].sort((a, b) => {
-    const daily = Number(b.should_enter_daily_report === true) - Number(a.should_enter_daily_report === true)
-    if (daily !== 0) return daily
-
-    const track = Number(b.should_track_event === true) - Number(a.should_track_event === true)
-    if (track !== 0) return track
-
-    const tier = (tierRank[b.analysis_tier ?? 'none'] ?? 0) - (tierRank[a.analysis_tier ?? 'none'] ?? 0)
-    if (tier !== 0) return tier
-
-    const finalScore = numberOrZero(b.final_score) - numberOrZero(a.final_score)
-    if (finalScore !== 0) return finalScore
-
-    const evScore = numberOrZero(b.ev_score) - numberOrZero(a.ev_score)
-    if (evScore !== 0) return evScore
-
-    const truthScore = numberOrZero(b.truth_score) - numberOrZero(a.truth_score)
-    if (truthScore !== 0) return truthScore
-
-    const traceScore = numberOrZero(b.source_trace_score) - numberOrZero(a.source_trace_score)
-    if (traceScore !== 0) return traceScore
-
-    return rowTime(b) - rowTime(a)
-  })
+  // Pre-compute recommendation score once per row for sorting
+  const scored = rows.map(r => ({
+    row:   r,
+    noise: detectLowValueNoise(
+      normalizeDisplayText(r.title),
+      r.summary ?? '',
+      r.content_word_count,
+    ),
+    recScore: 0,
+  }))
+  scored.forEach(s => { s.recScore = computeRecommendationScore(s.row, s.noise) })
+  scored.sort((a, b) => b.recScore - a.recScore)
+  return scored.map(s => s.row)
 }
 
-function sectionFor(row: CandidateRow): DbDailyRecommendationSection {
-  if (
-    numberOrZero(row.final_score) >= 88 ||
-    (row.should_enter_daily_report === true && numberOrZero(row.ev_score) >= 60)
-  ) {
-    return 'must_read'
-  }
-
-  if (
-    numberOrZero(row.final_score) >= 75 ||
-    row.analysis_tier === 'standard' ||
-    row.analysis_tier === 'deep' ||
-    row.analysis_tier === 'cluster'
-  ) {
-    return 'high_value'
-  }
-
-  return 'observe'
-}
-
-function reasonTags(row: CandidateRow, section: DbDailyRecommendationSection): string[] {
+function reasonTags(row: CandidateRow, section: DbDailyRecommendationSection, noise: NoiseResult): string[] {
   const tags: string[] = [section]
   if (row.should_enter_daily_report) tags.push('daily_report')
-  if (row.should_track_event) tags.push('event_tracking')
-  if (row.analysis_tier) tags.push(`analysis_${row.analysis_tier}`)
+  if (row.should_track_event)        tags.push('event_tracking')
+  if (row.analysis_tier)             tags.push(`analysis_${row.analysis_tier}`)
   if (numberOrZero(row.ev_score) >= 55) tags.push('evidence_strong')
   if (numberOrZero(row.truth_score) >= 55) tags.push('truth_signal')
   if (numberOrZero(row.final_score) >= 75) tags.push('high_score')
+  if (noise.isNoise && noise.noiseType) tags.push(`noise_${noise.noiseType}`)
   return tags
 }
 
-function recommendationReason(row: CandidateRow, section: DbDailyRecommendationSection): string {
+function recommendationReason(
+  row:     CandidateRow,
+  section: DbDailyRecommendationSection,
+  noise:   NoiseResult,
+): string {
+  if (noise.isNoise && noise.reason) return noise.reason
+
+  const category  = row.category ?? ''
+  const titleLow  = normalizeDisplayText(row.title).toLowerCase()
+  const isModel   = /\b(model|gpt|claude|gemini|llama|mistral|llm|llms|agent)\b/.test(titleLow)
+  const isFunding = category === '融资并购'
+  const isPolicy  = category === '监管政策'
+  const isProduct = category === '产品发布'
+  const isResearch= category === '研究报告'
+  const evOk      = numberOrZero(row.ev_score) >= 65
+  const hasFetched= row.content_fetch_status === 'fetched'
+  const sourceTier= String(row.sources?.source_tier ?? '').toUpperCase()
+  const topSource = sourceTier === 'S' || sourceTier === 'A'
+  const singleSource = !row.should_track_event
+
   if (section === 'must_read') {
-    return '分数高且证据较完整，适合进入今日重点阅读。'
+    if (isModel)   return '模型能力或产品形态有新变化，可能影响开发工具链和内容生产方式，值得今日重点跟进。'
+    if (isFunding) return '资本正在押注某类 AI 产品方向，可用于观察行业资源流向和竞争格局变化。'
+    if (isPolicy)  return '监管动态可能改变行业边界，建议作为今日重要背景信息优先阅读。'
+    if (isResearch)return '新研究结论可能改变对技术路线或市场走向的判断，值得深读。'
+    return '证据完整、价值较高，适合进入今日重点判断列表。'
   }
 
-  if (
-    row.sources?.source_tier &&
-    ['S', 'A'].includes(String(row.sources.source_tier).toUpperCase()) &&
-    row.content_fetch_status === 'fetched'
-  ) {
-    return '来源可信且已抓取正文，适合作为选题候选。'
+  if (row.should_track_event === true) {
+    return '该事件可能持续发酵，适合进入追踪队列，观察后续多家媒体跟进情况。'
   }
 
-  if (row.analysis_tier === 'deep' || row.analysis_tier === 'cluster' || row.analysis_stage?.endsWith('_ready')) {
-    return '已进入处理队列，适合后续做深度分析。'
+  if (isModel && hasFetched) {
+    return '指向模型能力或 AI 工具链变化，已有完整正文，适合今日深读判断。'
+  }
+
+  if (isProduct && evOk) {
+    return '指向 AI 产品新特性或发布动态，证据较完整，适合作为选题或决策背景材料。'
+  }
+
+  if (isFunding) {
+    return '反映资本流向，可用于观察哪类 AI 方向正在获得市场投注。'
+  }
+
+  if (evOk && hasFetched) {
+    return '来源可信且有正文，证据基础较完整，适合作为今日深度判断参考。'
+  }
+
+  if (topSource && singleSource) {
+    return '来源可信度较高，但目前为单一来源，建议关注是否有更多媒体跟进。'
   }
 
   if (section === 'observe') {
-    return '真实性线索一般，但趋势信号值得继续观察。'
+    return '信息价值暂未达入选重点，但趋势信号值得持续观察，避免漏掉后续发酵。'
   }
 
-  return '综合价值达到推荐阈值，适合今天优先浏览。'
+  return '综合价值初步达标，适合今日轻量浏览。'
 }
 
 function excerpt(row: CandidateRow): string {
-  const summary = row.summary?.trim()
+  const summary = normalizeDisplayText(row.summary)
   if (summary) return summary
-  const articleExcerpt = row.article_excerpt?.trim()
+  const articleExcerpt = normalizeDisplayText(row.article_excerpt)
   if (articleExcerpt) return articleExcerpt
   const cleanText = row.clean_text?.replace(/\s+/g, ' ').trim()
   if (!cleanText) return ''
-  return cleanText.length > 180 ? `${cleanText.slice(0, 180)}...` : cleanText
+  return cleanText.length > 180 ? `${cleanText.slice(0, 180)}…` : cleanText
 }
 
 function mapArticleContent(row: CandidateRow): ArticleContent | undefined {
@@ -458,7 +526,7 @@ function mapBaseItem(row: CandidateRow, reason: string): TodayRecommendationItem
   const source = row.sources ?? null
   return {
     id: row.id,
-    title: row.title || '(no title)',
+    title: normalizeDisplayText(row.title) || '(no title)',
     summary: excerpt(row),
     source: source?.name ?? (row.source_id ? '未知信源' : 'Unknown Source'),
     sourceTier: toSourceTier(source?.source_tier),
@@ -620,18 +688,39 @@ function preparedItems(
   rows: CandidateRow[],
   run: Pick<DbDailyRecommendationRun, 'id' | 'generated_at' | 'window_start' | 'window_end'>,
 ): DailyRecommendationSnapshotItem[] {
-  return rows.map((row, index) => {
-    const section = sectionFor(row)
-    const reason = recommendationReason(row, section)
-    return mapSnapshotItem(row, {
-      runId: run.id,
-      rank: index + 1,
+  // rows are already sorted by computeRecommendationScore via sortCandidates
+  const counts: Record<DbDailyRecommendationSection, number> = {
+    must_read: 0, high_value: 0, observe: 0,
+  }
+  const result: DailyRecommendationSnapshotItem[] = []
+  let rank = 0
+
+  for (const row of rows) {
+    const noise    = detectLowValueNoise(
+      normalizeDisplayText(row.title),
+      row.summary ?? '',
+      row.content_word_count,
+    )
+    const recScore = computeRecommendationScore(row, noise)
+    const section  = sectionFor(row, recScore, noise)
+
+    if (!section) continue                         // excluded by noise or low score
+    if (counts[section] >= SECTION_CAPS[section]) continue  // section cap reached
+
+    counts[section]++
+    rank++
+    const reason = recommendationReason(row, section, noise)
+    result.push(mapSnapshotItem(row, {
+      runId:   run.id,
+      rank,
       section,
       reason,
-      tags: reasonTags(row, section),
+      tags:    reasonTags(row, section, noise),
       run,
-    })
-  })
+    }))
+  }
+
+  return result
 }
 
 function runInsertPayload(args: {
@@ -759,7 +848,12 @@ export async function getDailyRecommendationSnapshot(date?: string): Promise<Dai
     .map(row => {
       const itemRow = row.items as CandidateRow
       const section = row.section
-      const reason = row.recommendation_reason ?? recommendationReason(itemRow, section)
+      const noise  = detectLowValueNoise(
+        normalizeDisplayText(itemRow.title),
+        itemRow.summary ?? '',
+        itemRow.content_word_count,
+      )
+      const reason = row.recommendation_reason ?? recommendationReason(itemRow, section, noise)
       return mapSnapshotItem(itemRow, {
         runId: row.run_id,
         rank: row.rank,

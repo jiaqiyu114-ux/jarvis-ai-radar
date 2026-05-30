@@ -1,6 +1,7 @@
 import { mockItems, mockStats } from '@/config/mock-data'
 import { listItemsWithSource, listItems } from '@/lib/db/items'
 import { shouldUseDatabase } from './runtime'
+import { normalizeDisplayText } from '@/lib/text/normalize-display-text'
 import type { InformationItem, DashboardStats, Category, SourceTier, ArticleContent, ContentFetchStatus, EvidenceProfile, ClaimStatus, EvidenceLevel, SourceNature, AnalysisGate, AnalysisTier, AnalysisPriority, AnalysisStage, TokenBudgetTier } from '@/types'
 import type { DbItemWithSource } from '@/lib/db/items'
 import type { DbSourceTier } from '@/types/database'
@@ -33,8 +34,8 @@ function mapDbItem(item: DbItemWithSource): InformationItem {
 
   return {
     id:          item.id,
-    title:       item.title || '(no title)',
-    summary:     item.summary || '',
+    title:       normalizeDisplayText(item.title) || '(no title)',
+    summary:     normalizeDisplayText(item.summary),
     source:      sourceName,
     sourceTier:  toSourceTier(rawTier),
     publishedAt: item.published_at,

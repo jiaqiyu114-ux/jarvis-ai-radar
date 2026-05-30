@@ -1,4 +1,6 @@
 import { supabaseServer, isServerSupabaseConfigured } from '@/lib/supabase/server'
+import { normalizeDisplayText } from '@/lib/text/normalize-display-text'
+import { detectLowValueNoise } from '@/lib/scoring/noise'
 import type {
   AnalysisGate,
   AnalysisPriority,
@@ -265,10 +267,10 @@ function numberOrZero(value: number | null | undefined): number {
 }
 
 function cleanExcerpt(row: TodayRow): string {
-  const fromSummary = row.summary?.trim()
+  const fromSummary = normalizeDisplayText(row.summary)
   if (fromSummary) return fromSummary
 
-  const fromArticle = row.article_excerpt?.trim()
+  const fromArticle = normalizeDisplayText(row.article_excerpt)
   if (fromArticle) return fromArticle
 
   const text = row.clean_text?.replace(/\s+/g, ' ').trim()
@@ -351,9 +353,18 @@ function mapAnalysisGate(row: TodayRow): AnalysisGate | undefined {
 }
 
 function isRecommendationCandidate(row: TodayRow): boolean {
-  return row.data_origin === 'real' && (
+  if (row.data_origin !== 'real') return false
+  const noise = detectLowValueNoise(
+    normalizeDisplayText(row.title),
+    row.summary ?? '',
+    row.content_word_count,
+  )
+  // Strong noise with low score is excluded from today's picks
+  if (noise.penalty >= 15 && numberOrZero(row.final_score) < 60) return false
+
+  return (
     row.should_enter_daily_report === true ||
-    numberOrZero(row.final_score) >= 75 ||
+    numberOrZero(row.final_score) >= 65 ||
     row.analysis_tier === 'standard' ||
     row.analysis_tier === 'deep' ||
     row.analysis_tier === 'cluster' ||
@@ -363,31 +374,45 @@ function isRecommendationCandidate(row: TodayRow): boolean {
 }
 
 function recommendationReason(row: TodayRow): string {
+  const noise     = detectLowValueNoise(
+    normalizeDisplayText(row.title),
+    row.summary ?? '',
+    row.content_word_count,
+  )
+  if (noise.isNoise && noise.reason) return noise.reason
+
+  const category  = row.category ?? ''
+  const titleLow  = normalizeDisplayText(row.title).toLowerCase()
+  const isModel   = /\b(model|gpt|claude|gemini|llama|mistral|llm|llms|agent)\b/.test(titleLow)
+  const isFunding = category === '融资并购'
+  const isPolicy  = category === '监管政策'
+  const isResearch= category === '研究报告'
+  const evOk      = numberOrZero(row.ev_score) >= 65
+
   if (row.should_enter_daily_report === true) {
-    return '推荐理由：证据和价值达到日报候选标准，适合今天重点阅读。'
+    if (isModel)    return '模型能力或产品形态有新变化，值得今日重点跟进。'
+    if (isFunding)  return '资本正在押注某类 AI 产品方向，可用于观察行业资源流向。'
+    if (isPolicy)   return '监管动态可能改变行业边界，建议今日优先阅读。'
+    if (isResearch) return '新研究结论可能改变对技术路线的判断，值得深读。'
+    return '证据和价值达到日报候选标准，适合今天重点阅读。'
   }
 
   if (row.should_track_event === true) {
-    return '推荐理由：这条信息可能继续发酵，适合进入事件追踪。'
+    return '该事件可能持续发酵，适合进入追踪队列观察后续进展。'
   }
 
+  if (isModel && evOk) return '指向模型能力变化，证据较完整，适合今日深读判断。'
+  if (isFunding)       return '反映资本流向，可用于判断 AI 行业资源分布变化。'
+
   if (numberOrZero(row.source_trace_score) >= 75) {
-    return '推荐理由：来源链路较完整，方便进一步核查原文。'
+    return '来源链路完整，方便进一步核查，适合作为判断背景材料。'
   }
 
   if (numberOrZero(row.ev_score) >= 55) {
-    return '推荐理由：已有正文、作者、发布时间等证据，判断基础较完整。'
+    return '证据基础较完整，但尚无足够多源验证，适合先行观察。'
   }
 
-  if (numberOrZero(row.final_score) >= 75) {
-    return '推荐理由：综合分较高，兼具信息价值和后续处理价值。'
-  }
-
-  if (row.analysis_tier === 'light') {
-    return '推荐理由：信息价值初步达标，可先轻量观察。'
-  }
-
-  return '推荐理由：信息价值初步达标，可先轻量观察。'
+  return '信息价值初步达标，适合今日轻量浏览。'
 }
 
 const tierRank: Record<string, number> = {
@@ -435,7 +460,7 @@ function mapRecommendation(row: TodayRow): TodayRecommendationItem {
 
   return {
     id: row.id,
-    title: row.title || '(no title)',
+    title: normalizeDisplayText(row.title) || '(no title)',
     summary: cleanExcerpt(row),
     source: source?.name ?? (row.source_id ? '未知信源' : 'Unknown Source'),
     sourceTier: toSourceTier(source?.source_tier),
