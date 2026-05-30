@@ -51,6 +51,10 @@ export type DbDailyRecommendationRunStatus = 'generated' | 'dry_run' | 'failed'
 
 export type DbDailyRecommendationSection = 'must_read' | 'high_value' | 'observe'
 
+export type DbEventClusterStatus = 'active' | 'watching' | 'cooling' | 'archived'
+
+export type DbEventClusterRole = 'primary' | 'supporting' | 'update' | 'duplicate'
+
 // ── sources ───────────────────────────────────────────────────────────────────
 
 export type DbSource = {
@@ -658,6 +662,67 @@ export type DbDailyRecommendationItemInsert = {
 
 export type DbDailyRecommendationItemUpdate = Partial<DbDailyRecommendationItemInsert>
 
+// ── event_clusters ─────────────────────────────────────────────────────────────
+
+export type DbEventCluster = {
+  id:             string
+  cluster_key:    string
+  title:          string
+  summary:        string | null
+  status:         DbEventClusterStatus
+  primary_item_id:string | null
+  first_seen_at:  string | null
+  last_seen_at:   string | null
+  item_count:     number
+  source_count:   number
+  confidence:     number
+  match_reason:   string | null
+  metadata:       Record<string, unknown>
+  created_at:     string
+  updated_at:     string
+}
+
+export type DbEventClusterInsert = {
+  cluster_key:     string
+  title:           string
+  summary?:        string | null
+  status?:         DbEventClusterStatus
+  primary_item_id?:string | null
+  first_seen_at?:  string | null
+  last_seen_at?:   string | null
+  item_count?:     number
+  source_count?:   number
+  confidence?:     number
+  match_reason?:   string | null
+  metadata?:       Record<string, unknown>
+}
+
+export type DbEventClusterUpdate = Partial<DbEventClusterInsert> & {
+  updated_at?: string
+}
+
+// ── event_cluster_items ────────────────────────────────────────────────────────
+
+export type DbEventClusterItem = {
+  id:                string
+  cluster_id:        string
+  item_id:           string
+  role:              DbEventClusterRole
+  similarity_reason: string | null
+  score:             number | null
+  added_at:          string
+}
+
+export type DbEventClusterItemInsert = {
+  cluster_id:        string
+  item_id:           string
+  role?:             DbEventClusterRole
+  similarity_reason?: string | null
+  score?:            number | null
+}
+
+export type DbEventClusterItemUpdate = Partial<DbEventClusterItemInsert>
+
 // ── Supabase Database helper type ──────────────────────────────────────────────
 // Used to type the SupabaseClient: createClient<Database>(url, key)
 //
@@ -729,6 +794,18 @@ export type Database = {
         Row:           DbDailyRecommendationItem
         Insert:        DbDailyRecommendationItemInsert
         Update:        DbDailyRecommendationItemUpdate
+        Relationships: []
+      }
+      event_clusters: {
+        Row:           DbEventCluster
+        Insert:        DbEventClusterInsert
+        Update:        DbEventClusterUpdate
+        Relationships: []
+      }
+      event_cluster_items: {
+        Row:           DbEventClusterItem
+        Insert:        DbEventClusterItemInsert
+        Update:        DbEventClusterItemUpdate
         Relationships: []
       }
       item_feedback: {

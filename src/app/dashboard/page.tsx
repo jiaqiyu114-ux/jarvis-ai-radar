@@ -6,6 +6,7 @@ import { StatCard } from "@/components/dashboard/stat-card"
 import { ScoreBadge } from "@/components/feed/score-badge"
 import { SourceTierBadge } from "@/components/feed/source-tier-badge"
 import { TodayRecommendationCard } from "./_today-recommendation-card"
+import { listEventClusters, type EventClusterListItem } from "@/lib/db/event-clusters"
 import {
   getLatestDailyRecommendationSnapshot,
   getLiveDailyRecommendationPreview,
@@ -45,6 +46,43 @@ function SideSection({
       <h2 className="section-title mb-1.5">{title}</h2>
       {items.length > 0
         ? items.map(item => <MiniSignal key={item.id} item={item} />)
+        : <p className="py-4 text-center text-xs text-muted-foreground">{empty}</p>
+      }
+    </section>
+  )
+}
+
+function MiniCluster({ cluster }: { cluster: EventClusterListItem }) {
+  return (
+    <div className="border-b border-border last:border-0 py-2.5">
+      <p className="line-clamp-2 text-xs font-medium leading-snug text-foreground">
+        {cluster.title}
+      </p>
+      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+        <span className="text-[10px] text-muted-foreground">{cluster.status}</span>
+        <span className="text-muted-foreground/40 text-[10px]">·</span>
+        <span className="text-[10px] text-muted-foreground">items {cluster.itemCount}</span>
+        <span className="text-muted-foreground/40 text-[10px]">·</span>
+        <span className="text-[10px] text-muted-foreground">confidence {cluster.confidence}</span>
+      </div>
+    </div>
+  )
+}
+
+function ClusterSideSection({
+  title,
+  empty,
+  clusters,
+}: {
+  title: string
+  empty: string
+  clusters: EventClusterListItem[]
+}) {
+  return (
+    <section className="border border-border rounded-lg bg-card px-3 py-2.5">
+      <h2 className="section-title mb-1.5">{title}</h2>
+      {clusters.length > 0
+        ? clusters.map(cluster => <MiniCluster key={cluster.id} cluster={cluster} />)
         : <p className="py-4 text-center text-xs text-muted-foreground">{empty}</p>
       }
     </section>
@@ -98,6 +136,16 @@ export default async function DashboardPage() {
     ? null
     : await getLiveDailyRecommendationPreview(12)
 
+  let eventClusters: EventClusterListItem[] = []
+  try {
+    const result = await listEventClusters({ limit: 8, includeItems: false })
+    eventClusters = result.clusters
+      .filter(cluster => cluster.status === "active" || cluster.status === "watching")
+      .slice(0, 5)
+  } catch {
+    eventClusters = []
+  }
+
   const recommendations = snapshot.hasSnapshot
     ? snapshot.items
     : livePreview?.recommendations ?? []
@@ -124,9 +172,6 @@ export default async function DashboardPage() {
 
   const highScoreReference = [...recommendations]
     .sort((a, b) => b.finalScore - a.finalScore)
-    .slice(0, 5)
-  const eventCandidates = recommendations
-    .filter(item => item.shouldTrackEvent || item.analysisTier === 'cluster')
     .slice(0, 5)
   const pendingCandidates = recommendations
     .filter(item => item.analysisGate?.analysisStage === 'unprocessed' || item.analysisStage === 'unprocessed')
@@ -263,10 +308,10 @@ export default async function DashboardPage() {
               empty="暂无高分参考"
               items={highScoreReference}
             />
-            <SideSection
+            <ClusterSideSection
               title="事件候选"
-              empty="暂无事件追踪候选"
-              items={eventCandidates}
+              empty="暂无真实事件候选"
+              clusters={eventClusters}
             />
             <SideSection
               title="待处理候选"

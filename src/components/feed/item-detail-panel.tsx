@@ -16,6 +16,7 @@ import { normalizeDisplayText } from "@/lib/text/normalize-display-text"
 import type { DimensionStatus } from "@/lib/scoring/explanation"
 import type { InsightType } from "@/lib/content/detail-explanation"
 import { ItemFeedbackActions } from "@/components/feedback/item-feedback-actions"
+import { ItemClusterLink } from "@/components/clusters/item-cluster-link"
 
 // ── Colors / maps ─────────────────────────────────────────────────────────────
 
@@ -765,22 +766,7 @@ export function ItemDetailPanel({
 
       {/* ── 9. 事件追踪 ── */}
       <Section label="事件追踪">
-        <div className="flex items-start justify-between gap-4">
-          <p className="text-xs text-muted-foreground">{detail.timeline.message}</p>
-          {detail.timeline.canLinkToClusters ? (
-            <a
-              href="/clusters"
-              className="shrink-0 text-[10px] text-primary border border-primary/20 bg-primary/5 hover:bg-primary/12 rounded px-2 py-1 transition-colors font-medium whitespace-nowrap"
-              onClick={e => e.stopPropagation()}
-            >
-              查看事件追踪 →
-            </a>
-          ) : (
-            <span className="shrink-0 text-[10px] text-muted-foreground/40 border border-border/40 rounded px-2 py-1 whitespace-nowrap cursor-not-allowed">
-              暂未形成事件簇
-            </span>
-          )}
-        </div>
+        <ItemClusterLink itemId={item.id} />
       </Section>
 
       <Divider />
