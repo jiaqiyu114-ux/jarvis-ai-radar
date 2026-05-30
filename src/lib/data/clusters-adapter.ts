@@ -38,10 +38,25 @@ export const allClusters: MockCluster[] = mockClusters
 
 // ── Async functions ───────────────────────────────────────────────────────────
 
-export async function getClusters(): Promise<MockCluster[]> {
+/**
+ * Returns event clusters for display.
+ *
+ * In DB mode: returns real clusters from the database (empty array if none yet).
+ * mockClusters are demo data and are NOT shown by default in DB mode.
+ * Pass { includeDemo: true } to append mock clusters as demo preview.
+ *
+ * In non-DB mode (no Supabase): always returns mockClusters for dev/demo.
+ */
+export async function getClusters(opts?: { includeDemo?: boolean }): Promise<MockCluster[]> {
+  const includeDemo = opts?.includeDemo ?? false
   if (shouldUseDatabase()) {
     const rows = await listClusters()
-    if (rows.length > 0) return rows.map(mapDbCluster)
+    const realClusters = rows.map(mapDbCluster)
+    if (includeDemo) {
+      // Append mock clusters as demo overlay when explicitly requested
+      return [...realClusters, ...mockClusters]
+    }
+    return realClusters   // May be empty — that is the correct real-data state
   }
-  return mockClusters
+  return mockClusters   // Non-DB mode only: always use mock
 }

@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { Copy, Check, FileText, TrendingUp, Lightbulb, PenLine, BookOpen, ExternalLink } from "lucide-react"
 import { AppShell } from "@/components/layout/app-shell"
+import type { TopSignalData } from "@/components/layout/app-shell"
 import { ScoreBadge } from "@/components/feed/score-badge"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
@@ -81,14 +82,15 @@ function CopyItem({ label, getText, accent }: { label: string; getText: () => st
 }
 
 type Props = {
-  report:          DailyReport
-  highItems:       InformationItem[]
+  report:            DailyReport
+  highItems:         InformationItem[]
   worthWritingCount: number
+  topSignal?:        TopSignalData
 }
 
-export default function ReportsClient({ report, highItems, worthWritingCount }: Props) {
+export default function ReportsClient({ report, highItems, worthWritingCount, topSignal }: Props) {
   return (
-    <AppShell>
+    <AppShell topSignal={topSignal}>
       <div className="p-8 max-w-[1240px] mx-auto">
 
         {/* ── Editorial header ── */}

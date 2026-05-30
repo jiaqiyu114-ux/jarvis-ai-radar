@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { AppShell } from "@/components/layout/app-shell"
+import type { TopSignalData } from "@/components/layout/app-shell"
 import { TopicCard } from "@/components/topics/topic-card"
 import type { TopicItem, TopicStatus } from "@/types"
 import { cn } from "@/lib/utils"
@@ -15,7 +16,7 @@ const statusTabs: Array<{ value: TopicStatus | 'all'; label: string }> = [
   { value: 'abandoned',     label: '已放弃' },
 ]
 
-export default function TopicsClient({ topics }: { topics: TopicItem[] }) {
+export default function TopicsClient({ topics, topSignal }: { topics: TopicItem[]; topSignal?: TopSignalData }) {
   const [activeTab, setActiveTab] = useState<TopicStatus | 'all'>('all')
 
   const filtered = activeTab === 'all'
@@ -28,7 +29,7 @@ export default function TopicsClient({ topics }: { topics: TopicItem[] }) {
   })
 
   return (
-    <AppShell>
+    <AppShell topSignal={topSignal}>
       <div className="p-8 max-w-[960px]">
 
         {/* ── Editorial header ── */}

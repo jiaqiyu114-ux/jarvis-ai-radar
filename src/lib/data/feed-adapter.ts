@@ -1,5 +1,5 @@
 import { mockItems, mockStats } from '@/config/mock-data'
-import { listItemsWithSource, listSelectedItemsWithSource, listItems } from '@/lib/db/items'
+import { listItemsWithSource, listItems } from '@/lib/db/items'
 import { shouldUseDatabase } from './runtime'
 import type { InformationItem, DashboardStats, Category, SourceTier } from '@/types'
 import type { DbItemWithSource } from '@/lib/db/items'
@@ -57,6 +57,25 @@ function mapDbItem(item: DbItemWithSource): InformationItem {
   }
 }
 
+// ── Shared origin filter ──────────────────────────────────────────────────────
+
+/**
+ * Exclude items marked as demo or mock data.
+ * Works with any object that may carry a data_origin field.
+ * Items without the field (pre-migration) are treated as real and pass through.
+ */
+export function filterRealItems<T extends object>(rows: T[]): T[] {
+  return rows.filter(r => {
+    const origin = (r as Record<string, unknown>)['data_origin'] as string | undefined
+    return origin !== 'demo' && origin !== 'mock'
+  })
+}
+
+/** True if the item should be excluded from the real-only feed. */
+export function isDemoItem(item: { data_origin?: string }): boolean {
+  return item.data_origin === 'demo' || item.data_origin === 'mock'
+}
+
 // ── Sync constants (Client Components) — always mock ─────────────────────────
 // Client Components cannot await at module load; they use these as initial data.
 
@@ -93,24 +112,35 @@ export async function getFeedItems(opts?: { includeDemo?: boolean }): Promise<In
   return mockItems
 }
 
-export async function getSelectedItems(): Promise<InformationItem[]> {
+/**
+ * Returns items with final_score >= 75 for the 精选流 page.
+ *
+ * Key change from previous version: does NOT filter by status='selected' because
+ * real RSS items are ingested with status='new' or 'scored', never 'selected'.
+ * Filtering by status would always return empty → mock fallback.
+ *
+ * In DB mode: returns real high-score items (empty array if none — no mock fallback).
+ * Pass { includeDemo: true } to also include demo/mock items.
+ */
+export async function getSelectedItems(opts?: { includeDemo?: boolean }): Promise<InformationItem[]> {
+  const includeDemo = opts?.includeDemo ?? false
   if (shouldUseDatabase()) {
-    const rows = await listSelectedItemsWithSource()
-    if (rows.length > 0) return rows.map(mapDbItem)
+    const rows = await listItemsWithSource({ sortByScore: true, minScore: 75 })
+    const relevant = includeDemo ? rows : filterRealItems(rows)
+    return relevant.map(mapDbItem)   // returns [] if empty — no static mock fallback in DB mode
   }
   return mockItems.filter(item => item.finalScore >= 75)
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
   if (shouldUseDatabase()) {
-    const [all, selected] = await Promise.all([
-      listItems({ limit: 500 }),
-      listItems({ minScore: 75, limit: 500 }),
-    ])
-    if (all.length > 0) {
+    const all = await listItems({ limit: 500 })
+    const realAll       = filterRealItems(all)
+    const realHighScore = realAll.filter(i => i.final_score >= 75)
+    if (realAll.length > 0) {
       return {
-        todayTotal:     all.length,
-        highScoreCount: selected.length,
+        todayTotal:     realAll.length,
+        highScoreCount: realHighScore.length,
         newClusters:    0,
         pendingTopics:  0,
       }

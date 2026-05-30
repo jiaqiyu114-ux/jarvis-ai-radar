@@ -99,6 +99,43 @@ This prevents the same source from being created twice when one call has
   then run a dry-run merge script, then apply after confirming.
 - This work is deferred to a future `source-merge-v1` task.
 
+## Scope of Real/Demo Filtering
+
+The data boundary applies to ALL default product pages, not just `/feed`:
+
+| Page         | Filter applied                             | Demo override              |
+|--------------|--------------------------------------------|----------------------------|
+| `/feed`      | `getFeedItems()` filters data_origin='demo' | `?includeDemo=true`       |
+| `/selected`  | `getSelectedItems()` filters demo items    | `?includeDemo=true`        |
+| `/clusters`  | `getClusters()` returns only DB clusters   | `?includeDemo=true`        |
+| `/dashboard` | `getFeedItems()` → real items only         | (no override exposed)      |
+| `/reports`   | `getFeedItems()` → real items only         | (no override exposed)      |
+| Header ticker| `topSignal` from real items only           | (not exposed)              |
+
+### Key behavioral changes
+
+- **`/selected`**: No longer filters by `status='selected'`. Real RSS items ingested with
+  `status='new'` or `status='scored'` are now eligible for the selected feed if `final_score >= 75`.
+  The previous filter was always empty in practice, causing static mock fallback.
+
+- **`/clusters`**: When Supabase is configured, `getClusters()` returns only DB clusters.
+  `mockClusters` (demo event data) are suppressed by default. If no real clusters exist yet,
+  the page shows an empty state: "暂无真实事件簇，等待更多真实信息进入后生成."
+
+- **Global header**: `AppShell` no longer hardcodes topItem from `mockItems`. Each server
+  page computes topSignal from real items and passes it as a prop. If no real items exist,
+  the header shows no top signal.
+
+### Why not fall back to demo data in empty state
+
+If no real clusters exist, showing demo clusters would make the system appear to have
+"analyzed" fictional events like "GPT-5 发布事件". This breaks:
+- Trust in the system (user can't distinguish real from fake)
+- Future feedback learning (marking fake events as important poisons the model)
+- Scoring calibration (fake S-tier items distort score distribution)
+
+Show empty state instead. It's honest.
+
 ## Verification
 
 After running the SQL migration:

@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { Search } from "lucide-react"
 import { AppShell } from "@/components/layout/app-shell"
+import type { TopSignalData } from "@/components/layout/app-shell"
 import { InformationCard } from "@/components/feed/information-card"
 import { Input } from "@/components/ui/input"
 import type { Category, InformationItem, SourceTier } from "@/types"
@@ -11,7 +12,15 @@ import { cn } from "@/lib/utils"
 const categories: Category[] = ['AI技术', '商业动态', '产品发布', '监管政策', '融资并购', '行业趋势', '开源项目', '研究报告']
 const tiers: SourceTier[] = ['S', 'A', 'B', 'C']
 
-export default function FeedClient({ items, mode = 'real' }: { items: InformationItem[]; mode?: 'real' | 'all' }) {
+export default function FeedClient({
+  items,
+  mode = 'real',
+  topSignal,
+}: {
+  items:       InformationItem[]
+  mode?:       'real' | 'all'
+  topSignal?:  TopSignalData
+}) {
   const [search, setSearch]                   = useState('')
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null)
   const [selectedTier, setSelectedTier]         = useState<SourceTier | null>(null)
@@ -31,7 +40,7 @@ export default function FeedClient({ items, mode = 'real' }: { items: Informatio
     )
 
   return (
-    <AppShell>
+    <AppShell topSignal={topSignal}>
       <div className="p-6 md:p-8">
 
         {/* ── Header ── */}

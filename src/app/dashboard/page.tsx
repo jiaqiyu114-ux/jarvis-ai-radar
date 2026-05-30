@@ -5,6 +5,7 @@ import { InformationCard } from "@/components/feed/information-card"
 import { ScoreBadge } from "@/components/feed/score-badge"
 import { SourceTierBadge } from "@/components/feed/source-tier-badge"
 import { getFeedItems, getDashboardStats } from "@/lib/data/feed-adapter"
+import type { TopSignalData } from "@/components/layout/app-shell"
 import { cn } from "@/lib/utils"
 import type { InformationItem } from "@/types"
 
@@ -49,14 +50,18 @@ export default async function DashboardPage() {
   const highScoreItems = items.filter(i => i.finalScore >= 75 && i.finalScore < 88)
   const trendingItems  = items.filter(i => i.scoreBreakdown.momentum >= 82)
   const contentItems   = items.filter(i => i.scoreBreakdown.content_potential >= 82)
-  const topItem        = [...items].sort((a, b) => b.finalScore - a.finalScore)[0]
+  // items already sorted by final_score DESC from getFeedItems (real items only)
+  const topItem        = items[0] ?? null
+  const topSignal: TopSignalData | undefined = topItem
+    ? { score: topItem.finalScore, title: topItem.title, category: topItem.category }
+    : undefined
 
   const topCatColor = topItem
     ? (categoryColorMap[topItem.category] ?? 'text-stone-500 bg-stone-100 dark:text-muted-foreground dark:bg-muted')
     : ''
 
   return (
-    <AppShell>
+    <AppShell topSignal={topSignal}>
       <div className="p-6 md:p-8 max-w-[1280px]">
 
         {/* ── Editorial header ── */}

@@ -1,7 +1,9 @@
 import { AppShell } from "@/components/layout/app-shell"
 import { InformationCard } from "@/components/feed/information-card"
 import { getSelectedItems } from "@/lib/data/feed-adapter"
+import type { TopSignalData } from "@/components/layout/app-shell"
 import type { InformationItem } from "@/types"
+import { cn } from "@/lib/utils"
 
 const SELECTED_MIN_SCORE = 75
 
@@ -25,18 +27,41 @@ function getSuggestedAction(item: InformationItem): string {
   return '归档备查'
 }
 
-export default async function SelectedPage() {
-  const items = await getSelectedItems()
-  const selected = [...items].sort((a, b) => b.finalScore - a.finalScore)
+export default async function SelectedPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ includeDemo?: string; mode?: string }>
+}) {
+  const sp          = await searchParams
+  const includeDemo = sp.includeDemo === 'true' || sp.mode === 'all'
+  const items       = await getSelectedItems({ includeDemo })
+  const selected    = [...items].sort((a, b) => b.finalScore - a.finalScore)
+
+  const topSignal: TopSignalData | undefined = selected[0]
+    ? { score: selected[0].finalScore, title: selected[0].title, category: selected[0].category }
+    : undefined
 
   return (
-    <AppShell>
+    <AppShell topSignal={topSignal}>
       <div className="p-6 md:p-8 max-w-[900px]">
 
         {/* ── Editorial header ── */}
         <div className="mb-5">
           <p className="page-kicker mb-1">Editorial Picks</p>
-          <h1 className="editorial-title text-3xl">精选流</h1>
+          <div className="flex items-end justify-between gap-4">
+            <h1 className="editorial-title text-3xl">精选流</h1>
+            <div className="flex items-center gap-3 pb-0.5">
+              {includeDemo ? (
+                <span className="text-[10px] text-warning border border-warning/30 bg-warning/10 rounded px-1.5 py-0.5">
+                  含演示数据
+                </span>
+              ) : (
+                <span className="text-[10px] text-muted-foreground/50 border border-border/30 rounded px-1.5 py-0.5">
+                  仅真实数据
+                </span>
+              )}
+            </div>
+          </div>
           <p className="page-subtitle mt-1.5">
             最终分 ≥ {SELECTED_MIN_SCORE} · 今日重点判断队列 · {selected.length} 条
           </p>
@@ -51,7 +76,7 @@ export default async function SelectedPage() {
         </div>
 
         {/* ── Cards with entry rationale ── */}
-        <div className="rounded-lg overflow-hidden border border-border/70 bg-card">
+        <div className={cn("rounded-lg overflow-hidden border bg-card", selected.length > 0 ? "border-border/70" : "border-border")}>
           {selected.length > 0
             ? selected.map(item => {
                 const reasons = getEntryReasons(item)
@@ -71,8 +96,11 @@ export default async function SelectedPage() {
                 )
               })
             : (
-              <div className="py-10 text-center">
+              <div className="py-12 text-center">
                 <p className="text-sm text-muted-foreground">暂无精选内容</p>
+                <p className="text-xs text-muted-foreground/60 mt-1">
+                  等待高质量真实信号进入（最终分 ≥ {SELECTED_MIN_SCORE}）
+                </p>
               </div>
             )
           }

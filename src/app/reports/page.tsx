@@ -16,12 +16,16 @@ export default async function ReportsPage() {
     .slice(0, 5)
 
   const worthWritingCount = topics.filter(t => t.status === 'worth_writing').length
+  const topSignal = items[0]
+    ? { score: items[0].finalScore, title: items[0].title, category: items[0].category }
+    : undefined
 
   return (
     <ReportsClient
       report={report}
       highItems={highItems}
       worthWritingCount={worthWritingCount}
+      topSignal={topSignal}
     />
   )
 }

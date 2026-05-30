@@ -3,5 +3,5 @@ import TopicsClient from "./_topics-client"
 
 export default async function TopicsPage() {
   const topics = await getTopics()
-  return <TopicsClient topics={topics} />
+  return <TopicsClient topics={topics} topSignal={undefined} />
 }

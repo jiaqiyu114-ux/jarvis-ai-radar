@@ -9,5 +9,8 @@ export default async function FeedPage({
   const sp          = await searchParams
   const includeDemo = sp.includeDemo === 'true' || sp.mode === 'all'
   const items       = await getFeedItems({ includeDemo })
-  return <FeedClient items={items} mode={includeDemo ? 'all' : 'real'} />
+  const topSignal   = items[0]
+    ? { score: items[0].finalScore, title: items[0].title, category: items[0].category }
+    : undefined
+  return <FeedClient items={items} mode={includeDemo ? 'all' : 'real'} topSignal={topSignal} />
 }

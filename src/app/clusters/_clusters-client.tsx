@@ -5,6 +5,7 @@ import { formatDistanceToNow, format } from "date-fns"
 import { zhCN } from "date-fns/locale"
 import { ChevronDown, Clock, Newspaper } from "lucide-react"
 import { AppShell } from "@/components/layout/app-shell"
+import type { TopSignalData } from "@/components/layout/app-shell"
 import { InformationCard } from "@/components/feed/information-card"
 import { ScoreBadge } from "@/components/feed/score-badge"
 import { cn } from "@/lib/utils"
@@ -180,17 +181,34 @@ function ClusterRow({ cluster, items }: { cluster: MockCluster; items: Informati
 // the inevitable difference between server render time and client hydration time.
 const NOW = Date.now()
 
-export default function ClustersClient({ clusters, items }: { clusters: MockCluster[]; items: InformationItem[] }) {
+export default function ClustersClient({
+  clusters,
+  items,
+  includeDemo = false,
+  topSignal,
+}: {
+  clusters:     MockCluster[]
+  items:        InformationItem[]
+  includeDemo?: boolean
+  topSignal?:   TopSignalData
+}) {
   const sorted = [...clusters].sort((a, b) => b.momentum - a.momentum)
 
   return (
-    <AppShell>
+    <AppShell topSignal={topSignal}>
       <div className="p-6 md:p-8 max-w-[1080px]">
 
         {/* ── Editorial header ── */}
         <div className="mb-6">
           <p className="page-kicker mb-1">Event Archive</p>
-          <h1 className="editorial-title text-[2.25rem]">事件簇</h1>
+          <div className="flex items-end justify-between gap-4">
+            <h1 className="editorial-title text-[2.25rem]">事件簇</h1>
+            {includeDemo && (
+              <span className="text-[10px] text-warning border border-warning/30 bg-warning/10 rounded px-1.5 py-0.5 mb-1">
+                含演示数据
+              </span>
+            )}
+          </div>
           <p className="page-subtitle mt-1.5">
             {clusters.length} 个活跃事件 · 按势头排序
           </p>
@@ -221,8 +239,15 @@ export default function ClustersClient({ clusters, items }: { clusters: MockClus
             ? sorted.map(cluster => <ClusterRow key={cluster.id} cluster={cluster} items={items} />)
             : (
               <div className="border border-border rounded-lg py-12 text-center bg-card">
-                <p className="text-sm text-muted-foreground">暂无活跃事件簇</p>
-                <p className="text-xs text-muted-foreground/60 mt-1">信源抓取后，相关联的报道会自动聚合成事件簇</p>
+                <p className="text-sm text-muted-foreground">暂无真实事件簇</p>
+                <p className="text-xs text-muted-foreground/60 mt-1">
+                  等待更多真实信息进入后自动聚合
+                </p>
+                {!includeDemo && (
+                  <p className="text-[10px] text-muted-foreground/40 mt-2">
+                    添加 ?includeDemo=true 可查看演示事件簇
+                  </p>
+                )}
               </div>
             )
           }
