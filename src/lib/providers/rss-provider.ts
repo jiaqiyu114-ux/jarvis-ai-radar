@@ -59,6 +59,11 @@ const FALLBACK_FEEDS: FallbackFeed[] = [
     feedUrl:  'https://huggingface.co/blog/feed.xml',
     category: 'AI技术',
   },
+  {
+    name:     'AIHOT 精选',
+    feedUrl:  'https://aihot.virxact.com/feed.xml',
+    category: 'AI技术',
+  },
 ]
 
 // ── Error and health types ────────────────────────────────────────────────────
