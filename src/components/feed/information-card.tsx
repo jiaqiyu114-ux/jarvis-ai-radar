@@ -19,6 +19,8 @@ interface InformationCardProps {
   variant?:  'compact' | 'expanded' | 'minimal' | 'emphasis'
   scoreSize?: 'sm' | 'md'
   onFeedback?: (action: FeedbackAction, itemId: string) => void
+  /** When provided, shown in "为什么值得关注" instead of rule-based explanation. */
+  recommendationReason?: string
 }
 
 const categoryColors: Record<string, string> = {
@@ -39,6 +41,7 @@ export function InformationCard({
   variant   = 'compact',
   scoreSize = 'sm',
   onFeedback,
+  recommendationReason,
 }: InformationCardProps) {
   const [open, setOpen] = useState(variant === 'expanded')
 
@@ -297,7 +300,7 @@ export function InformationCard({
 
           {/* Content */}
           <div className="px-6 py-5">
-            <ItemDetailPanel item={item} />
+            <ItemDetailPanel item={item} recommendationReason={recommendationReason} />
           </div>
         </DialogContent>
       </Dialog>

@@ -129,7 +129,7 @@ export function TodayRecommendationCard({ item }: { item: TodayRecommendationIte
             </p>
           </div>
           <div className="px-6 py-5">
-            <ItemDetailPanel item={item} />
+            <ItemDetailPanel item={item} recommendationReason={item.recommendationReason} />
           </div>
         </DialogContent>
       </Dialog>

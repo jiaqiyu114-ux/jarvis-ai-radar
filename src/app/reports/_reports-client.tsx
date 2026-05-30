@@ -59,7 +59,12 @@ function SnapshotItemCard({ item }: { item: DailyRecommendationSnapshotItem }) {
         </div>
       )}
       {/* InformationCard handles click→dialog, external link stays inside detail panel */}
-      <InformationCard item={item as unknown as InformationItem} variant="emphasis" scoreSize="md" />
+      <InformationCard
+        item={item as unknown as InformationItem}
+        variant="emphasis"
+        scoreSize="md"
+        recommendationReason={item.recommendationReason || undefined}
+      />
     </div>
   )
 }

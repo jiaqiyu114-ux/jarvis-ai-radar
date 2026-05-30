@@ -410,7 +410,16 @@ function FetchButton({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ItemDetailPanel({ item, isReal = true }: { item: InformationItem; isReal?: boolean }) {
+export function ItemDetailPanel({
+  item,
+  isReal = true,
+  recommendationReason: overrideReason,
+}: {
+  item: InformationItem
+  isReal?: boolean
+  /** When provided, shown verbatim in "为什么值得关注" instead of the rule-based explanation. */
+  recommendationReason?: string
+}) {
   // Local article content — updated after a successful fetch without page reload
   const [localContent, setLocalContent] = useState<ArticleContent | undefined>(item.articleContent)
 
@@ -481,7 +490,9 @@ export function ItemDetailPanel({ item, isReal = true }: { item: InformationItem
 
       {/* ── 3. 为什么值得关注 ── */}
       <Section label="为什么值得关注">
-        <p className="text-sm text-foreground/85 leading-relaxed">{detail.whyItMatters.primaryReason}</p>
+        <p className="text-sm text-foreground/85 leading-relaxed">
+          {overrideReason || detail.whyItMatters.primaryReason}
+        </p>
         <div className="space-y-1">
           <p className="text-xs text-muted-foreground">{detail.whyItMatters.evidenceNote}</p>
           <p className="text-xs text-muted-foreground">{detail.whyItMatters.tierNote}</p>
