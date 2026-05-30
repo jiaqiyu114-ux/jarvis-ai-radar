@@ -372,6 +372,56 @@ export async function markItemContentFetchFailed(
   return true
 }
 
+// ── Evidence & Truth Scoring v1 ───────────────────────────────────────────────
+
+export type EvidenceUpdatePayload = {
+  truthScore:        number
+  evScore:           number
+  sourceTraceScore:  number
+  claimStatus:       string
+  evidenceLevel:     string
+  sourceNature:      string
+  hasOriginalSource: boolean
+  hasAuthor:         boolean
+  hasPublishedTime:  boolean
+  hasArticleContent: boolean
+  hasMediaEvidence:  boolean
+  evidenceNotes:     string
+  truthNotes:        string
+}
+
+/**
+ * Write evidence/truth profile to an item.
+ * Does NOT modify final_score, data_origin, source_id, or content fields.
+ */
+export async function updateItemEvidenceProfile(
+  itemId:  string,
+  payload: EvidenceUpdatePayload,
+): Promise<boolean> {
+  if (!isServerSupabaseConfigured || !supabaseServer) return false
+  const { error } = await supabaseServer
+    .from('items')
+    .update({
+      truth_score:          payload.truthScore,
+      ev_score:             payload.evScore,
+      source_trace_score:   payload.sourceTraceScore,
+      claim_status:         payload.claimStatus,
+      evidence_level:       payload.evidenceLevel,
+      source_nature:        payload.sourceNature,
+      has_original_source:  payload.hasOriginalSource,
+      has_author:           payload.hasAuthor,
+      has_published_time:   payload.hasPublishedTime,
+      has_article_content:  payload.hasArticleContent,
+      has_media_evidence:   payload.hasMediaEvidence,
+      evidence_notes:       payload.evidenceNotes,
+      truth_notes:          payload.truthNotes,
+      evidence_checked_at:  new Date().toISOString(),
+    })
+    .eq('id', itemId)
+  if (error) { console.error('[db/items] updateItemEvidenceProfile:', error.message); return false }
+  return true
+}
+
 /**
  * Fetch a single item by ID for content extraction (uses server client).
  */

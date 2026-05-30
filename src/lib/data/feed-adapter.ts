@@ -1,7 +1,7 @@
 import { mockItems, mockStats } from '@/config/mock-data'
 import { listItemsWithSource, listItems } from '@/lib/db/items'
 import { shouldUseDatabase } from './runtime'
-import type { InformationItem, DashboardStats, Category, SourceTier, ArticleContent, ContentFetchStatus } from '@/types'
+import type { InformationItem, DashboardStats, Category, SourceTier, ArticleContent, ContentFetchStatus, EvidenceProfile, ClaimStatus, EvidenceLevel, SourceNature } from '@/types'
 import type { DbItemWithSource } from '@/lib/db/items'
 import type { DbSourceTier } from '@/types/database'
 
@@ -60,7 +60,8 @@ function mapDbItem(item: DbItemWithSource): InformationItem {
     },
     originalUrl:        item.url,
     relatedReportCount: 0,
-    articleContent: mapArticleContent(item),
+    articleContent:  mapArticleContent(item),
+    evidenceProfile: mapEvidenceProfile(item),
   }
 }
 
@@ -80,6 +81,42 @@ function mapArticleContent(item: DbItemWithSource): ArticleContent | undefined {
     canonicalUrl:   (item as { canonical_url?: string | null }).canonical_url ?? null,
     coverImageUrl:  (item as { cover_image_url?: string | null }).cover_image_url ?? null,
     mediaUrls:      ((item as { media_urls?: unknown }).media_urls as string[] | null) ?? [],
+  }
+}
+
+function mapEvidenceProfile(item: DbItemWithSource): EvidenceProfile | undefined {
+  const checked = (item as { evidence_checked_at?: string | null }).evidence_checked_at
+  if (!checked) return undefined
+  const i = item as {
+    truth_score?: number | null
+    ev_score?: number | null
+    source_trace_score?: number | null
+    claim_status?: string | null
+    evidence_level?: string | null
+    source_nature?: string | null
+    has_original_source?: boolean | null
+    has_author?: boolean | null
+    has_published_time?: boolean | null
+    has_article_content?: boolean | null
+    has_media_evidence?: boolean | null
+    evidence_notes?: string | null
+    truth_notes?: string | null
+  }
+  return {
+    truthScore:        i.truth_score        ?? 0,
+    evidenceScore:     i.ev_score           ?? 0,
+    sourceTraceScore:  i.source_trace_score ?? 0,
+    claimStatus:       (i.claim_status   as ClaimStatus)  ?? 'unverified',
+    evidenceLevel:     (i.evidence_level as EvidenceLevel) ?? 'low',
+    sourceNature:      (i.source_nature  as SourceNature)  ?? 'unknown',
+    hasOriginalSource: i.has_original_source  ?? false,
+    hasAuthor:         i.has_author           ?? false,
+    hasPublishedTime:  i.has_published_time   ?? false,
+    hasArticleContent: i.has_article_content  ?? false,
+    hasMediaEvidence:  i.has_media_evidence   ?? false,
+    evidenceNotes:     i.evidence_notes       ?? '',
+    truthNotes:        i.truth_notes          ?? '',
+    checkedAt:         checked,
   }
 }
 

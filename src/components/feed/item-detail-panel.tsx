@@ -10,7 +10,7 @@ import { ScoreBadge } from "./score-badge"
 import { cn } from "@/lib/utils"
 import { buildScoreExplanation } from "@/lib/scoring/explanation"
 import { buildInformationDetail } from "@/lib/content/detail-explanation"
-import type { InformationItem, ArticleContent } from "@/types"
+import type { InformationItem, ArticleContent, EvidenceProfile } from "@/types"
 import type { DimensionStatus } from "@/lib/scoring/explanation"
 import type { InsightType } from "@/lib/content/detail-explanation"
 
@@ -63,6 +63,114 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 
 function Divider() {
   return <div className="h-px bg-border/60" />
+}
+
+// ── Evidence section ──────────────────────────────────────────────────────────
+
+const CLAIM_STATUS_LABELS: Record<string, { label: string; color: string }> = {
+  unverified:     { label: '未验证',   color: 'text-muted-foreground border-border bg-muted/50' },
+  reported:       { label: '已报道',   color: 'text-sky-600 border-sky-400/30 bg-sky-400/10 dark:text-sky-400' },
+  source_claimed: { label: '官方说法', color: 'text-primary border-primary/30 bg-primary/10' },
+  confirmed:      { label: '已确认',   color: 'text-success border-success/30 bg-success/10' },
+  disputed:       { label: '存在争议', color: 'text-warning border-warning/30 bg-warning/10' },
+  rumor:          { label: '传闻',     color: 'text-danger border-danger/30 bg-danger/10' },
+  unclear:        { label: '信息不明', color: 'text-muted-foreground border-border bg-muted/50' },
+}
+
+const SOURCE_NATURE_LABELS: Record<string, string> = {
+  official:         '官方发布',
+  primary_report:   '一手报道',
+  secondary_report: '二手转载',
+  research:         '学术预印本',
+  analysis:         '分析/观点',
+  marketing:        '商业宣传',
+  rumor:            '传言',
+  unknown:          '来源未知',
+}
+
+const EVIDENCE_LEVEL_LABELS: Record<string, string> = {
+  very_high: '证据较强',
+  high:      '证据良好',
+  medium:    '证据一般',
+  low:       '证据不足',
+}
+
+function ScoreBar({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[10px] text-muted-foreground w-20 shrink-0">{label}</span>
+      <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
+        <div className={cn("h-full rounded-full", color)} style={{ width: `${value}%` }} />
+      </div>
+      <span className="text-[10px] font-mono text-muted-foreground w-5 text-right tabular-nums">{value}</span>
+    </div>
+  )
+}
+
+function EvidenceSection({ profile }: { profile: EvidenceProfile }) {
+  const claimStyle = CLAIM_STATUS_LABELS[profile.claimStatus] ?? CLAIM_STATUS_LABELS.unverified
+  const sourceLabel = SOURCE_NATURE_LABELS[profile.sourceNature] ?? '来源未知'
+  const levelLabel  = EVIDENCE_LEVEL_LABELS[profile.evidenceLevel] ?? '证据不足'
+
+  return (
+    <Section label="真实与证据">
+      {/* Status badges */}
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium", claimStyle.color)}>
+          {claimStyle.label}
+        </span>
+        <span className="text-[10px] px-1.5 py-0.5 rounded border text-muted-foreground border-border bg-muted/50">
+          {sourceLabel}
+        </span>
+        <span className="text-[10px] px-1.5 py-0.5 rounded border text-muted-foreground border-border bg-muted/50">
+          {levelLabel}
+        </span>
+      </div>
+
+      {/* Score bars */}
+      <div className="space-y-1.5 bg-muted/30 rounded-md p-3 mb-3">
+        <ScoreBar label="真实程度"   value={profile.truthScore}       color={profile.truthScore >= 60 ? 'bg-success' : profile.truthScore >= 40 ? 'bg-warning' : 'bg-danger/60'} />
+        <ScoreBar label="证据强度"   value={profile.evidenceScore}    color="bg-primary/60" />
+        <ScoreBar label="来源可追溯" value={profile.sourceTraceScore} color="bg-sky-500/60 dark:bg-sky-400/60" />
+      </div>
+
+      {/* Boolean signals */}
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        {[
+          { label: '有原文',   value: profile.hasArticleContent },
+          { label: '有作者',   value: profile.hasAuthor },
+          { label: '有时间戳', value: profile.hasPublishedTime },
+          { label: '有媒体证据', value: profile.hasMediaEvidence },
+        ].map(({ label, value }) => (
+          <span
+            key={label}
+            className={cn(
+              "text-[10px] px-1.5 py-0.5 rounded border",
+              value
+                ? "text-success border-success/25 bg-success/8"
+                : "text-muted-foreground/50 border-border/40"
+            )}
+          >
+            {value ? '✓' : '✗'} {label}
+          </span>
+        ))}
+      </div>
+
+      {/* Evidence notes */}
+      {profile.evidenceNotes && (
+        <p className="text-[10px] text-muted-foreground/70 leading-relaxed mb-2">
+          {profile.evidenceNotes}
+        </p>
+      )}
+
+      {/* Truth notes */}
+      {profile.truthNotes && (
+        <p className="text-[10px] text-muted-foreground/60 leading-relaxed italic">
+          {profile.truthNotes}
+        </p>
+      )}
+    </Section>
+  )
 }
 
 // ── Fetch button ──────────────────────────────────────────────────────────────
@@ -331,6 +439,12 @@ export function ItemDetailPanel({ item }: { item: InformationItem }) {
       </Section>
 
       <Divider />
+
+      {/* ── 6.5. 真实与证据 ── */}
+      {item.evidenceProfile && (
+        <EvidenceSection profile={item.evidenceProfile} />
+      )}
+      {item.evidenceProfile && <Divider />}
 
       {/* ── 7. 事件追踪 ── */}
       <Section label="事件追踪">

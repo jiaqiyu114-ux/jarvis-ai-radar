@@ -109,6 +109,22 @@ CREATE TABLE IF NOT EXISTS items (
   -- Data origin: distinguishes real ingest from demo/mock/seed data
   data_origin             text        NOT NULL DEFAULT 'real',
 
+  -- Evidence & Truth Scoring v1 (ev_score avoids collision with rule-scorer's evidence_score)
+  truth_score             integer,
+  ev_score                integer,
+  source_trace_score      integer,
+  claim_status            text        DEFAULT 'unverified',
+  evidence_level          text        DEFAULT 'low',
+  source_nature           text,
+  has_original_source     boolean     DEFAULT false,
+  has_author              boolean     DEFAULT false,
+  has_published_time      boolean     DEFAULT false,
+  has_article_content     boolean     DEFAULT false,
+  has_media_evidence      boolean     DEFAULT false,
+  evidence_notes          text,
+  truth_notes             text,
+  evidence_checked_at     timestamptz,
+
   -- Article Content Extraction v1
   content_fetch_status    text        DEFAULT 'not_fetched',
   content_fetched_at      timestamptz,

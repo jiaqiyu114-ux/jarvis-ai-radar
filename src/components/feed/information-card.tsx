@@ -58,6 +58,16 @@ export function InformationCard({
     .filter(d => !d.includes('分惩罚'))
     .slice(0, 1)
 
+  // Lightweight evidence badge for the list view
+  const ep = item.evidenceProfile
+  const evidenceBadge = ep
+    ? (ep.claimStatus === 'source_claimed' ? '官方说法'
+       : ep.claimStatus === 'reported'     ? '已报道'
+       : ep.claimStatus === 'rumor'        ? '传闻'
+       : ep.claimStatus === 'disputed'     ? '存在争议'
+       : '单源待验证')
+    : null
+
   /* ──────────────────────────────────────────
      MINIMAL variant — narrow columns (dashboard sidebars).
      Title is an <a> link in this compact context.
@@ -191,6 +201,11 @@ export function InformationCard({
                   {(foldedPositive.length > 0 || foldedNegative.length > 0) && explanation.isRuleBasedOnly && (
                     <span className="text-[9px] text-muted-foreground/40 whitespace-nowrap">
                       · 规则基线
+                    </span>
+                  )}
+                  {evidenceBadge && (
+                    <span className="text-[9px] text-muted-foreground/55 border border-border/40 rounded px-1 py-px whitespace-nowrap">
+                      {evidenceBadge}
                     </span>
                   )}
                 </div>

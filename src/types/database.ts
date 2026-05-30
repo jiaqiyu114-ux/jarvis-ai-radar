@@ -160,6 +160,22 @@ export type DbItem = {
   status:                  DbItemStatus
   data_origin:             DataOrigin
 
+  // Evidence & Truth Scoring v1
+  truth_score:             number | null
+  ev_score:                number | null   // evidence quality (avoids collision with rule scorer's evidence_score)
+  source_trace_score:      number | null
+  claim_status:            string | null
+  evidence_level:          string | null
+  source_nature:           string | null
+  has_original_source:     boolean | null
+  has_author:              boolean | null
+  has_published_time:      boolean | null
+  has_article_content:     boolean | null
+  has_media_evidence:      boolean | null
+  evidence_notes:          string | null
+  truth_notes:             string | null
+  evidence_checked_at:     string | null
+
   // Article Content Extraction v1
   content_fetch_status:    string | null
   content_fetched_at:      string | null
@@ -238,6 +254,21 @@ export type DbItemUpdate = Partial<DbItemInsert> & {
   marketing_penalty?:       number
   cognitive_load_penalty?:  number
   final_score?:             number
+  // Evidence & Truth Scoring v1
+  truth_score?:             number | null
+  ev_score?:                number | null
+  source_trace_score?:      number | null
+  claim_status?:            string | null
+  evidence_level?:          string | null
+  source_nature?:           string | null
+  has_original_source?:     boolean | null
+  has_author?:              boolean | null
+  has_published_time?:      boolean | null
+  has_article_content?:     boolean | null
+  has_media_evidence?:      boolean | null
+  evidence_notes?:          string | null
+  truth_notes?:             string | null
+  evidence_checked_at?:     string | null
   // Article Content Extraction v1
   content_fetch_status?:    string | null
   content_fetched_at?:      string | null

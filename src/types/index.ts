@@ -57,6 +57,50 @@ export interface ItemPenalties {
   cognitiveLoad: number
 }
 
+// ── Evidence & Truth Scoring ──────────────────────────────────────────────────
+
+export type ClaimStatus =
+  | 'unverified'      // not enough information to judge
+  | 'reported'        // reputable media reports it
+  | 'source_claimed'  // official source says it themselves
+  | 'confirmed'       // multi-source cross-verified (not yet available in v1)
+  | 'disputed'        // conflicting reports exist
+  | 'rumor'           // low-credibility origin
+  | 'unclear'         // contradictory or ambiguous
+
+export type EvidenceLevel = 'low' | 'medium' | 'high' | 'very_high'
+
+export type SourceNature =
+  | 'official'          // official company or institution
+  | 'primary_report'    // first-hand journalism / direct coverage
+  | 'secondary_report'  // re-reporting from other sources
+  | 'analysis'          // opinion / analysis / commentary
+  | 'research'          // academic preprint or peer-reviewed paper
+  | 'marketing'         // promotional / company announcement
+  | 'rumor'             // unverified / social media / speculation
+  | 'unknown'           // cannot determine
+
+export interface EvidenceProfile {
+  // Scores (0-100)
+  truthScore:        number
+  evidenceScore:     number   // mapped from ev_score in DB
+  sourceTraceScore:  number
+  // Classification
+  claimStatus:       ClaimStatus
+  evidenceLevel:     EvidenceLevel
+  sourceNature:      SourceNature
+  // Boolean signals
+  hasOriginalSource: boolean
+  hasAuthor:         boolean
+  hasPublishedTime:  boolean
+  hasArticleContent: boolean
+  hasMediaEvidence:  boolean
+  // Notes
+  evidenceNotes:     string
+  truthNotes:        string
+  checkedAt:         string | null
+}
+
 export type ContentFetchStatus = 'not_fetched' | 'fetched' | 'failed' | 'skipped'
 
 export interface ArticleContent {
@@ -89,8 +133,9 @@ export interface InformationItem {
   scoreBreakdown: ScoreBreakdown
   originalUrl: string
   relatedReportCount: number
-  penalties?: ItemPenalties        // populated from DB penalty columns
-  articleContent?: ArticleContent  // populated after content extraction
+  penalties?: ItemPenalties         // populated from DB penalty columns
+  articleContent?: ArticleContent   // populated after content extraction
+  evidenceProfile?: EvidenceProfile // populated after evidence scoring
 }
 
 export interface MockSource {
