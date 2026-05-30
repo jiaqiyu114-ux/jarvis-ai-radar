@@ -16,7 +16,15 @@ const statusTabs: Array<{ value: TopicStatus | 'all'; label: string }> = [
   { value: 'abandoned',     label: '已放弃' },
 ]
 
-export default function TopicsClient({ topics, topSignal }: { topics: TopicItem[]; topSignal?: TopSignalData }) {
+export default function TopicsClient({
+  topics,
+  topSignal,
+  includeDemo = false,
+}: {
+  topics:       TopicItem[]
+  topSignal?:   TopSignalData
+  includeDemo?: boolean
+}) {
   const [activeTab, setActiveTab] = useState<TopicStatus | 'all'>('all')
 
   const filtered = activeTab === 'all'
@@ -35,7 +43,14 @@ export default function TopicsClient({ topics, topSignal }: { topics: TopicItem[
         {/* ── Editorial header ── */}
         <div className="mb-6">
           <p className="page-kicker mb-1">My Collection</p>
-          <h1 className="editorial-title text-[2.25rem]">选题池</h1>
+          <div className="flex items-end justify-between gap-4">
+            <h1 className="editorial-title text-[2.25rem]">选题池</h1>
+            {includeDemo && (
+              <span className="text-[10px] text-warning border border-warning/30 bg-warning/10 rounded px-1.5 py-0.5 mb-1">
+                含演示数据
+              </span>
+            )}
+          </div>
           <p className="text-muted-foreground text-sm mt-2">
             {topics.length} 个选题资产
             {' · '}{topics.filter(t => t.status === 'worth_writing').length} 个值得写
@@ -84,7 +99,21 @@ export default function TopicsClient({ topics, topSignal }: { topics: TopicItem[
           </div>
         ) : (
           <div className="border border-border rounded-lg p-10 text-center bg-card">
-            <p className="text-sm text-muted-foreground">此状态下暂无选题</p>
+            {activeTab === 'all' ? (
+              <>
+                <p className="text-sm text-muted-foreground">暂无真实选题</p>
+                <p className="text-xs text-muted-foreground/60 mt-1">
+                  可从真实信息流中加入选题池
+                </p>
+                {!includeDemo && (
+                  <p className="text-[10px] text-muted-foreground/40 mt-2">
+                    添加 ?includeDemo=true 可查看演示选题
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">此状态下暂无选题</p>
+            )}
           </div>
         )}
       </div>

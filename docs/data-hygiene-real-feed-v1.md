@@ -109,7 +109,8 @@ The data boundary applies to ALL default product pages, not just `/feed`:
 | `/selected`  | `getSelectedItems()` filters demo items    | `?includeDemo=true`        |
 | `/clusters`  | `getClusters()` returns only DB clusters   | `?includeDemo=true`        |
 | `/dashboard` | `getFeedItems()` → real items only         | (no override exposed)      |
-| `/reports`   | `getFeedItems()` → real items only         | (no override exposed)      |
+| `/reports`   | Empty state (pipeline not ready); no mock  | `?includeDemo=true`        |
+| `/topics`    | `getTopics()` returns only DB topics       | `?includeDemo=true`        |
 | Header ticker| `topSignal` from real items only           | (not exposed)              |
 
 ### Key behavioral changes
@@ -135,6 +136,30 @@ If no real clusters exist, showing demo clusters would make the system appear to
 - Scoring calibration (fake S-tier items distort score distribution)
 
 Show empty state instead. It's honest.
+
+### `/reports` — pipeline not yet wired up
+
+`getDailyReport()` returns `null` in DB mode by default. The page renders an empty state:
+"真实日报尚未生成。日报需要完整管道（评分 → 聚类 → AI 摘要）。"
+
+With `?includeDemo=true`: returns `mockReports[0]` as a demo preview with a "演示日报" badge.
+
+The real pipeline will replace this once AI summarization is connected.
+
+### `/topics` — no real topics yet
+
+`getTopics()` in DB mode returns only DB topics. If DB topics table is empty:
+- Default: returns `[]` → page shows "暂无真实选题"
+- `?includeDemo=true`: returns `mockTopics` as demo
+
+Once users add topics from real items (via the "加入选题池" action), real entries appear here.
+
+### Why demo data must not enter reports or topics
+
+- **日报 (reports)**: A report claiming GPT-5 launched or Anthropic raised $4B would be taken
+  as real editorial output. Future pipelines would learn from it, and users might share it.
+- **选题池 (topics)**: Topics like "GPT-5 对内容创作的影响" are fictional. If they enter the
+  topic pool, they compete with real topics for attention, editorial effort, and scheduling.
 
 ## Verification
 

@@ -50,10 +50,22 @@ export const allTopics: TopicItem[] = mockTopics
 
 // ── Async functions ───────────────────────────────────────────────────────────
 
-export async function getTopics(): Promise<TopicItem[]> {
+/**
+ * Returns topics for the 选题池 page.
+ *
+ * In DB mode (Supabase configured):
+ *   - DB has real topics → return them
+ *   - DB empty + includeDemo=false → return [] (empty state; no mock fallback)
+ *   - DB empty + includeDemo=true → return mockTopics as demo preview
+ *
+ * In non-DB mode: always return mockTopics for dev experience.
+ */
+export async function getTopics(opts?: { includeDemo?: boolean }): Promise<TopicItem[]> {
   if (shouldUseDatabase()) {
     const rows = await listTopics()
     if (rows.length > 0) return rows.map(mapDbTopic)
+    if (opts?.includeDemo) return mockTopics   // demo overlay when explicitly requested
+    return []   // DB mode, no real topics yet — show empty state
   }
-  return mockTopics
+  return mockTopics   // non-DB mode: always show mock for development
 }

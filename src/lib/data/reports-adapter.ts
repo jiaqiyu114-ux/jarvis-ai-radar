@@ -1,12 +1,24 @@
 import { mockReports } from '@/config/mock-data'
+import { shouldUseDatabase } from './runtime'
 import type { DailyReport } from '@/types'
-
-// Reports are assembled from scored items + AI summarization.
-// Until the pipeline (score → cluster → summarize) is wired up,
-// reports always come from mock data regardless of data mode.
 
 export const latestReport: DailyReport = mockReports[0]
 
-export async function getDailyReport(): Promise<DailyReport> {
-  return latestReport
+/**
+ * Returns the daily report.
+ *
+ * Real report generation (score → cluster → AI summarize) is not yet implemented.
+ *
+ * In DB mode (Supabase configured):
+ *   - Default: returns null → caller shows empty state
+ *   - includeDemo=true: returns the mock report as a demo preview
+ *
+ * In non-DB mode (no Supabase): always returns mock report for dev experience.
+ */
+export async function getDailyReport(opts?: { includeDemo?: boolean }): Promise<DailyReport | null> {
+  if (shouldUseDatabase()) {
+    if (opts?.includeDemo) return latestReport
+    return null  // real pipeline not yet wired up
+  }
+  return latestReport  // non-DB mode: always show mock for development
 }

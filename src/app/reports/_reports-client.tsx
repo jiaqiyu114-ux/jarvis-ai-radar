@@ -86,9 +86,10 @@ type Props = {
   highItems:         InformationItem[]
   worthWritingCount: number
   topSignal?:        TopSignalData
+  includeDemo?:      boolean
 }
 
-export default function ReportsClient({ report, highItems, worthWritingCount, topSignal }: Props) {
+export default function ReportsClient({ report, highItems, worthWritingCount, topSignal, includeDemo }: Props) {
   return (
     <AppShell topSignal={topSignal}>
       <div className="p-8 max-w-[1240px] mx-auto">
@@ -96,7 +97,14 @@ export default function ReportsClient({ report, highItems, worthWritingCount, to
         {/* ── Editorial header ── */}
         <div className="mb-8">
           <p className="page-kicker mb-1">{report.date} · Editorial Brief</p>
-          <h1 className="editorial-title text-[2.25rem]">今日日报</h1>
+          <div className="flex items-end justify-between gap-4">
+            <h1 className="editorial-title text-[2.25rem]">今日日报</h1>
+            {includeDemo && (
+              <span className="text-[10px] text-warning border border-warning/30 bg-warning/10 rounded px-1.5 py-0.5 mb-1">
+                演示日报
+              </span>
+            )}
+          </div>
           <p className="page-subtitle mt-1.5">
             生成于 {new Date(report.generatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
             {' · '}{report.topStories.length} 条重点 · {report.trendingTopics.length} 个趋势话题
