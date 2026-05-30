@@ -66,11 +66,29 @@ export const dashboardStats: DashboardStats    = mockStats
 // ── Async functions (Server Components + DB integration) ──────────────────────
 // Pattern: try DB first; fall back to mock if DB returns nothing or is unconfigured.
 
-export async function getFeedItems(): Promise<InformationItem[]> {
+/**
+ * Returns feed items for display.
+ *
+ * By default excludes items marked data_origin='demo' or 'mock' (from mock-provider,
+ * seed scripts, etc.) so the main feed shows only real ingest data.
+ *
+ * Pass { includeDemo: true } to include all items (for debugging / preview).
+ * Items without the data_origin column (pre-migration rows) pass through as-is.
+ */
+export async function getFeedItems(opts?: { includeDemo?: boolean }): Promise<InformationItem[]> {
+  const includeDemo = opts?.includeDemo ?? false
   if (shouldUseDatabase()) {
     // Sort by final_score desc so highest-quality items appear first in the feed
     const rows = await listItemsWithSource({ sortByScore: true })
-    if (rows.length > 0) return rows.map(mapDbItem)
+    const relevant = includeDemo
+      ? rows
+      : rows.filter(r => {
+          // r.data_origin may be undefined if the column hasn't been migrated yet;
+          // in that case let the item through (safe default).
+          const origin = (r as { data_origin?: string }).data_origin
+          return origin !== 'demo' && origin !== 'mock'
+        })
+    if (relevant.length > 0) return relevant.map(mapDbItem)
   }
   return mockItems
 }

@@ -32,6 +32,9 @@ export type ProviderConfig = {
   lastFetchedAt?: string | null
   createdAt?:     string
   updatedAt?:     string
+  // Declares the data origin of items this provider produces.
+  // 'demo' providers (e.g. mock-provider) are excluded from the default feed.
+  dataOrigin?:    import('@/types/database').DataOrigin
 }
 
 // ── Normalized item from any provider ────────────────────────────────────────

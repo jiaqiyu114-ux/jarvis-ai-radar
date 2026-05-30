@@ -23,7 +23,7 @@ import { calculateFinalScore }        from '@/lib/scoring/final-score'
 import { detectLanguage }             from '@/lib/ingest/normalize'
 import { isServerSupabaseConfigured } from '@/lib/supabase/server'
 import type { NormalizedIngestItem, ProviderConfig } from '@/types/provider'
-import type { DbItemInsert } from '@/types/database'
+import type { DataOrigin, DbItemInsert } from '@/types/database'
 
 // ── Default dimension scores (pre-AI scoring) ─────────────────────────────────
 
@@ -80,11 +80,15 @@ function buildInsertPayload(
   providerSignal: number,
   finalScore:     number,
   dims:           ReturnType<typeof defaultDimensions>,
+  dataOrigin:     DataOrigin,
 ): DbItemInsert {
   // NOTE: source_tier, author are intentionally excluded.
   //       They exist in our TypeScript types but are NOT in the base schema.sql.
   //       Including them causes "column does not exist" errors on Supabase installs
   //       that ran schema.sql without the extended migration.
+  // NOTE: data_origin is only included when non-default ('demo', 'seed', etc.)
+  //       so installs that haven't run data-hygiene-real-feed-v1.sql don't break.
+  //       Real items rely on the SQL column DEFAULT 'real'.
   return {
     title:                   item.title,
     url:                     item.url,
@@ -105,6 +109,7 @@ function buildInsertPayload(
     clickbait_penalty:       0,
     marketing_penalty:       0,
     cognitive_load_penalty:  0,
+    ...(dataOrigin !== 'real' && { data_origin: dataOrigin }),
   }
 }
 
@@ -187,7 +192,7 @@ export async function ingestNormalizedItemsToDatabase(
         item.publishedAt ?? new Date().toISOString(),
       )
 
-      const row = buildInsertPayload(item, sourceId, providerSignal, finalScore, dims)
+      const row = buildInsertPayload(item, sourceId, providerSignal, finalScore, dims, providerConfig.dataOrigin ?? 'real')
 
       // Capture debug info from first item
       if (debug.firstItemPayloadKeys.length === 0) {

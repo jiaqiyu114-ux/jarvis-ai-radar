@@ -2,7 +2,7 @@ import { mockSources } from '@/config/mock-data'
 import { listSources } from '@/lib/db/sources'
 import { shouldUseDatabase } from './runtime'
 import type { MockSource, SourceTier, Category } from '@/types'
-import type { DbSource, DbSourceTier, SourceHealthStatus } from '@/types/database'
+import type { DataOrigin, DbSource, DbSourceTier, SourceHealthStatus } from '@/types/database'
 
 // ── Tier mapping: DbSourceTier has 'D'; SourceTier only goes to 'C' ──────────
 
@@ -61,6 +61,7 @@ export type SourceWithHealth = {
   description:      string | null
   itemsToday:       number
   avgScore:         number
+  dataOrigin:       DataOrigin
   healthStatus:     SourceHealthStatus
   failureCount:     number
   lastFetchAt:      string | null
@@ -82,6 +83,7 @@ function mapDbSourceWithHealth(source: DbSource): SourceWithHealth {
     description:      source.description ?? null,
     itemsToday:       source.items_today,
     avgScore:         source.base_score,
+    dataOrigin:       (source.data_origin as DataOrigin | undefined) ?? 'real',
     healthStatus:     source.health_status ?? 'unknown',
     failureCount:     source.failure_count ?? 0,
     lastFetchAt:      source.last_fetch_at ?? null,

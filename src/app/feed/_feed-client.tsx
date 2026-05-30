@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils"
 const categories: Category[] = ['AI技术', '商业动态', '产品发布', '监管政策', '融资并购', '行业趋势', '开源项目', '研究报告']
 const tiers: SourceTier[] = ['S', 'A', 'B', 'C']
 
-export default function FeedClient({ items }: { items: InformationItem[] }) {
+export default function FeedClient({ items, mode = 'real' }: { items: InformationItem[]; mode?: 'real' | 'all' }) {
   const [search, setSearch]                   = useState('')
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null)
   const [selectedTier, setSelectedTier]         = useState<SourceTier | null>(null)
@@ -39,7 +39,18 @@ export default function FeedClient({ items }: { items: InformationItem[] }) {
           <p className="page-kicker mb-1">Full Feed</p>
           <div className="flex items-end justify-between gap-4">
             <h1 className="editorial-title text-3xl">全量流</h1>
-            <p className="meta-text pb-0.5">{items.length} 条 · 最近 48h</p>
+            <div className="flex items-center gap-3 pb-0.5">
+              {mode === 'all' ? (
+                <span className="text-[10px] text-warning border border-warning/30 bg-warning/10 rounded px-1.5 py-0.5">
+                  含演示数据
+                </span>
+              ) : (
+                <span className="text-[10px] text-muted-foreground/50 border border-border/30 rounded px-1.5 py-0.5">
+                  仅真实数据
+                </span>
+              )}
+              <p className="meta-text">{items.length} 条</p>
+            </div>
           </div>
         </div>
 

@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS sources (
   created_at       timestamptz NOT NULL DEFAULT now(),
   updated_at       timestamptz NOT NULL DEFAULT now(),
 
+  -- Data origin (real / demo / seed / mock / unknown)
+  data_origin      text        NOT NULL DEFAULT 'real',
+
   -- RSS Source Health v1
   health_status    text        DEFAULT 'unknown',
   last_fetch_at    timestamptz,
@@ -102,6 +105,9 @@ CREATE TABLE IF NOT EXISTS items (
   -- Workflow status
   status                  text        NOT NULL DEFAULT 'new'
                                       CHECK (status IN ('new','scored','selected','archived','rejected')),
+
+  -- Data origin: distinguishes real ingest from demo/mock/seed data
+  data_origin             text        NOT NULL DEFAULT 'real',
 
   created_at              timestamptz NOT NULL DEFAULT now(),
   updated_at              timestamptz NOT NULL DEFAULT now()

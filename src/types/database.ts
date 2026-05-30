@@ -22,6 +22,8 @@ export type DbSourceTier = 'S' | 'A' | 'B' | 'C' | 'D'
 
 export type SourceHealthStatus = 'unknown' | 'healthy' | 'degraded' | 'blocked'
 
+export type DataOrigin = 'real' | 'demo' | 'seed' | 'mock' | 'unknown'
+
 export type DbItemStatus = 'new' | 'scored' | 'selected' | 'archived' | 'rejected'
 
 export type DbItemLanguage = 'zh' | 'en' | 'mixed'
@@ -61,6 +63,7 @@ export type DbSource = {
   last_fetched_at:   string | null
   items_today:       number
   description:       string | null
+  data_origin:       DataOrigin
   created_at:        string
   updated_at:        string
   // RSS Source Health v1 fields (nullable — may be absent in older rows)
@@ -86,12 +89,14 @@ export type DbSourceInsert = {
   category?:          string
   is_official?:       boolean
   description?:       string
+  data_origin?:       DataOrigin
 }
 
 export type DbSourceUpdate = Partial<Omit<DbSourceInsert, 'url'>> & {
   is_blocked?:        boolean
   items_today?:       number
   last_fetched_at?:   string | null
+  data_origin?:       DataOrigin
   // RSS Source Health v1
   health_status?:     string | null
   last_fetch_at?:     string | null
@@ -153,6 +158,7 @@ export type DbItem = {
   embedding:               number[] | null
   cluster_id:              string | null
   status:                  DbItemStatus
+  data_origin:             DataOrigin
   created_at:              string
   updated_at:              string
 }
@@ -193,6 +199,7 @@ export type DbItemInsert = {
   provider_signal?:         number
   evidence_score?:          number
   raw_payload?:             Record<string, unknown>
+  data_origin?:             DataOrigin
 }
 
 export type DbItemUpdate = Partial<DbItemInsert> & {

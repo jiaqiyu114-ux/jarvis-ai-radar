@@ -19,6 +19,7 @@ const PROVIDER: ProviderConfig = {
   baseUrl:     null,
   trustScore:  78,
   enabled:     true,
+  dataOrigin:  'demo',   // items from this provider are excluded from the default feed
 }
 
 const NOW = new Date().toISOString()

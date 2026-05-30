@@ -4,17 +4,31 @@ import type { DbSource, DbSourceInsert, DbSourceUpdate } from '@/types/database'
 
 // ── URL normalisation ─────────────────────────────────────────────────────────
 
+/** Query params that add no semantic value and should be stripped before dedup. */
+const SOURCE_TRACKING_PARAMS = [
+  'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id',
+  'ref', 'fbclid', 'gclid', 'msclkid', 'mc_cid', 'mc_eid',
+]
+
 /**
  * Normalise a source URL before DB lookup/insert to prevent duplicates from
- * trivial variants (trailing slash, uppercase hostname).
+ * trivial variants: trailing slash, uppercase hostname, UTM / tracking params.
+ *
+ * Does NOT merge http↔https or strip subdomains — those are intentional differences
+ * that could point to different services.
  */
 function normalizeSourceUrl(raw: string): string {
   const trimmed = raw.trim()
   try {
     const parsed = new URL(trimmed)
     parsed.hostname = parsed.hostname.toLowerCase()
+    // Remove trailing slash from non-root paths
     if (parsed.pathname !== '/' && parsed.pathname.endsWith('/')) {
       parsed.pathname = parsed.pathname.slice(0, -1)
+    }
+    // Strip tracking params
+    for (const p of SOURCE_TRACKING_PARAMS) {
+      parsed.searchParams.delete(p)
     }
     return parsed.toString()
   } catch {
