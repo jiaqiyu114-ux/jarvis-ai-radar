@@ -16,6 +16,10 @@ type QueueSummary = {
   clusterReady: number
 }
 
+type InitialQueueRow = Record<string, unknown> & {
+  sources?: { source_tier?: string | null } | null
+}
+
 async function fetchSummary(): Promise<QueueSummary | null> {
   if (!isServerSupabaseConfigured || !supabaseServer) return null
 
@@ -76,7 +80,7 @@ async function fetchInitialItems() {
   if (!isServerSupabaseConfigured || !supabaseServer) return []
 
   const SELECT = [
-    'id', 'title', 'final_score', 'source_tier', 'category',
+    'id', 'source_id', 'title', 'final_score', 'category',
     'published_at', 'fetched_at', 'created_at', 'data_origin',
     'analysis_tier', 'analysis_stage', 'analysis_priority', 'analysis_reason',
     'token_budget_tier', 'analysis_queued_at',
@@ -84,6 +88,7 @@ async function fetchInitialItems() {
     'should_deep_analyze', 'should_track_event', 'should_enter_daily_report', 'should_enter_topic_pool',
     'ev_score', 'truth_score', 'claim_status', 'source_trace_score',
     'content_fetch_status', 'content_word_count',
+    'sources!items_source_id_fkey(source_tier)',
   ].join(', ')
 
   const { data } = await supabaseServer
@@ -94,7 +99,10 @@ async function fetchInitialItems() {
     .order('final_score', { ascending: false, nullsFirst: false })
     .limit(50)
 
-  return data ?? []
+  return ((data ?? []) as unknown as InitialQueueRow[]).map(row => {
+    const { sources, ...item } = row
+    return { ...item, source_tier: sources?.source_tier ?? null }
+  })
 }
 
 export default async function AnalysisPage() {

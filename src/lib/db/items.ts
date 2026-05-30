@@ -4,14 +4,14 @@ import type { DbItem, DbItemInsert, DbItemScoreUpdate, DbItemStatus, DbSourceTie
 
 /** Items row enriched with source name and tier via JOIN (feed display). */
 export type DbItemWithSource = DbItem & {
-  sources: { name: string; source_tier: DbSourceTier } | null
+  sources: { name: string; source_tier: DbSourceTier | null } | null
 }
 
 /** Items row enriched with full source metadata via JOIN (rule scoring). */
 export type DbItemForScoring = DbItem & {
   sources: {
     name:              string
-    source_tier:       DbSourceTier
+    source_tier:       DbSourceTier | null
     is_official:       boolean
     reliability_score: number
     base_score:        number
@@ -42,14 +42,18 @@ export async function listItems(options: ListItemsOptions = {}): Promise<DbItem[
     limit = 50, offset = 0, search, status,
   } = options
 
+  const selectClause = sourceTier
+    ? '*, sources!items_source_id_fkey(source_tier)'
+    : '*'
+
   let query = supabase
     .from('items')
-    .select('*')
+    .select(selectClause)
     .order('published_at', { ascending: false })
     .range(offset, offset + limit - 1)
 
   if (category)               query = query.eq('category', category)
-  if (sourceTier)             query = query.eq('source_tier', sourceTier)
+  if (sourceTier)             query = query.eq('sources.source_tier', sourceTier)
   if (minScore !== undefined) query = query.gte('final_score', minScore)
   if (maxScore !== undefined) query = query.lte('final_score', maxScore)
   if (status)                 query = query.eq('status', status)
@@ -57,7 +61,7 @@ export async function listItems(options: ListItemsOptions = {}): Promise<DbItem[
 
   const { data, error } = await query
   if (error) { console.error('[db/items] listItems:', error.message); return [] }
-  return (data ?? []) as DbItem[]
+  return (data ?? []) as unknown as DbItem[]
 }
 
 export async function listSelectedItems(options: Omit<ListItemsOptions, 'minScore' | 'status'> = {}): Promise<DbItem[]> {
@@ -78,9 +82,11 @@ export async function listItemsWithSource(
     sortByScore = false,
   } = options
 
+  const selectClause = '*, sources!items_source_id_fkey(name, source_tier)'
+
   let query = supabase
     .from('items')
-    .select('*, sources!items_source_id_fkey(name, source_tier)')
+    .select(selectClause)
     .range(offset, offset + limit - 1)
 
   // Sort: scored items by final_score desc, then published_at desc
@@ -93,7 +99,7 @@ export async function listItemsWithSource(
   }
 
   if (category)               query = query.eq('category', category)
-  if (sourceTier)             query = query.eq('source_tier', sourceTier)
+  if (sourceTier)             query = query.eq('sources.source_tier', sourceTier)
   if (minScore !== undefined) query = query.gte('final_score', minScore)
   if (maxScore !== undefined) query = query.lte('final_score', maxScore)
   if (status)                 query = query.eq('status', status)
@@ -479,9 +485,11 @@ export async function getItemForContentFetch(itemId: string): Promise<DbItem | n
   if (!isServerSupabaseConfigured || !supabaseServer) return null
   const { data, error } = await supabaseServer
     .from('items')
-    .select('*')
+    .select('*, sources!items_source_id_fkey(source_tier)')
     .eq('id', itemId)
     .single()
   if (error) { console.error('[db/items] getItemForContentFetch:', error.message); return null }
-  return data
+  const row = data as DbItem & { sources?: { source_tier?: DbSourceTier | null } | null }
+  const { sources, ...item } = row
+  return { ...item, source_tier: sources?.source_tier ?? null }
 }

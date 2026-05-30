@@ -58,7 +58,11 @@ function domainMatches(domain: string | null, patterns: string[]): boolean {
   return patterns.some(p => domain === p || domain.endsWith(`.${p}`))
 }
 
-export function getSourceNature(item: Pick<DbItem, 'url' | 'source_tier' | 'category'>): SourceNature {
+type SourceTierCarrier = Pick<DbItem, 'url' | 'category'> & {
+  source_tier?: string | null
+}
+
+export function getSourceNature(item: SourceTierCarrier): SourceNature {
   const domain = parseDomain(item.url)
 
   if (domainMatches(domain, OFFICIAL_DOMAINS))       return 'official'
@@ -130,7 +134,7 @@ function sourceNatureEvPoints(nature: SourceNature): number {
   }
 }
 
-function sourceTierEvPoints(tier: string | null): number {
+function sourceTierEvPoints(tier: string | null | undefined): number {
   switch (tier?.toUpperCase()) {
     case 'S': return 5
     case 'A': return 3
@@ -142,7 +146,7 @@ function sourceTierEvPoints(tier: string | null): number {
 
 export function calculateEvidenceScore(
   nature:             SourceNature,
-  tier:               string | null,
+  tier:               string | null | undefined,
   hasArticleContent:  boolean,
   hasAuthor:          boolean,
   hasPublishedTime:   boolean,

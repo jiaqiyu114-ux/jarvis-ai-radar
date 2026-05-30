@@ -225,7 +225,6 @@ export function normalizeRssItem(
 
   return {
     source_id:               source.id,
-    source_tier:             source.source_tier,
     title:                   item.title,
     url:                     item.url,
     author:                  item.author ?? undefined,

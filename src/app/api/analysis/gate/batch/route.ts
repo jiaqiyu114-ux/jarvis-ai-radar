@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { supabaseServer, isServerSupabaseConfigured } from '@/lib/supabase/server'
 import { buildAnalysisGate } from '@/lib/analysis/budget-gate'
 import { updateItemAnalysisGate } from '@/lib/db/items'
-import type { DbItem } from '@/types/database'
+import type { DbItem, DbSourceTier } from '@/types/database'
 
 /**
  * POST /api/analysis/gate/batch
@@ -17,7 +17,7 @@ import type { DbItem } from '@/types/database'
 
 // Columns that the batch process needs — excludes large text fields (clean_text, raw_payload, etc.)
 const BATCH_SELECT = [
-  'id', 'title', 'url', 'summary', 'source_tier', 'published_at', 'fetched_at', 'created_at',
+  'id', 'source_id', 'title', 'url', 'summary', 'published_at', 'fetched_at', 'created_at',
   'data_origin', 'category', 'final_score',
   'importance_score', 'novelty_score', 'momentum_score', 'credibility_score',
   'actionability_score', 'content_potential_score', 'personal_fit_score',
@@ -30,10 +30,23 @@ const BATCH_SELECT = [
   'token_budget_tier', 'analysis_queued_at', 'analysis_updated_at',
   'estimated_input_tokens', 'estimated_output_tokens', 'estimated_total_tokens',
   'should_deep_analyze', 'should_track_event', 'should_enter_daily_report', 'should_enter_topic_pool',
+  'sources!items_source_id_fkey(source_tier)',
 ].join(', ')
 
 const MAX_LIMIT = 200
 const DEFAULT_LIMIT = 100
+
+type BatchItemRow = DbItem & {
+  sources?: { source_tier?: DbSourceTier | null } | null
+}
+
+function flattenSourceTier(row: BatchItemRow): DbItem {
+  const { sources, ...item } = row
+  return {
+    ...item,
+    source_tier: sources?.source_tier ?? null,
+  }
+}
 
 export async function POST(req: NextRequest) {
   if (!isServerSupabaseConfigured || !supabaseServer) {
@@ -92,7 +105,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   }
 
-  const items = (rows ?? []) as unknown as DbItem[]
+  const items = ((rows ?? []) as unknown as BatchItemRow[]).map(flattenSourceTier)
 
   // ── Process each item ────────────────────────────────────────────────────────
 

@@ -10,7 +10,7 @@ import { supabaseServer, isServerSupabaseConfigured } from '@/lib/supabase/serve
  */
 
 const QUEUE_SELECT = [
-  'id', 'title', 'url', 'source_tier', 'published_at', 'fetched_at', 'created_at',
+  'id', 'source_id', 'title', 'url', 'published_at', 'fetched_at', 'created_at',
   'data_origin', 'category', 'final_score',
   'analysis_tier', 'analysis_stage', 'analysis_priority', 'analysis_reason',
   'token_budget_tier', 'analysis_queued_at',
@@ -18,7 +18,20 @@ const QUEUE_SELECT = [
   'should_deep_analyze', 'should_track_event', 'should_enter_daily_report', 'should_enter_topic_pool',
   'ev_score', 'truth_score', 'source_trace_score', 'claim_status', 'evidence_level',
   'content_fetch_status', 'content_word_count',
+  'sources!items_source_id_fkey(source_tier)',
 ].join(', ')
+
+type QueueRow = Record<string, unknown> & {
+  sources?: { source_tier?: unknown } | null
+}
+
+function flattenSourceTier(row: QueueRow): Record<string, unknown> {
+  const { sources, ...item } = row
+  return {
+    ...item,
+    source_tier: sources?.source_tier ?? null,
+  }
+}
 
 export async function GET(req: NextRequest) {
   if (!isServerSupabaseConfigured || !supabaseServer) {
@@ -101,7 +114,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   }
 
-  const items = (rows ?? []) as unknown as Array<Record<string, unknown>>
+  const items = ((rows ?? []) as unknown as QueueRow[]).map(flattenSourceTier)
   const lastItem = items[items.length - 1]
   const nextCursor = lastItem && items.length === limit
     ? Buffer.from(JSON.stringify({ createdAt: lastItem['created_at'], id: lastItem['id'] })).toString('base64')

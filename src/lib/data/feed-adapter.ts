@@ -24,12 +24,12 @@ function toSourceTier(t: DbSourceTier | string | null | undefined): SourceTier {
 }
 
 // ── DbItemWithSource → InformationItem mapper ─────────────────────────────────
-// sources JOIN provides name + tier; falls back to cached source_tier if JOIN null.
+// sources JOIN provides name + tier. Rows without a source keep a nullable tier.
 // All fields are defensively defaulted so a single dirty DB row never crashes.
 
 function mapDbItem(item: DbItemWithSource): InformationItem {
   const sourceName = item.sources?.name ?? (item.source_id ? '未知信源' : 'Unknown Source')
-  const rawTier    = item.sources?.source_tier ?? item.source_tier
+  const rawTier    = item.sources?.source_tier ?? null
 
   return {
     id:          item.id,

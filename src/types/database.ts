@@ -115,7 +115,7 @@ export type DbSourceUpdate = Partial<Omit<DbSourceInsert, 'url'>> & {
 export type DbItem = {
   id:                      string
   source_id:               string | null
-  source_tier:             DbSourceTier
+  source_tier?:            DbSourceTier | null
   title:                   string
   url:                     string
   author:                  string | null
@@ -214,7 +214,6 @@ export type DbItem = {
 
 export type DbItemInsert = {
   source_id?:               string
-  source_tier?:             DbSourceTier
   title:                    string
   url:                      string
   author?:                  string
