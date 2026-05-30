@@ -67,6 +67,56 @@ function Divider() {
   return <div className="h-px bg-border/60" />
 }
 
+// ── Reading intro builder ─────────────────────────────────────────────────────
+// Generates a concise reading intro (~280 chars) from available content fields.
+// Priority: article excerpt → RSS summary → cleanText slice → title fallback.
+
+function buildReadingIntro(
+  item: InformationItem,
+  localContent?: ArticleContent,
+): { text: string; dataNote: string } {
+  const ac = localContent ?? item.articleContent
+  const MAX = 320
+
+  function clip(s: string): string {
+    const cleaned = normalizeDisplayText(s).replace(/\s+/g, ' ').trim()
+    if (cleaned.length <= MAX) return cleaned
+    const idx = cleaned.lastIndexOf(' ', MAX)
+    return (idx > MAX * 0.6 ? cleaned.slice(0, idx) : cleaned.slice(0, MAX)) + '…'
+  }
+
+  // 1. Article excerpt (from fetched content) — most reliable short summary
+  if (ac?.fetchStatus === 'fetched' && ac.excerpt && ac.excerpt.trim().length > 30) {
+    const wordNote = ac.wordCount ? ` · 原文约 ${ac.wordCount} 字` : ''
+    return {
+      text:     clip(ac.excerpt),
+      dataNote: `基于已抓取正文摘要${wordNote}。`,
+    }
+  }
+
+  // 2. RSS summary
+  if (item.summary && item.summary.trim().length >= 30) {
+    return {
+      text:     clip(item.summary),
+      dataNote: '基于 RSS 摘要，尚未抓取完整正文。',
+    }
+  }
+
+  // 3. cleanText front slice
+  if (ac?.fetchStatus === 'fetched' && ac.cleanText && ac.cleanText.trim().length > 60) {
+    return {
+      text:     clip(ac.cleanText),
+      dataNote: '正文前段内容。',
+    }
+  }
+
+  // 4. Title fallback — explicit about the limitation
+  return {
+    text:     normalizeDisplayText(item.title),
+    dataNote: '当前正文抓取信息不足，仅基于标题和摘要判断。',
+  }
+}
+
 // ── Add to topic pool button ──────────────────────────────────────────────────
 
 type TopicState = 'idle' | 'loading' | 'done' | 'error'
@@ -165,7 +215,6 @@ function AnalysisGateSection({ gate }: { gate: AnalysisGate }) {
 
   return (
     <Section label="处理策略">
-      {/* Tier + priority + budget badges */}
       <div className="flex flex-wrap gap-1.5 mb-3">
         <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium", tierStyle.color)}>
           {tierStyle.label}
@@ -178,12 +227,10 @@ function AnalysisGateSection({ gate }: { gate: AnalysisGate }) {
         </span>
       </div>
 
-      {/* Reason */}
       {gate.analysisReason && (
         <p className="text-xs text-foreground/80 leading-relaxed mb-3">{gate.analysisReason}</p>
       )}
 
-      {/* Boolean flags */}
       <div className="flex flex-wrap gap-1.5 mb-3">
         {[
           { label: '深度解释', value: gate.shouldDeepAnalyze },
@@ -205,7 +252,6 @@ function AnalysisGateSection({ gate }: { gate: AnalysisGate }) {
         ))}
       </div>
 
-      {/* Token estimate */}
       {showTokens && (
         <p className="text-[10px] text-muted-foreground/60">
           预估 token：输入 {gate.estimatedInputTokens.toLocaleString()} + 输出 {gate.estimatedOutputTokens.toLocaleString()} ≈ 共 {gate.estimatedTotalTokens.toLocaleString()}
@@ -265,7 +311,6 @@ function EvidenceSection({ profile }: { profile: EvidenceProfile }) {
 
   return (
     <Section label="真实与证据">
-      {/* Status badges */}
       <div className="flex flex-wrap gap-1.5 mb-3">
         <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium", claimStyle.color)}>
           {claimStyle.label}
@@ -278,14 +323,12 @@ function EvidenceSection({ profile }: { profile: EvidenceProfile }) {
         </span>
       </div>
 
-      {/* Score bars */}
       <div className="space-y-1.5 bg-muted/30 rounded-md p-3 mb-3">
         <ScoreBar label="真实程度"   value={profile.truthScore}       color={profile.truthScore >= 60 ? 'bg-success' : profile.truthScore >= 40 ? 'bg-warning' : 'bg-danger/60'} />
         <ScoreBar label="证据强度"   value={profile.evidenceScore}    color="bg-primary/60" />
         <ScoreBar label="来源可追溯" value={profile.sourceTraceScore} color="bg-sky-500/60 dark:bg-sky-400/60" />
       </div>
 
-      {/* Boolean signals */}
       <div className="flex flex-wrap gap-1.5 mb-3">
         {[
           { label: '有原文',   value: profile.hasArticleContent },
@@ -307,14 +350,12 @@ function EvidenceSection({ profile }: { profile: EvidenceProfile }) {
         ))}
       </div>
 
-      {/* Evidence notes */}
       {profile.evidenceNotes && (
         <p className="text-[10px] text-muted-foreground/70 leading-relaxed mb-2">
           {profile.evidenceNotes}
         </p>
       )}
 
-      {/* Truth notes */}
       {profile.truthNotes && (
         <p className="text-[10px] text-muted-foreground/60 leading-relaxed italic">
           {profile.truthNotes}
@@ -356,7 +397,7 @@ function FetchButton({
         onSuccess({
           fetchStatus:   'fetched',
           fetchedAt:     new Date().toISOString(),
-          cleanText:     null,              // cleanText not returned in API response (too large)
+          cleanText:     null,
           wordCount:     data.wordCount as number ?? null,
           excerpt:       data.excerpt as string | null ?? null,
           articleTitle:  data.title as string | null ?? null,
@@ -420,70 +461,80 @@ export function ItemDetailPanel({
   /** When provided, shown verbatim in "为什么值得关注" instead of the rule-based explanation. */
   recommendationReason?: string
 }) {
-  // Local article content — updated after a successful fetch without page reload
   const [localContent, setLocalContent] = useState<ArticleContent | undefined>(item.articleContent)
 
-  // Noise detection (pure, no I/O)
-  const noiseResult = detectLowValueNoise(
-    item.title,
-    item.summary,
-    (item.articleContent?.wordCount) ?? null,
-  )
+  const noiseResult  = detectLowValueNoise(item.title, item.summary, localContent?.wordCount ?? null)
+  const explanation  = buildScoreExplanation(item.scoreBreakdown, item.finalScore, item.penalties)
+  const detail       = buildInformationDetail(item, explanation, localContent)
+  const readingIntro = buildReadingIntro(item, localContent)
 
-  const explanation = buildScoreExplanation(item.scoreBreakdown, item.finalScore, item.penalties)
-  const detail      = buildInformationDetail(item, explanation, localContent)
+  const categoryClass = categoryColors[item.category] ?? categoryColors['其他']
+  const publishedAgo  = formatDistanceToNow(new Date(item.publishedAt), { addSuffix: true, locale: zhCN })
+  const publishedFmt  = format(new Date(item.publishedAt), 'yyyy-MM-dd HH:mm')
 
-  const categoryClass  = categoryColors[item.category] ?? categoryColors['其他']
-  const publishedAgo   = formatDistanceToNow(new Date(item.publishedAt), { addSuffix: true, locale: zhCN })
-  const publishedFmt   = format(new Date(item.publishedAt), 'yyyy-MM-dd HH:mm')
-  const foldedPositive = explanation.topPositiveDrivers.slice(0, 2)
-
-  const fetchStatus    = localContent?.fetchStatus ?? 'not_fetched'
-  const hasCoverImg    = Boolean(localContent?.coverImageUrl)
-  const mediaUrls      = localContent?.mediaUrls ?? []
+  const fetchStatus  = localContent?.fetchStatus ?? 'not_fetched'
+  const coverImgUrl  = localContent?.coverImageUrl ?? null
+  const hasCoverImg  = Boolean(coverImgUrl)
+  const mediaUrls    = localContent?.mediaUrls ?? []
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
 
-      {/* ── 1. Header ── */}
-      <div className="space-y-2">
-        <div className="flex items-center gap-2 flex-wrap">
+      {/* ── 1. Hero: cover image → tags → title → source meta ── */}
+      <div className="space-y-2.5">
+
+        {/* Cover image — first thing visible */}
+        {hasCoverImg && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={coverImgUrl!}
+            alt="封面图"
+            className="w-full max-h-[220px] object-cover rounded-lg border border-border/30"
+            referrerPolicy="no-referrer"
+            onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+          />
+        )}
+
+        {/* Tags: score band + category + noise warning */}
+        <div className="flex items-center gap-1.5 flex-wrap">
           <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium", explanation.scoreBand.color)}>
             {explanation.scoreBand.label}
           </span>
           <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-medium", categoryClass)}>
             {item.category}
           </span>
-          {foldedPositive.map(d => (
-            <span key={d} className="text-[10px] px-1.5 py-0.5 rounded border text-success border-success/25 bg-success/8">
-              ↑ {d}
+          {noiseResult.isNoise && (
+            <span className="text-[10px] text-warning/80 border border-warning/20 bg-warning/5 px-1.5 py-0.5 rounded italic">
+              {noiseResult.reason}
             </span>
-          ))}
+          )}
         </div>
-        <h2 className="text-base font-semibold text-foreground leading-snug">
+
+        {/* Title */}
+        <h2 className="text-[1.05rem] font-bold text-foreground leading-snug">
           {normalizeDisplayText(item.title)}
         </h2>
-        {noiseResult.isNoise && (
-          <p className="text-[10px] text-warning/80 italic">{noiseResult.reason}</p>
-        )}
+
+        {/* Source meta */}
         <div className="flex items-center gap-2 flex-wrap">
+          <ScoreBadge score={item.finalScore} size="sm" />
           <SourceTierBadge tier={item.sourceTier} />
           <span className="text-xs text-foreground/70 font-medium">{item.source}</span>
           <span className="text-muted-foreground/40 text-xs">·</span>
           <span className="text-xs text-muted-foreground">{publishedAgo}</span>
           <span className="text-muted-foreground/40 text-xs">·</span>
-          <span className="text-xs text-muted-foreground/60 font-mono">{publishedFmt}</span>
+          <span className="text-[10px] text-muted-foreground/60 font-mono">{publishedFmt}</span>
         </div>
       </div>
 
       <Divider />
 
-      {/* ── 2. 这条信息在说什么 ── */}
-      <Section label="这条信息在说什么">
-        <p className="text-sm text-foreground/85 leading-relaxed whitespace-pre-line">
-          {detail.whatHappened.text}
+      {/* ── 2. 正文导读 ── */}
+      <Section label="正文导读">
+        <p className="text-sm text-foreground/85 leading-[1.7]">
+          {readingIntro.text}
         </p>
-        <p className="text-[10px] text-muted-foreground/55 italic">{detail.whatHappened.dataNote}</p>
+        <p className="text-[10px] text-muted-foreground/55 italic">{readingIntro.dataNote}</p>
       </Section>
 
       <Divider />
@@ -514,7 +565,6 @@ export function ItemDetailPanel({
             )
           })}
         </div>
-        {/* 加入选题池 — placed below insights as a next-step action */}
         <div className="pt-1 flex items-center gap-3">
           <AddToTopicPoolButton itemId={item.id} isReal={isReal} />
         </div>
@@ -547,17 +597,17 @@ export function ItemDetailPanel({
                 ))}
               </div>
             )}
-            {/* Fetch status indicator */}
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               {fetchStatus === 'fetched' && (
                 <span className="text-[9px] text-success border border-success/25 rounded px-1.5 py-0.5">
-                  已抓取原文
-                  {localContent?.wordCount ? ` · 约 ${localContent.wordCount} 字` : ''}
+                  已抓取原文{localContent?.wordCount ? ` · 约 ${localContent.wordCount} 字` : ''}
                 </span>
               )}
               {fetchStatus === 'failed' && (
-                <span className="text-[9px] text-danger/80 border border-danger/20 rounded px-1.5 py-0.5"
-                  title={localContent?.errorMessage ?? ''}>
+                <span
+                  className="text-[9px] text-danger/80 border border-danger/20 rounded px-1.5 py-0.5"
+                  title={localContent?.errorMessage ?? ''}
+                >
                   抓取失败
                 </span>
               )}
@@ -566,11 +616,7 @@ export function ItemDetailPanel({
                   未抓取
                 </span>
               )}
-              <FetchButton
-                itemId={item.id}
-                currentStatus={fetchStatus}
-                onSuccess={setLocalContent}
-              />
+              <FetchButton itemId={item.id} currentStatus={fetchStatus} onSuccess={setLocalContent} />
             </div>
           </div>
 
@@ -589,48 +635,56 @@ export function ItemDetailPanel({
 
       <Divider />
 
-      {/* ── 6. 媒体信息 ── */}
+      {/* ── 6. 媒体信息 — no repeat of hero cover image ── */}
       <Section label="媒体信息">
         {hasCoverImg ? (
-          <div className="space-y-2">
-            {/* Cover image */}
+          <p className="text-xs text-muted-foreground/60">
+            封面图已在顶部展示
+            {mediaUrls.length > 0 && `  ·  另有 ${mediaUrls.length} 个媒体候选 URL`}
+          </p>
+        ) : mediaUrls.length > 0 ? (
+          <div className="space-y-1.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={localContent!.coverImageUrl!}
-              alt="封面图"
-              className="w-full max-h-48 object-cover rounded-md border border-border/50"
+              src={mediaUrls[0]}
+              alt="媒体图"
+              className="w-full max-h-40 object-cover rounded-md border border-border/50"
               referrerPolicy="no-referrer"
               onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
             />
-            {mediaUrls.length > 0 && (
-              <div className="text-[10px] text-muted-foreground/60">
-                另有 {mediaUrls.length} 个媒体候选 URL
-              </div>
+            {mediaUrls.length > 1 && (
+              <p className="text-[10px] text-muted-foreground/60">
+                另有 {mediaUrls.length - 1} 个媒体候选 URL
+              </p>
             )}
           </div>
         ) : (
-          <div className="flex items-center gap-2 py-3 px-4 rounded-md bg-muted/40 border border-border/50">
+          <div className="flex items-center gap-2 py-2.5 px-3 rounded-md bg-muted/40 border border-border/50">
             <ImageOff className="h-4 w-4 text-muted-foreground/40 shrink-0" />
             <p className="text-xs text-muted-foreground/60 italic">{detail.media.note}</p>
           </div>
         )}
       </Section>
 
+      {/* ── 7. 真实与证据 ── */}
+      {item.evidenceProfile && (
+        <>
+          <Divider />
+          <EvidenceSection profile={item.evidenceProfile} />
+        </>
+      )}
+
+      {/* ── 8. 处理策略 ── */}
+      {item.analysisGate && (
+        <>
+          <Divider />
+          <AnalysisGateSection gate={item.analysisGate} />
+        </>
+      )}
+
       <Divider />
 
-      {/* ── 6.5. 真实与证据 ── */}
-      {item.evidenceProfile && (
-        <EvidenceSection profile={item.evidenceProfile} />
-      )}
-      {item.evidenceProfile && <Divider />}
-
-      {/* ── 6.8. 处理策略 ── */}
-      {item.analysisGate && (
-        <AnalysisGateSection gate={item.analysisGate} />
-      )}
-      {item.analysisGate && <Divider />}
-
-      {/* ── 7. 事件追踪 ── */}
+      {/* ── 9. 事件追踪 ── */}
       <Section label="事件追踪">
         <div className="flex items-start justify-between gap-4">
           <p className="text-xs text-muted-foreground">{detail.timeline.message}</p>
@@ -652,7 +706,7 @@ export function ItemDetailPanel({
 
       <Divider />
 
-      {/* ── 8. 评分审计（底部）── */}
+      {/* ── 10. 评分审计（底部）── */}
       <Section label="评分审计">
         <div className="flex items-center gap-3">
           <ScoreBadge score={item.finalScore} size="md" />
