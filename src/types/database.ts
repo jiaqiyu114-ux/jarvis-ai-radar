@@ -159,6 +159,23 @@ export type DbItem = {
   cluster_id:              string | null
   status:                  DbItemStatus
   data_origin:             DataOrigin
+
+  // Article Content Extraction v1
+  content_fetch_status:    string | null
+  content_fetched_at:      string | null
+  content_error_message:   string | null
+  content_source_url:      string | null
+  article_title:           string | null
+  article_author:          string | null
+  article_site_name:       string | null
+  article_published_at:    string | null
+  article_excerpt:         string | null
+  clean_text:              string | null
+  content_word_count:      number | null
+  cover_image_url:         string | null
+  media_urls:              string[] | null
+  content_hash:            string | null
+
   created_at:              string
   updated_at:              string
 }
@@ -221,6 +238,21 @@ export type DbItemUpdate = Partial<DbItemInsert> & {
   marketing_penalty?:       number
   cognitive_load_penalty?:  number
   final_score?:             number
+  // Article Content Extraction v1
+  content_fetch_status?:    string | null
+  content_fetched_at?:      string | null
+  content_error_message?:   string | null
+  content_source_url?:      string | null
+  article_title?:           string | null
+  article_author?:          string | null
+  article_site_name?:       string | null
+  article_published_at?:    string | null
+  article_excerpt?:         string | null
+  clean_text?:              string | null
+  content_word_count?:      number | null
+  cover_image_url?:         string | null
+  media_urls?:              string[] | null
+  content_hash?:            string | null
 }
 
 export type DbItemScoreUpdate = {

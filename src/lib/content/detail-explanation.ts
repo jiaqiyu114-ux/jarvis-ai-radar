@@ -12,7 +12,7 @@
  * - Claim to have "read" the full article.
  */
 
-import type { InformationItem, SourceTier, Category } from '@/types'
+import type { InformationItem, SourceTier, Category, ArticleContent } from '@/types'
 import type { ScoreExplanation } from '@/lib/scoring/explanation'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -77,9 +77,23 @@ const TIER_LABELS: Record<SourceTier, string> = {
 
 // ── Component builders ────────────────────────────────────────────────────────
 
-function buildWhatHappened(item: InformationItem): WhatHappened {
-  const hasMeaningfulSummary = item.summary && item.summary.trim().length >= 40
+function buildWhatHappened(item: InformationItem, contentOverride?: ArticleContent): WhatHappened {
+  const ac = contentOverride ?? item.articleContent
 
+  // 1. Prefer extracted article content
+  if (ac?.fetchStatus === 'fetched' && ac.cleanText && ac.cleanText.trim().length > 60) {
+    const text = ac.excerpt
+      ? ac.excerpt
+      : ac.cleanText.slice(0, 600) + (ac.cleanText.length > 600 ? '…' : '')
+    const wordNote = ac.wordCount ? `约 ${ac.wordCount} 字` : ''
+    return {
+      text,
+      dataNote: `已抓取原文${wordNote ? ' · ' + wordNote : ''}。`,
+    }
+  }
+
+  // 2. Fallback to RSS summary
+  const hasMeaningfulSummary = item.summary && item.summary.trim().length >= 40
   if (hasMeaningfulSummary) {
     return {
       text:     item.summary,
@@ -87,7 +101,7 @@ function buildWhatHappened(item: InformationItem): WhatHappened {
     }
   }
 
-  // Summary too short or empty — honest fallback from title context
+  // 3. Minimal fallback
   return {
     text:     item.summary?.trim()
       ? item.summary
@@ -208,11 +222,12 @@ function buildTimelineStatus(item: InformationItem): TimelineStatus {
 // ── Main function ─────────────────────────────────────────────────────────────
 
 export function buildInformationDetail(
-  item:        InformationItem,
-  explanation: ScoreExplanation,
+  item:            InformationItem,
+  explanation:     ScoreExplanation,
+  contentOverride?: ArticleContent,   // pass local state after a fetch in the UI
 ): InformationDetail {
   return {
-    whatHappened: buildWhatHappened(item),
+    whatHappened: buildWhatHappened(item, contentOverride),
     whyItMatters: buildWhyItMatters(item, explanation),
     userInsights: buildUserInsights(item, explanation),
     sourcePanel:  buildSourcePanel(item),

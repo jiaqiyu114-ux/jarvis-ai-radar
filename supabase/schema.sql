@@ -109,6 +109,22 @@ CREATE TABLE IF NOT EXISTS items (
   -- Data origin: distinguishes real ingest from demo/mock/seed data
   data_origin             text        NOT NULL DEFAULT 'real',
 
+  -- Article Content Extraction v1
+  content_fetch_status    text        DEFAULT 'not_fetched',
+  content_fetched_at      timestamptz,
+  content_error_message   text,
+  content_source_url      text,
+  article_title           text,
+  article_author          text,
+  article_site_name       text,
+  article_published_at    timestamptz,
+  article_excerpt         text,
+  clean_text              text,
+  content_word_count      integer,
+  cover_image_url         text,
+  media_urls              jsonb       DEFAULT '[]'::jsonb,
+  content_hash            text,
+
   created_at              timestamptz NOT NULL DEFAULT now(),
   updated_at              timestamptz NOT NULL DEFAULT now()
 );

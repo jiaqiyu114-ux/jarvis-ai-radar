@@ -301,3 +301,87 @@ export async function upsertItemByCanonicalUrl(
 
   return { id: data.id, status: 'inserted' }
 }
+
+// ── Article Content Extraction v1 ─────────────────────────────────────────────
+
+export type ArticleContentPayload = {
+  finalUrl:     string
+  title:        string | null
+  siteName:     string | null
+  author:       string | null
+  publishedAt:  string | null
+  excerpt:      string | null
+  cleanText:    string
+  wordCount:    number
+  coverImageUrl: string | null
+  mediaUrls:    string[]
+  contentHash:  string
+}
+
+/**
+ * Write successfully extracted article content to an item.
+ * Does NOT modify final_score, data_origin, or source_id.
+ */
+export async function updateItemArticleContent(
+  itemId:  string,
+  payload: ArticleContentPayload,
+): Promise<boolean> {
+  if (!isServerSupabaseConfigured || !supabaseServer) return false
+  const { error } = await supabaseServer
+    .from('items')
+    .update({
+      content_fetch_status:  'fetched',
+      content_fetched_at:    new Date().toISOString(),
+      content_error_message: null,
+      content_source_url:    payload.finalUrl,
+      article_title:         payload.title,
+      article_author:        payload.author,
+      article_site_name:     payload.siteName,
+      article_published_at:  payload.publishedAt,
+      article_excerpt:       payload.excerpt,
+      clean_text:            payload.cleanText,
+      content_word_count:    payload.wordCount,
+      cover_image_url:       payload.coverImageUrl,
+      media_urls:            payload.mediaUrls,
+      content_hash:          payload.contentHash,
+    })
+    .eq('id', itemId)
+  if (error) { console.error('[db/items] updateItemArticleContent:', error.message); return false }
+  return true
+}
+
+/**
+ * Record a failed content fetch attempt.
+ */
+export async function markItemContentFetchFailed(
+  itemId:       string,
+  errorMessage: string,
+  sourceUrl?:   string,
+): Promise<boolean> {
+  if (!isServerSupabaseConfigured || !supabaseServer) return false
+  const { error } = await supabaseServer
+    .from('items')
+    .update({
+      content_fetch_status:  'failed',
+      content_fetched_at:    new Date().toISOString(),
+      content_error_message: errorMessage.slice(0, 500),
+      content_source_url:    sourceUrl ?? null,
+    })
+    .eq('id', itemId)
+  if (error) { console.error('[db/items] markItemContentFetchFailed:', error.message); return false }
+  return true
+}
+
+/**
+ * Fetch a single item by ID for content extraction (uses server client).
+ */
+export async function getItemForContentFetch(itemId: string): Promise<DbItem | null> {
+  if (!isServerSupabaseConfigured || !supabaseServer) return null
+  const { data, error } = await supabaseServer
+    .from('items')
+    .select('*')
+    .eq('id', itemId)
+    .single()
+  if (error) { console.error('[db/items] getItemForContentFetch:', error.message); return null }
+  return data
+}

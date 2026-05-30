@@ -1,7 +1,7 @@
 import { mockItems, mockStats } from '@/config/mock-data'
 import { listItemsWithSource, listItems } from '@/lib/db/items'
 import { shouldUseDatabase } from './runtime'
-import type { InformationItem, DashboardStats, Category, SourceTier } from '@/types'
+import type { InformationItem, DashboardStats, Category, SourceTier, ArticleContent, ContentFetchStatus } from '@/types'
 import type { DbItemWithSource } from '@/lib/db/items'
 import type { DbSourceTier } from '@/types/database'
 
@@ -60,6 +60,26 @@ function mapDbItem(item: DbItemWithSource): InformationItem {
     },
     originalUrl:        item.url,
     relatedReportCount: 0,
+    articleContent: mapArticleContent(item),
+  }
+}
+
+function mapArticleContent(item: DbItemWithSource): ArticleContent | undefined {
+  const status = (item as { content_fetch_status?: string }).content_fetch_status as ContentFetchStatus | null
+  if (!status || status === 'not_fetched') return undefined
+  return {
+    fetchStatus:    status,
+    fetchedAt:      (item as { content_fetched_at?: string | null }).content_fetched_at ?? null,
+    errorMessage:   (item as { content_error_message?: string | null }).content_error_message ?? null,
+    cleanText:      (item as { clean_text?: string | null }).clean_text ?? null,
+    wordCount:      (item as { content_word_count?: number | null }).content_word_count ?? null,
+    excerpt:        (item as { article_excerpt?: string | null }).article_excerpt ?? null,
+    articleTitle:   (item as { article_title?: string | null }).article_title ?? null,
+    authorName:     (item as { article_author?: string | null }).article_author ?? null,
+    siteName:       (item as { article_site_name?: string | null }).article_site_name ?? null,
+    canonicalUrl:   (item as { canonical_url?: string | null }).canonical_url ?? null,
+    coverImageUrl:  (item as { cover_image_url?: string | null }).cover_image_url ?? null,
+    mediaUrls:      ((item as { media_urls?: unknown }).media_urls as string[] | null) ?? [],
   }
 }
 

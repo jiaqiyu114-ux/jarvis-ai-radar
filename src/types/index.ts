@@ -57,6 +57,25 @@ export interface ItemPenalties {
   cognitiveLoad: number
 }
 
+export type ContentFetchStatus = 'not_fetched' | 'fetched' | 'failed' | 'skipped'
+
+export interface ArticleContent {
+  fetchStatus:    ContentFetchStatus
+  fetchedAt?:     string | null
+  errorMessage?:  string | null
+  // Extracted content
+  cleanText?:     string | null
+  wordCount?:     number | null
+  excerpt?:       string | null   // article_excerpt (meta description or og:description)
+  articleTitle?:  string | null
+  authorName?:    string | null
+  siteName?:      string | null
+  canonicalUrl?:  string | null
+  // Media
+  coverImageUrl?: string | null
+  mediaUrls?:     string[]
+}
+
 export interface InformationItem {
   id: string
   title: string
@@ -70,7 +89,8 @@ export interface InformationItem {
   scoreBreakdown: ScoreBreakdown
   originalUrl: string
   relatedReportCount: number
-  penalties?: ItemPenalties   // populated from DB penalty columns
+  penalties?: ItemPenalties        // populated from DB penalty columns
+  articleContent?: ArticleContent  // populated after content extraction
 }
 
 export interface MockSource {

@@ -1,6 +1,7 @@
 "use client"
 
-import { ExternalLink, BookOpen, Eye, Pencil, GitBranch, ImageOff } from "lucide-react"
+import { useState } from "react"
+import { ExternalLink, BookOpen, Eye, Pencil, GitBranch, ImageOff, Loader2, RefreshCw } from "lucide-react"
 import { formatDistanceToNow, format } from "date-fns"
 import { zhCN } from "date-fns/locale"
 import { Progress } from "@/components/ui/progress"
@@ -9,11 +10,11 @@ import { ScoreBadge } from "./score-badge"
 import { cn } from "@/lib/utils"
 import { buildScoreExplanation } from "@/lib/scoring/explanation"
 import { buildInformationDetail } from "@/lib/content/detail-explanation"
-import type { InformationItem } from "@/types"
+import type { InformationItem, ArticleContent } from "@/types"
 import type { DimensionStatus } from "@/lib/scoring/explanation"
 import type { InsightType } from "@/lib/content/detail-explanation"
 
-// ── Category colors ───────────────────────────────────────────────────────────
+// ── Colors / maps ─────────────────────────────────────────────────────────────
 
 const categoryColors: Record<string, string> = {
   'AI技术':   'text-blue-700 bg-blue-100 dark:text-blue-400 dark:bg-blue-400/10',
@@ -40,8 +41,6 @@ const dimStatusText: Record<DimensionStatus, string> = {
   missing:   '缺失',
 }
 
-// ── Insight icon ──────────────────────────────────────────────────────────────
-
 const InsightIcon: Record<InsightType, React.ElementType> = {
   content:     Pencil,
   learning:    BookOpen,
@@ -49,7 +48,7 @@ const InsightIcon: Record<InsightType, React.ElementType> = {
   project:     GitBranch,
 }
 
-// ── Section wrapper ───────────────────────────────────────────────────────────
+// ── Layout helpers ────────────────────────────────────────────────────────────
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -66,31 +65,115 @@ function Divider() {
   return <div className="h-px bg-border/60" />
 }
 
+// ── Fetch button ──────────────────────────────────────────────────────────────
+
+type FetchState = 'idle' | 'loading' | 'done' | 'error'
+
+function FetchButton({
+  itemId,
+  currentStatus,
+  onSuccess,
+}: {
+  itemId:        string
+  currentStatus: string
+  onSuccess:     (content: ArticleContent) => void
+}) {
+  const [state, setState]   = useState<FetchState>('idle')
+  const [errMsg, setErrMsg] = useState<string | null>(null)
+
+  const alreadyFetched = currentStatus === 'fetched'
+
+  async function handleFetch(force = false) {
+    setState('loading')
+    setErrMsg(null)
+    try {
+      const res = await fetch('/api/fetch/content', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ itemId, force }),
+      })
+      const data = await res.json() as Record<string, unknown>
+      if (data.ok) {
+        onSuccess({
+          fetchStatus:   'fetched',
+          fetchedAt:     new Date().toISOString(),
+          cleanText:     null,              // cleanText not returned in API response (too large)
+          wordCount:     data.wordCount as number ?? null,
+          excerpt:       data.excerpt as string | null ?? null,
+          articleTitle:  data.title as string | null ?? null,
+          siteName:      data.siteName as string | null ?? null,
+          authorName:    data.author as string | null ?? null,
+          coverImageUrl: data.coverImageUrl as string | null ?? null,
+          mediaUrls:     (data.mediaUrls as string[]) ?? [],
+        })
+        setState('done')
+      } else {
+        setErrMsg((data.error as string) ?? '抓取失败')
+        setState('error')
+      }
+    } catch {
+      setErrMsg('网络错误')
+      setState('error')
+    }
+  }
+
+  if (state === 'loading') {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        正在抓取原文…
+      </span>
+    )
+  }
+
+  if (state === 'done') {
+    return (
+      <span className="text-xs text-success">✓ 抓取完成，刷新页面后可查看完整正文。</span>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      {state === 'error' && errMsg && (
+        <span className="text-xs text-danger/80">{errMsg}</span>
+      )}
+      <button
+        type="button"
+        onClick={() => handleFetch(false)}
+        className="flex items-center gap-1 text-xs text-primary border border-primary/20 bg-primary/5 hover:bg-primary/12 rounded px-2 py-1 transition-colors"
+      >
+        {alreadyFetched ? <RefreshCw className="h-3 w-3" /> : null}
+        {alreadyFetched ? '重新抓取' : '抓取原文'}
+      </button>
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function ItemDetailPanel({ item }: { item: InformationItem }) {
+  // Local article content — updated after a successful fetch without page reload
+  const [localContent, setLocalContent] = useState<ArticleContent | undefined>(item.articleContent)
+
   const explanation = buildScoreExplanation(item.scoreBreakdown, item.finalScore, item.penalties)
-  const detail      = buildInformationDetail(item, explanation)
+  const detail      = buildInformationDetail(item, explanation, localContent)
 
-  const categoryClass = categoryColors[item.category] ?? categoryColors['其他']
-
-  const publishedAgo = formatDistanceToNow(new Date(item.publishedAt), { addSuffix: true, locale: zhCN })
-  const publishedFmt = format(new Date(item.publishedAt), 'yyyy-MM-dd HH:mm')
-
-  // Folded driver chips (same as card list)
+  const categoryClass  = categoryColors[item.category] ?? categoryColors['其他']
+  const publishedAgo   = formatDistanceToNow(new Date(item.publishedAt), { addSuffix: true, locale: zhCN })
+  const publishedFmt   = format(new Date(item.publishedAt), 'yyyy-MM-dd HH:mm')
   const foldedPositive = explanation.topPositiveDrivers.slice(0, 2)
+
+  const fetchStatus    = localContent?.fetchStatus ?? 'not_fetched'
+  const hasCoverImg    = Boolean(localContent?.coverImageUrl)
+  const mediaUrls      = localContent?.mediaUrls ?? []
 
   return (
     <div className="space-y-5">
 
       {/* ── 1. Header ── */}
       <div className="space-y-2">
-        {/* scoreBand + category */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className={cn(
-            "text-[10px] px-1.5 py-0.5 rounded border font-medium",
-            explanation.scoreBand.color,
-          )}>
+          <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium", explanation.scoreBand.color)}>
             {explanation.scoreBand.label}
           </span>
           <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-medium", categoryClass)}>
@@ -102,13 +185,7 @@ export function ItemDetailPanel({ item }: { item: InformationItem }) {
             </span>
           ))}
         </div>
-
-        {/* Title */}
-        <h2 className="text-base font-semibold text-foreground leading-snug">
-          {item.title}
-        </h2>
-
-        {/* Source + time */}
+        <h2 className="text-base font-semibold text-foreground leading-snug">{item.title}</h2>
         <div className="flex items-center gap-2 flex-wrap">
           <SourceTierBadge tier={item.sourceTier} />
           <span className="text-xs text-foreground/70 font-medium">{item.source}</span>
@@ -123,21 +200,17 @@ export function ItemDetailPanel({ item }: { item: InformationItem }) {
 
       {/* ── 2. 这条信息在说什么 ── */}
       <Section label="这条信息在说什么">
-        <p className="text-sm text-foreground/85 leading-relaxed">
+        <p className="text-sm text-foreground/85 leading-relaxed whitespace-pre-line">
           {detail.whatHappened.text}
         </p>
-        <p className="text-[10px] text-muted-foreground/55 italic">
-          {detail.whatHappened.dataNote}
-        </p>
+        <p className="text-[10px] text-muted-foreground/55 italic">{detail.whatHappened.dataNote}</p>
       </Section>
 
       <Divider />
 
       {/* ── 3. 为什么值得关注 ── */}
       <Section label="为什么值得关注">
-        <p className="text-sm text-foreground/85 leading-relaxed">
-          {detail.whyItMatters.primaryReason}
-        </p>
+        <p className="text-sm text-foreground/85 leading-relaxed">{detail.whyItMatters.primaryReason}</p>
         <div className="space-y-1">
           <p className="text-xs text-muted-foreground">{detail.whyItMatters.evidenceNote}</p>
           <p className="text-xs text-muted-foreground">{detail.whyItMatters.tierNote}</p>
@@ -153,9 +226,7 @@ export function ItemDetailPanel({ item }: { item: InformationItem }) {
             const Icon = InsightIcon[insight.type]
             return (
               <div key={i} className="flex items-start gap-2.5">
-                <div className="shrink-0 mt-0.5">
-                  <Icon className="h-3.5 w-3.5 text-muted-foreground/60" />
-                </div>
+                <Icon className="h-3.5 w-3.5 text-muted-foreground/60 mt-0.5 shrink-0" />
                 <p className="text-xs text-foreground/80 leading-relaxed">{insight.text}</p>
               </div>
             )
@@ -168,12 +239,18 @@ export function ItemDetailPanel({ item }: { item: InformationItem }) {
       {/* ── 5. 来源与原文 ── */}
       <Section label="来源与原文">
         <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 min-w-0">
             <div className="flex items-center gap-2">
               <SourceTierBadge tier={detail.sourcePanel.sourceTier} />
               <span className="text-sm font-medium text-foreground">{detail.sourcePanel.sourceName}</span>
             </div>
             <p className="text-[10px] text-muted-foreground">{detail.sourcePanel.tierLabel}</p>
+            {localContent?.authorName && (
+              <p className="text-[10px] text-muted-foreground">作者：{localContent.authorName}</p>
+            )}
+            {localContent?.siteName && localContent.siteName !== item.source && (
+              <p className="text-[10px] text-muted-foreground">站点：{localContent.siteName}</p>
+            )}
             <p className="text-[10px] text-muted-foreground/70 font-mono">{publishedFmt} · {item.category}</p>
             {detail.sourcePanel.tags.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1">
@@ -184,9 +261,35 @@ export function ItemDetailPanel({ item }: { item: InformationItem }) {
                 ))}
               </div>
             )}
+            {/* Fetch status indicator */}
+            <div className="flex items-center gap-2 mt-2 flex-wrap">
+              {fetchStatus === 'fetched' && (
+                <span className="text-[9px] text-success border border-success/25 rounded px-1.5 py-0.5">
+                  已抓取原文
+                  {localContent?.wordCount ? ` · 约 ${localContent.wordCount} 字` : ''}
+                </span>
+              )}
+              {fetchStatus === 'failed' && (
+                <span className="text-[9px] text-danger/80 border border-danger/20 rounded px-1.5 py-0.5"
+                  title={localContent?.errorMessage ?? ''}>
+                  抓取失败
+                </span>
+              )}
+              {fetchStatus === 'not_fetched' && (
+                <span className="text-[9px] text-muted-foreground/50 border border-border/40 rounded px-1.5 py-0.5">
+                  未抓取
+                </span>
+              )}
+              <FetchButton
+                itemId={item.id}
+                currentStatus={fetchStatus}
+                onSuccess={setLocalContent}
+              />
+            </div>
           </div>
+
           <a
-            href={item.originalUrl}
+            href={localContent?.canonicalUrl ?? item.originalUrl}
             target="_blank"
             rel="noopener noreferrer"
             onClick={e => e.stopPropagation()}
@@ -202,10 +305,29 @@ export function ItemDetailPanel({ item }: { item: InformationItem }) {
 
       {/* ── 6. 媒体信息 ── */}
       <Section label="媒体信息">
-        <div className="flex items-center gap-2 py-3 px-4 rounded-md bg-muted/40 border border-border/50">
-          <ImageOff className="h-4 w-4 text-muted-foreground/40 shrink-0" />
-          <p className="text-xs text-muted-foreground/60 italic">{detail.media.note}</p>
-        </div>
+        {hasCoverImg ? (
+          <div className="space-y-2">
+            {/* Cover image */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={localContent!.coverImageUrl!}
+              alt="封面图"
+              className="w-full max-h-48 object-cover rounded-md border border-border/50"
+              referrerPolicy="no-referrer"
+              onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+            />
+            {mediaUrls.length > 0 && (
+              <div className="text-[10px] text-muted-foreground/60">
+                另有 {mediaUrls.length} 个媒体候选 URL
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 py-3 px-4 rounded-md bg-muted/40 border border-border/50">
+            <ImageOff className="h-4 w-4 text-muted-foreground/40 shrink-0" />
+            <p className="text-xs text-muted-foreground/60 italic">{detail.media.note}</p>
+          </div>
+        )}
       </Section>
 
       <Divider />
@@ -213,14 +335,7 @@ export function ItemDetailPanel({ item }: { item: InformationItem }) {
       {/* ── 7. 事件追踪 ── */}
       <Section label="事件追踪">
         <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1">
-            <p className="text-xs text-muted-foreground">{detail.timeline.message}</p>
-            {detail.timeline.multiSource && (
-              <p className="text-[10px] text-muted-foreground/60">
-                关联 {detail.timeline.sourceCount} 篇报道
-              </p>
-            )}
-          </div>
+          <p className="text-xs text-muted-foreground">{detail.timeline.message}</p>
           {detail.timeline.canLinkToClusters ? (
             <a
               href="/clusters"
@@ -241,15 +356,11 @@ export function ItemDetailPanel({ item }: { item: InformationItem }) {
 
       {/* ── 8. 评分审计（底部）── */}
       <Section label="评分审计">
-        {/* Score header */}
         <div className="flex items-center gap-3">
           <ScoreBadge score={item.finalScore} size="md" />
           <div>
             <div className="flex items-center gap-2">
-              <span className={cn(
-                "text-[10px] px-1.5 py-0.5 rounded border font-medium",
-                explanation.scoreBand.color,
-              )}>
+              <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium", explanation.scoreBand.color)}>
                 {explanation.scoreBand.label}
               </span>
               {explanation.isRuleBasedOnly && (
@@ -259,32 +370,22 @@ export function ItemDetailPanel({ item }: { item: InformationItem }) {
               )}
             </div>
             {explanation.oneLineReason && (
-              <p className="text-[10px] text-muted-foreground/70 mt-1">
-                {explanation.oneLineReason}
-              </p>
+              <p className="text-[10px] text-muted-foreground/70 mt-1">{explanation.oneLineReason}</p>
             )}
           </div>
         </div>
 
-        {/* Drivers */}
         {(explanation.topPositiveDrivers.length > 0 || explanation.topNegativeDrivers.length > 0) && (
           <div className="flex flex-wrap gap-1">
             {explanation.topPositiveDrivers.map(d => (
-              <span key={d} className="text-[10px] px-1.5 py-0.5 rounded border text-success border-success/25 bg-success/8">
-                ↑ {d}
-              </span>
+              <span key={d} className="text-[10px] px-1.5 py-0.5 rounded border text-success border-success/25 bg-success/8">↑ {d}</span>
             ))}
-            {explanation.topNegativeDrivers
-              .filter(d => !d.includes('分惩罚'))
-              .map(d => (
-                <span key={d} className="text-[10px] px-1.5 py-0.5 rounded border text-muted-foreground border-border bg-muted/50">
-                  ↓ {d}
-                </span>
-              ))}
+            {explanation.topNegativeDrivers.filter(d => !d.includes('分惩罚')).map(d => (
+              <span key={d} className="text-[10px] px-1.5 py-0.5 rounded border text-muted-foreground border-border bg-muted/50">↓ {d}</span>
+            ))}
           </div>
         )}
 
-        {/* Dimension bars */}
         <div className="grid grid-cols-3 gap-x-4 gap-y-1.5 bg-muted/40 rounded-md p-3">
           {explanation.dimensions.map(dim => (
             <div key={dim.key} className="flex items-center gap-2">
@@ -299,15 +400,12 @@ export function ItemDetailPanel({ item }: { item: InformationItem }) {
                 {dim.status === 'missing' ? '—' : dim.rawValue}
               </span>
               {dim.status !== 'available' && (
-                <span className="text-[9px] text-muted-foreground/40 w-6 shrink-0">
-                  {dimStatusText[dim.status]}
-                </span>
+                <span className="text-[9px] text-muted-foreground/40 w-6 shrink-0">{dimStatusText[dim.status]}</span>
               )}
             </div>
           ))}
         </div>
 
-        {/* Penalties */}
         {explanation.penalties.length > 0 && (
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[10px] text-muted-foreground/60">惩罚：</span>
@@ -319,11 +417,10 @@ export function ItemDetailPanel({ item }: { item: InformationItem }) {
           </div>
         )}
 
-        {/* Rule-based note */}
         {explanation.isRuleBasedOnly && (
           <p className="text-[10px] text-muted-foreground/45">
             当前为规则引擎基线评分，多数维度尚未经 AI 评分（默认值 50）。
-            当前目标匹配维度不代表兴趣偏好，仅表示与当前阶段目标的关联程度。
+            目标匹配维度不代表兴趣偏好，仅表示与当前阶段目标的关联程度。
           </p>
         )}
       </Section>
