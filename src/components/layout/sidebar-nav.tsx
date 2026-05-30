@@ -4,13 +4,14 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
   LayoutDashboard, Rss, Star, GitBranch, FileText,
-  BookOpen, Radio, Settings
+  BookOpen, Radio, Settings, Layers
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const navItems = [
   { href: "/dashboard", label: "今日雷达",  icon: LayoutDashboard },
   { href: "/feed",      label: "全量流",    icon: Rss             },
+  { href: "/analysis",  label: "处理队列",  icon: Layers          },
   { href: "/selected",  label: "精选流",    icon: Star            },
   { href: "/clusters",  label: "事件簇",    icon: GitBranch       },
   { href: "/reports",   label: "日报",      icon: FileText        },
