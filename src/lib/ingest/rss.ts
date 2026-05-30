@@ -179,16 +179,20 @@ export function parseRssFeed(xml: string): ParsedRssItem[] {
 
 // ── Public: fetch raw XML from a URL ─────────────────────────────────────────
 
-export async function fetchRssFeed(url: string): Promise<string> {
+export async function fetchRssFeed(
+  url:        string,
+  timeoutMs = 15_000,
+): Promise<{ text: string; status: number }> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 15_000)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const res = await fetch(url, {
       signal: controller.signal,
       headers: { 'User-Agent': 'JARVIS-Bot/1.0 (personal RSS reader; +https://github.com/jarvis)' },
     })
     if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`)
-    return await res.text()
+    const text = await res.text()
+    return { text, status: res.status }
   } finally {
     clearTimeout(timer)
   }
@@ -263,7 +267,7 @@ export async function ingestRssSources(): Promise<IngestResult> {
 
   for (const source of sources) {
     try {
-      const xml   = await fetchRssFeed(source.url)
+      const { text: xml } = await fetchRssFeed(source.url)
       const items = parseRssFeed(xml)
       result.itemsParsed += items.length
 

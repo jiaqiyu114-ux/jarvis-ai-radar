@@ -11,7 +11,7 @@ import { fetchRssProviderItems } from '@/lib/providers/rss-provider'
 import { calculateProviderSignal } from '@/lib/scoring/provider-signal'
 import { ingestNormalizedItemsToDatabase } from '@/lib/ingest/persist'
 import type { NormalizedIngestItem, ItemMention } from '@/types/provider'
-import type { FeedError, ItemError, SourceLoadDebug } from '@/lib/providers/rss-provider'
+import type { FeedError, ItemError, SourceLoadDebug, SourceHealthSummary } from '@/lib/providers/rss-provider'
 
 // ── Deduplication ─────────────────────────────────────────────────────────────
 
@@ -139,16 +139,17 @@ export async function runMockProviderIngest(opts?: { dryRun?: boolean }): Promis
 // ── RSS provider ingest ───────────────────────────────────────────────────────
 
 export type RssDryRunResult = {
-  ok:              boolean   // false when all feeds failed; true if at least one item was fetched
-  mode:            'dry-run'
-  provider:        string
-  fetched:         number
-  uniqueItems:     number
-  sourceMode:      'database' | 'fallback'
-  sourceCount:     number
-  sourceLoadDebug: SourceLoadDebug
-  feedErrors:      FeedError[]
-  itemErrors:      ItemError[]
+  ok:                  boolean   // false when all feeds failed; true if at least one item was fetched
+  mode:                'dry-run'
+  provider:            string
+  fetched:             number
+  uniqueItems:         number
+  sourceMode:          'database' | 'fallback'
+  sourceCount:         number
+  sourceLoadDebug:     SourceLoadDebug
+  feedErrors:          FeedError[]
+  itemErrors:          ItemError[]
+  sourceHealthSummary: SourceHealthSummary
   sample:      Array<{
     title:          string
     canonicalUrl:   string
@@ -161,20 +162,24 @@ export type RssDryRunResult = {
 }
 
 export type RssWriteResult = import('./persist').PersistResult & {
-  feedErrors:      FeedError[]
-  itemErrors:      ItemError[]
-  sourceMode:      'database' | 'fallback'
-  sourceCount:     number
-  sourceLoadDebug: SourceLoadDebug
+  feedErrors:          FeedError[]
+  itemErrors:          ItemError[]
+  sourceMode:          'database' | 'fallback'
+  sourceCount:         number
+  sourceLoadDebug:     SourceLoadDebug
+  sourceHealthSummary: SourceHealthSummary
 }
 
-export async function runRssProviderIngest(opts?: { dryRun?: boolean }): Promise<
+export async function runRssProviderIngest(opts?: { dryRun?: boolean; recordHealth?: boolean }): Promise<
   RssDryRunResult | RssWriteResult
 > {
-  const dryRun = opts?.dryRun !== false   // default true
+  const dryRun       = opts?.dryRun !== false   // default true
+  // recordHealth defaults to false for dry-run, true for write mode
+  const recordHealth = opts?.recordHealth ?? !dryRun
 
   // 1. Fetch + normalise from all RSS sources
-  const { items: raw, feedErrors, itemErrors, sourceMode, sourceCount, sourceLoadDebug } = await fetchRssProviderItems()
+  const { items: raw, feedErrors, itemErrors, sourceMode, sourceCount, sourceLoadDebug, sourceHealthSummary } =
+    await fetchRssProviderItems({ recordHealth })
 
   // 2. Dedup by canonical URL
   const unique = dedupeByCanonicalUrl(raw)
@@ -196,15 +201,16 @@ export async function runRssProviderIngest(opts?: { dryRun?: boolean }): Promise
 
     return {
       ok,
-      mode:            'dry-run',
-      provider:        RssProviderAdapter.provider.name,
-      fetched:         raw.length,
-      uniqueItems:     unique.length,
+      mode:                'dry-run',
+      provider:            RssProviderAdapter.provider.name,
+      fetched:             raw.length,
+      uniqueItems:         unique.length,
       sourceMode,
       sourceCount,
       sourceLoadDebug,
       feedErrors,
       itemErrors,
+      sourceHealthSummary,
       sample:      scored.slice(0, 5).map(item => ({
         title:          item.title,
         canonicalUrl:   item.canonicalUrl,
@@ -223,5 +229,5 @@ export async function runRssProviderIngest(opts?: { dryRun?: boolean }): Promise
     RssProviderAdapter.provider,
   )
 
-  return { ...persistResult, feedErrors, itemErrors, sourceMode, sourceCount, sourceLoadDebug }
+  return { ...persistResult, feedErrors, itemErrors, sourceMode, sourceCount, sourceLoadDebug, sourceHealthSummary }
 }

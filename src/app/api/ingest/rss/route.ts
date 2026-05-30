@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
       }, { status: 400 })
     }
 
-    const result = await runRssProviderIngest({ dryRun: !write })
+    const result = await runRssProviderIngest({ dryRun: !write, recordHealth: write })
     const status = 'ok' in result && !result.ok ? 500 : 200
     return NextResponse.json(forResponse(result), { status })
 
@@ -70,7 +70,7 @@ export async function POST() {
   }
 
   try {
-    const result = await runRssProviderIngest({ dryRun: false })
+    const result = await runRssProviderIngest({ dryRun: false, recordHealth: true })
     const status = result.ok ? 200 : 500
     return NextResponse.json(forResponse(result), { status })
   } catch (err) {

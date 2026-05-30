@@ -27,7 +27,19 @@ CREATE TABLE IF NOT EXISTS sources (
   items_today      integer     NOT NULL DEFAULT 0,
   description      text,
   created_at       timestamptz NOT NULL DEFAULT now(),
-  updated_at       timestamptz NOT NULL DEFAULT now()
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+
+  -- RSS Source Health v1
+  health_status    text        DEFAULT 'unknown',
+  last_fetch_at    timestamptz,
+  last_success_at  timestamptz,
+  last_error_at    timestamptz,
+  last_error_message text,
+  failure_count    integer     NOT NULL DEFAULT 0,
+  avg_latency_ms   integer,
+  last_latency_ms  integer,
+  last_http_status integer,
+  disabled_reason  text
 );
 
 -- ============================================================

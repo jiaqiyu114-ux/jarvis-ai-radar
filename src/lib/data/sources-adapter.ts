@@ -2,7 +2,7 @@ import { mockSources } from '@/config/mock-data'
 import { listSources } from '@/lib/db/sources'
 import { shouldUseDatabase } from './runtime'
 import type { MockSource, SourceTier, Category } from '@/types'
-import type { DbSource, DbSourceTier } from '@/types/database'
+import type { DbSource, DbSourceTier, SourceHealthStatus } from '@/types/database'
 
 // ── Tier mapping: DbSourceTier has 'D'; SourceTier only goes to 'C' ──────────
 
@@ -46,4 +46,53 @@ export async function getSources(): Promise<MockSource[]> {
     if (rows.length > 0) return rows.map(mapDbSource)
   }
   return mockSources
+}
+
+// ── Health-aware source type ──────────────────────────────────────────────────
+
+export type SourceWithHealth = {
+  id:               string
+  name:             string
+  url:              string
+  platform:         string
+  tier:             SourceTier
+  category:         Category
+  isBlocked:        boolean
+  description:      string | null
+  itemsToday:       number
+  avgScore:         number
+  healthStatus:     SourceHealthStatus
+  failureCount:     number
+  lastFetchAt:      string | null
+  lastSuccessAt:    string | null
+  lastErrorAt:      string | null
+  lastErrorMessage: string | null
+  lastLatencyMs:    number | null
+}
+
+function mapDbSourceWithHealth(source: DbSource): SourceWithHealth {
+  return {
+    id:               source.id,
+    name:             source.name,
+    url:              source.url,
+    platform:         source.platform,
+    tier:             toSourceTier(source.source_tier),
+    category:         toCategory(source.category),
+    isBlocked:        source.is_blocked,
+    description:      source.description ?? null,
+    itemsToday:       source.items_today,
+    avgScore:         source.base_score,
+    healthStatus:     source.health_status ?? 'unknown',
+    failureCount:     source.failure_count ?? 0,
+    lastFetchAt:      source.last_fetch_at ?? null,
+    lastSuccessAt:    source.last_success_at ?? null,
+    lastErrorAt:      source.last_error_at ?? null,
+    lastErrorMessage: source.last_error_message ?? null,
+    lastLatencyMs:    source.last_latency_ms ?? null,
+  }
+}
+
+export async function getSourcesWithHealth(): Promise<SourceWithHealth[]> {
+  const rows = await listSources()
+  return rows.map(mapDbSourceWithHealth)
 }

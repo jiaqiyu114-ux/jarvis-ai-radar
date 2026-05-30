@@ -20,6 +20,8 @@
 
 export type DbSourceTier = 'S' | 'A' | 'B' | 'C' | 'D'
 
+export type SourceHealthStatus = 'unknown' | 'healthy' | 'degraded' | 'blocked'
+
 export type DbItemStatus = 'new' | 'scored' | 'selected' | 'archived' | 'rejected'
 
 export type DbItemLanguage = 'zh' | 'en' | 'mixed'
@@ -61,6 +63,17 @@ export type DbSource = {
   description:       string | null
   created_at:        string
   updated_at:        string
+  // RSS Source Health v1 fields (nullable — may be absent in older rows)
+  health_status:     SourceHealthStatus | null
+  last_fetch_at:     string | null
+  last_success_at:   string | null
+  last_error_at:     string | null
+  last_error_message: string | null
+  failure_count:     number
+  avg_latency_ms:    number | null
+  last_latency_ms:   number | null
+  last_http_status:  number | null
+  disabled_reason:   string | null
 }
 
 export type DbSourceInsert = {
@@ -76,9 +89,20 @@ export type DbSourceInsert = {
 }
 
 export type DbSourceUpdate = Partial<Omit<DbSourceInsert, 'url'>> & {
-  is_blocked?: boolean
-  items_today?: number
-  last_fetched_at?: string | null
+  is_blocked?:        boolean
+  items_today?:       number
+  last_fetched_at?:   string | null
+  // RSS Source Health v1
+  health_status?:     string | null
+  last_fetch_at?:     string | null
+  last_success_at?:   string | null
+  last_error_at?:     string | null
+  last_error_message?: string | null
+  failure_count?:     number
+  avg_latency_ms?:    number | null
+  last_latency_ms?:   number | null
+  last_http_status?:  number | null
+  disabled_reason?:   string | null
 }
 
 // ── items ─────────────────────────────────────────────────────────────────────

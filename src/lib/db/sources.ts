@@ -232,3 +232,121 @@ export async function blockSource(id: string): Promise<boolean> {
   if (error) { console.error('[db/sources] blockSource:', error.message); return false }
   return true
 }
+
+// ── RSS Source Health methods (server client — write operations) ───────────────
+
+/**
+ * Returns all RSS sources including health fields.
+ * Includes blocked sources (for display). Uses the anon client (read-only).
+ */
+export async function listRssSourcesWithHealth(): Promise<DbSource[]> {
+  if (!isSupabaseConfigured || !supabase) return []
+  const { data, error } = await supabase
+    .from('sources')
+    .select('*')
+    .eq('platform', 'rss')
+    .order('source_tier', { ascending: true })
+    .order('name', { ascending: true })
+  if (error) { console.error('[db/sources] listRssSourcesWithHealth:', error.message); return [] }
+  return data ?? []
+}
+
+/**
+ * Records a successful fetch for a source.
+ * Resets failure_count, updates health_status to 'healthy', records latency.
+ * Throws on DB error so callers can catch and log without blocking main flow.
+ */
+export async function updateSourceFetchSuccess(
+  sourceId:  string,
+  latencyMs?: number,
+): Promise<void> {
+  if (!isServerSupabaseConfigured || !supabaseServer) return
+
+  let newAvg: number | null = null
+  if (latencyMs !== undefined) {
+    const { data: cur } = await supabaseServer
+      .from('sources')
+      .select('avg_latency_ms')
+      .eq('id', sourceId)
+      .single()
+    const existing = cur?.avg_latency_ms ?? null
+    newAvg = existing === null
+      ? latencyMs
+      : Math.round(existing * 0.7 + latencyMs * 0.3)
+  }
+
+  const now = new Date().toISOString()
+  const { error } = await supabaseServer
+    .from('sources')
+    .update({
+      health_status:      'healthy',
+      failure_count:      0,
+      last_fetch_at:      now,
+      last_success_at:    now,
+      last_error_message: null,
+      ...(latencyMs !== undefined && { last_latency_ms: latencyMs }),
+      ...(newAvg !== null      && { avg_latency_ms: newAvg }),
+    })
+    .eq('id', sourceId)
+
+  if (error) {
+    console.error('[db/sources] updateSourceFetchSuccess:', error.message)
+    throw error
+  }
+}
+
+/**
+ * Records a failed fetch for a source.
+ * Increments failure_count, sets health_status to 'degraded' (or 'blocked' if
+ * the source is already marked blocked), records error info.
+ * Throws on DB error so callers can catch and log without blocking main flow.
+ */
+export async function updateSourceFetchFailure(
+  sourceId:     string,
+  errorMessage: string,
+  latencyMs?:   number,
+  httpStatus?:  number,
+): Promise<void> {
+  if (!isServerSupabaseConfigured || !supabaseServer) return
+
+  const { data: cur } = await supabaseServer
+    .from('sources')
+    .select('failure_count, avg_latency_ms, is_blocked')
+    .eq('id', sourceId)
+    .single()
+
+  const currentFailures = cur?.failure_count ?? 0
+  const isBlocked       = cur?.is_blocked    ?? false
+  const newFailureCount = currentFailures + 1
+
+  let newAvg: number | null = null
+  if (latencyMs !== undefined) {
+    const existing = cur?.avg_latency_ms ?? null
+    newAvg = existing === null
+      ? latencyMs
+      : Math.round(existing * 0.7 + latencyMs * 0.3)
+  }
+
+  const newHealthStatus = isBlocked ? 'blocked' : 'degraded'
+  const truncated       = errorMessage.slice(0, 500)
+  const now             = new Date().toISOString()
+
+  const { error } = await supabaseServer
+    .from('sources')
+    .update({
+      health_status:      newHealthStatus,
+      failure_count:      newFailureCount,
+      last_fetch_at:      now,
+      last_error_at:      now,
+      last_error_message: truncated,
+      ...(latencyMs  !== undefined && { last_latency_ms:  latencyMs }),
+      ...(newAvg     !== null      && { avg_latency_ms:   newAvg }),
+      ...(httpStatus !== undefined && { last_http_status: httpStatus }),
+    })
+    .eq('id', sourceId)
+
+  if (error) {
+    console.error('[db/sources] updateSourceFetchFailure:', error.message)
+    throw error
+  }
+}

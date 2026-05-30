@@ -12,7 +12,7 @@
  * inside ingestNormalizedItemsToDatabase to look up or create the source row.
  */
 
-import { listRssSourcesWithDiag } from '@/lib/db/sources'
+import { listRssSourcesWithDiag, updateSourceFetchSuccess, updateSourceFetchFailure } from '@/lib/db/sources'
 import type { RssSourceLoadResult } from '@/lib/db/sources'
 import { fetchRssFeed, parseRssFeed } from '@/lib/ingest/rss'
 import { canonicalizeUrl, normalizeTitle } from '@/lib/ingest/normalize'
@@ -34,6 +34,9 @@ const RSS_PROVIDER: ProviderConfig = {
 
 const TIER_TRUST:  Record<string, number> = { S: 90, A: 82, B: 70, C: 60, D: 55 }
 const TIER_PRSCORE: Record<string, number> = { S: 80, A: 70, B: 55, C: 40, D: 30 }
+
+// Per-source fetch timeout (ms). Keeps slow/dead feeds from blocking the run.
+const FEED_TIMEOUT_MS = 9_000
 
 // ── Fallback feeds (used when no sources with platform='rss' exist in DB) ─────
 // Only URLs already documented in this project; never fetched at build time.
@@ -58,13 +61,16 @@ const FALLBACK_FEEDS: FallbackFeed[] = [
   },
 ]
 
-// ── Error types ───────────────────────────────────────────────────────────────
+// ── Error and health types ────────────────────────────────────────────────────
 
 export type FeedError = {
-  sourceName: string
-  feedUrl:    string
-  stage:      'fetch' | 'parse'   // which stage the error occurred in
-  message:    string
+  sourceId?:   string
+  sourceName:  string
+  feedUrl:     string
+  stage:       'fetch' | 'parse' | 'persist' | 'health_update'
+  message:     string
+  latencyMs?:  number
+  httpStatus?: number
 }
 
 export type ItemError = {
@@ -81,13 +87,31 @@ export type SourceLoadDebug = {
   sourceLoadError?:     { message: string; code?: string; details?: string; hint?: string }
 }
 
+export type PerSourceHealth = {
+  id?:           string
+  name:          string
+  url:           string
+  success:       boolean
+  latencyMs?:    number
+  httpStatus?:   number
+  errorMessage?: string
+}
+
+export type SourceHealthSummary = {
+  total:            number
+  succeededThisRun: number
+  failedThisRun:    number
+  perSource:        PerSourceHealth[]
+}
+
 export type RssFetchResult = {
-  items:           NormalizedIngestItem[]
-  feedErrors:      FeedError[]
-  itemErrors:      ItemError[]
-  sourceMode:      'database' | 'fallback'
-  sourceCount:     number
-  sourceLoadDebug: SourceLoadDebug
+  items:               NormalizedIngestItem[]
+  feedErrors:          FeedError[]
+  itemErrors:          ItemError[]
+  sourceMode:          'database' | 'fallback'
+  sourceCount:         number
+  sourceLoadDebug:     SourceLoadDebug
+  sourceHealthSummary: SourceHealthSummary
 }
 
 // ── NormalizedIngestItem builder ──────────────────────────────────────────────
@@ -108,7 +132,6 @@ function toNormalizedItem(
   const trustScore   = TIER_TRUST[tier]  ?? RSS_PROVIDER.trustScore
   const prScore      = TIER_PRSCORE[tier] ?? 50
 
-  // externalId: prefer guid (stable across re-fetches), fall back to canonical URL
   const externalId = parsed.guid?.trim() || canonicalUrl || url
 
   return {
@@ -127,7 +150,7 @@ function toNormalizedItem(
     url,
     canonicalUrl,
     originalSourceName:  sourceName,
-    originalSourceUrl:   feedUrl,       // feed URL → findOrCreateSource can look it up
+    originalSourceUrl:   feedUrl,
     category,
     tags:                [],
     entities:            [],
@@ -147,21 +170,36 @@ function toNormalizedItem(
 
 // ── Core fetch function ───────────────────────────────────────────────────────
 
+type FeedSpec = {
+  name:           string
+  feedUrl:        string
+  sourceId?:      string   // DB UUID — present when sourceMode='database'
+  sourceHomepage: string | null
+  tier:           string
+  category:       string
+}
+
 /**
  * Fetches and normalises items from all active RSS sources.
  *
- * Source resolution:
- *   1. RSS sources from DB (platform='rss') — preferred
- *   2. Fallback feeds — used when DB has no RSS sources (development/testing)
+ * Each source is fetched with an independent timeout (FEED_TIMEOUT_MS).
+ * Individual feed failures are collected in feedErrors and do not abort the rest.
  *
- * Each source is fetched independently; individual feed failures are collected
- * in feedErrors and do not abort the rest.
+ * opts.recordHealth — when true, calls updateSourceFetchSuccess/Failure for each
+ * source. Should be false for dry-run / GET requests to avoid write side-effects.
  */
-export async function fetchRssProviderItems(): Promise<RssFetchResult> {
-  const fetchedAt   = new Date().toISOString()
-  const feedErrors: FeedError[] = []
-  const itemErrors: ItemError[] = []
-  const items:      NormalizedIngestItem[] = []
+export async function fetchRssProviderItems(opts?: {
+  recordHealth?: boolean
+}): Promise<RssFetchResult> {
+  const recordHealth = opts?.recordHealth ?? false
+  const fetchedAt    = new Date().toISOString()
+  const feedErrors:  FeedError[]  = []
+  const itemErrors:  ItemError[]  = []
+  const items:       NormalizedIngestItem[] = []
+
+  const healthPerSource: PerSourceHealth[] = []
+  let succeededThisRun = 0
+  let failedThisRun    = 0
 
   // ── Resolve feed list with full diagnostics ───────────────────────────────
   const dbResult: RssSourceLoadResult = await listRssSourcesWithDiag()
@@ -181,14 +219,6 @@ export async function fetchRssProviderItems(): Promise<RssFetchResult> {
     sourceLoadError: dbResult.error ?? undefined,
   }
 
-  type FeedSpec = {
-    name:           string
-    feedUrl:        string
-    sourceHomepage: string | null
-    tier:           string
-    category:       string
-  }
-
   const usingDb    = dbSources.length > 0
   const sourceMode: 'database' | 'fallback' = usingDb ? 'database' : 'fallback'
 
@@ -196,7 +226,8 @@ export async function fetchRssProviderItems(): Promise<RssFetchResult> {
     ? dbSources.map((s: DbSource) => ({
         name:           s.name,
         feedUrl:        s.url,
-        sourceHomepage: null,        // sources.url IS the feed URL; no separate homepage stored
+        sourceId:       s.id,
+        sourceHomepage: null,
         tier:           s.source_tier,
         category:       s.category,
       }))
@@ -208,19 +239,51 @@ export async function fetchRssProviderItems(): Promise<RssFetchResult> {
         category:       f.category,
       }))
 
-  // ── Fetch each feed ───────────────────────────────────────────────────────
+  // ── Fetch each feed independently ─────────────────────────────────────────
   for (const feed of feeds) {
-    // Stage 1: network fetch — isolated so parse errors don't mask fetch errors
+    const start = Date.now()
+    let latencyMs:  number | undefined
+    let httpStatus: number | undefined
+
+    // Stage 1: network fetch with per-source timeout
     let xml: string
     try {
-      xml = await fetchRssFeed(feed.feedUrl)
+      const result = await fetchRssFeed(feed.feedUrl, FEED_TIMEOUT_MS)
+      xml        = result.text
+      httpStatus = result.status
+      latencyMs  = Date.now() - start
     } catch (err) {
+      latencyMs = Date.now() - start
+      const msg = err instanceof Error ? err.message : String(err)
+
       feedErrors.push({
+        sourceId:   feed.sourceId,
         sourceName: feed.name,
         feedUrl:    feed.feedUrl,
         stage:      'fetch',
-        message:    err instanceof Error ? err.message : String(err),
+        message:    msg,
+        latencyMs,
+        httpStatus,
       })
+
+      if (recordHealth && feed.sourceId) {
+        try {
+          await updateSourceFetchFailure(feed.sourceId, msg, latencyMs, httpStatus)
+        } catch (hErr) {
+          const hMsg = hErr instanceof Error ? hErr.message : String(hErr)
+          console.error('[rss-provider] health update (failure) failed for', feed.name, ':', hMsg)
+          feedErrors.push({
+            sourceId:   feed.sourceId,
+            sourceName: feed.name,
+            feedUrl:    feed.feedUrl,
+            stage:      'health_update',
+            message:    hMsg,
+          })
+        }
+      }
+
+      failedThisRun++
+      healthPerSource.push({ id: feed.sourceId, name: feed.name, url: feed.feedUrl, success: false, latencyMs, httpStatus, errorMessage: msg })
       continue
     }
 
@@ -229,14 +292,61 @@ export async function fetchRssProviderItems(): Promise<RssFetchResult> {
     try {
       parsed = parseRssFeed(xml)
     } catch (err) {
+      latencyMs = Date.now() - start
+      const msg = err instanceof Error ? err.message : String(err)
+
       feedErrors.push({
+        sourceId:   feed.sourceId,
         sourceName: feed.name,
         feedUrl:    feed.feedUrl,
         stage:      'parse',
-        message:    err instanceof Error ? err.message : String(err),
+        message:    msg,
+        latencyMs,
+        httpStatus,
       })
+
+      if (recordHealth && feed.sourceId) {
+        try {
+          await updateSourceFetchFailure(feed.sourceId, msg, latencyMs, httpStatus)
+        } catch (hErr) {
+          const hMsg = hErr instanceof Error ? hErr.message : String(hErr)
+          console.error('[rss-provider] health update (parse failure) failed for', feed.name, ':', hMsg)
+          feedErrors.push({
+            sourceId:   feed.sourceId,
+            sourceName: feed.name,
+            feedUrl:    feed.feedUrl,
+            stage:      'health_update',
+            message:    hMsg,
+          })
+        }
+      }
+
+      failedThisRun++
+      healthPerSource.push({ id: feed.sourceId, name: feed.name, url: feed.feedUrl, success: false, latencyMs, httpStatus, errorMessage: msg })
       continue
     }
+
+    // Fetch + parse succeeded — record health update
+    latencyMs = Date.now() - start
+
+    if (recordHealth && feed.sourceId) {
+      try {
+        await updateSourceFetchSuccess(feed.sourceId, latencyMs)
+      } catch (hErr) {
+        const hMsg = hErr instanceof Error ? hErr.message : String(hErr)
+        console.error('[rss-provider] health update (success) failed for', feed.name, ':', hMsg)
+        feedErrors.push({
+          sourceId:   feed.sourceId,
+          sourceName: feed.name,
+          feedUrl:    feed.feedUrl,
+          stage:      'health_update',
+          message:    hMsg,
+        })
+      }
+    }
+
+    succeededThisRun++
+    healthPerSource.push({ id: feed.sourceId, name: feed.name, url: feed.feedUrl, success: true, latencyMs, httpStatus })
 
     // Stage 3: normalise individual items
     let rank = 0
@@ -273,7 +383,14 @@ export async function fetchRssProviderItems(): Promise<RssFetchResult> {
     }
   }
 
-  return { items, feedErrors, itemErrors, sourceMode, sourceCount: feeds.length, sourceLoadDebug }
+  const sourceHealthSummary: SourceHealthSummary = {
+    total:            feeds.length,
+    succeededThisRun,
+    failedThisRun,
+    perSource:        healthPerSource,
+  }
+
+  return { items, feedErrors, itemErrors, sourceMode, sourceCount: feeds.length, sourceLoadDebug, sourceHealthSummary }
 }
 
 // ── ProviderAdapter interface ─────────────────────────────────────────────────
