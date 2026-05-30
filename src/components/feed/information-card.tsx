@@ -7,15 +7,15 @@ import { zhCN } from "date-fns/locale"
 import { ScoreBadge } from "./score-badge"
 import { SourceTierBadge } from "./source-tier-badge"
 import { FeedbackActions } from "./feedback-actions"
-import { Progress } from "@/components/ui/progress"
+import { ItemDetailPanel } from "./item-detail-panel"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import { buildScoreExplanation } from "@/lib/scoring/explanation"
 import type { InformationItem, FeedbackAction } from "@/types"
-import type { DimensionStatus } from "@/lib/scoring/explanation"
 
 interface InformationCardProps {
   item: InformationItem
-  /** compact: feed default | expanded: breakdown open | minimal: narrow columns | emphasis: selected/dashboard */
+  /** compact: feed default | expanded: detail pre-opened | minimal: narrow columns | emphasis: selected/dashboard */
   variant?: 'compact' | 'expanded' | 'minimal' | 'emphasis'
   scoreSize?: 'sm' | 'md'
   onFeedback?: (action: FeedbackAction, itemId: string) => void
@@ -34,27 +34,17 @@ const categoryColors: Record<string, string> = {
   '其他':     'text-stone-500 bg-stone-100 dark:text-muted-foreground dark:bg-muted',
 }
 
-const dimStatusText: Record<DimensionStatus, string> = {
-  available: '',
-  fallback:  '默认',
-  missing:   '缺失',
-}
-
-const dimStatusColor: Record<DimensionStatus, string> = {
-  available: 'text-muted-foreground',
-  fallback:  'text-muted-foreground/50',
-  missing:   'text-danger/60',
-}
-
 export function InformationCard({
   item,
   variant = 'compact',
   scoreSize = 'sm',
   onFeedback,
 }: InformationCardProps) {
-  const [showBreakdown, setShowBreakdown] = useState(variant === 'expanded')
+  // `open` controls the detail dialog.
+  // variant='expanded' pre-opens the dialog (used by cluster detail view).
+  const [open, setOpen] = useState(variant === 'expanded')
 
-  // Build score explanation — pure computation, no I/O
+  // Build score explanation for the folded card chips
   const explanation = buildScoreExplanation(item.scoreBreakdown, item.finalScore, item.penalties)
 
   const timeAgo = formatDistanceToNow(new Date(item.publishedAt), {
@@ -66,9 +56,15 @@ export function InformationCard({
   const visibleTags   = item.tags.slice(0, 3)
   const extraTagCount = item.tags.length - 3
 
+  // Driver chips shown in the folded card
+  const foldedPositive = explanation.topPositiveDrivers.slice(0, 2)
+  const foldedNegative = explanation.topNegativeDrivers
+    .filter(d => !d.includes('分惩罚'))
+    .slice(0, 1)
+
   /* ──────────────────────────────────────────
-     MINIMAL variant — for narrow columns / dashboard sidebar.
-     Clicking the title navigates to the original URL (compact context).
+     MINIMAL variant — for narrow columns (dashboard sidebars).
+     Title links to original URL in this compact context.
      ────────────────────────────────────────── */
   if (variant === 'minimal') {
     return (
@@ -106,231 +102,171 @@ export function InformationCard({
      STANDARD variants: compact / emphasis / expanded
 
      Interaction contract:
-       • Clicking the card background (non-interactive area) → toggle expansion.
-       • Clicking the ExternalLink <a> → navigate to original URL, NOT expand.
-       • Clicking FeedbackAction buttons → action only, NOT expand.
-       • Clicking the chevron button → toggle expansion, NOT navigate.
-       • Title is plain text (span) — only ExternalLink icon navigates.
+       • Clicking the card background or title (non-interactive area) → opens detail dialog.
+       • Clicking the ExternalLink <a> → navigates to original URL, does NOT open dialog.
+       • Clicking FeedbackAction buttons → action only, does NOT open dialog.
+       • Clicking the chevron button → opens/closes dialog (same as card click).
+       • Title is plain text <span> — the ExternalLink icon is the ONLY external navigation.
 
-     Implementation: outer div handles onClick, checks e.target.closest('a, button')
-     to skip toggle when the user clicked an actual interactive element.
+     Implementation: outer div checks e.target.closest('a, button') before opening dialog.
      ────────────────────────────────────────── */
-  const isEmphasis    = variant === 'emphasis'
-  const effectiveSize = scoreSize
-  const bdIndent      = effectiveSize === 'md' ? 'ml-12' : 'ml-10'
-
-  // Positive driver chips for folded view (max 2, available-status preferred)
-  const foldedPositive = explanation.topPositiveDrivers.slice(0, 2)
-  // Negative driver chips for folded view (max 1, exclude penalty text)
-  const foldedNegative = explanation.topNegativeDrivers
-    .filter(d => !d.includes('分惩罚'))
-    .slice(0, 1)
+  const isEmphasis = variant === 'emphasis'
 
   return (
-    <div
-      className={cn(
-        "group border-b border-border transition-colors hover:bg-accent cursor-pointer",
-        isEmphasis ? "py-3.5 px-4" : "py-2.5 px-4"
-      )}
-      onClick={(e) => {
-        // Only toggle when clicking non-interactive areas (not links or buttons)
-        const t = e.target as HTMLElement
-        if (!t.closest('a, button')) setShowBreakdown(prev => !prev)
-      }}
-    >
-      <div className="flex items-start gap-3">
+    <>
+      {/* ── Card row (list view) ── */}
+      <div
+        className={cn(
+          "group border-b border-border transition-colors hover:bg-accent cursor-pointer",
+          isEmphasis ? "py-3.5 px-4" : "py-2.5 px-4"
+        )}
+        onClick={(e) => {
+          // Skip if user clicked an actual link or button (ExternalLink, FeedbackActions, chevron)
+          const t = e.target as HTMLElement
+          if (!t.closest('a, button')) setOpen(true)
+        }}
+      >
+        <div className="flex items-start gap-3">
 
-        {/* ── Score column: badge + scoreBand label ── */}
-        <div className="flex flex-col items-center gap-0.5 shrink-0">
-          <ScoreBadge score={item.finalScore} size={effectiveSize} />
-          <span className={cn(
-            "text-[9px] px-1 py-px rounded border font-medium whitespace-nowrap",
-            explanation.scoreBand.color,
-          )}>
-            {explanation.scoreBand.label}
-          </span>
-        </div>
-
-        {/* ── Content block ── */}
-        <div className="flex-1 min-w-0 space-y-1">
-
-          {/* Row 1: TierBadge + Title (plain text, NOT a link) */}
-          <div className="flex items-start gap-1.5">
-            <SourceTierBadge tier={item.sourceTier} />
-            <span
-              className={cn(
-                "flex-1 min-w-0 text-sm text-foreground leading-snug",
-                isEmphasis ? "font-semibold" : "font-medium"
-              )}
-            >
-              {item.title}
+          {/* Score column: badge + band label */}
+          <div className="flex flex-col items-center gap-0.5 shrink-0">
+            <ScoreBadge score={item.finalScore} size={scoreSize} />
+            <span className={cn(
+              "text-[9px] px-1 py-px rounded border font-medium whitespace-nowrap",
+              explanation.scoreBand.color,
+            )}>
+              {explanation.scoreBand.label}
             </span>
           </div>
 
-          {/* Row 2: Source · Summary */}
-          <p className="text-xs text-muted-foreground line-clamp-1">
-            <span className="text-foreground/65 font-medium">{item.source}</span>
-            {' · '}
-            {item.summary}
-          </p>
+          {/* Content block */}
+          <div className="flex-1 min-w-0 space-y-1">
 
-          {/* Row 3: meta + external link + feedback + chevron */}
-          <div className="flex items-center gap-1.5">
-            <div className="flex items-center gap-1 flex-wrap flex-1 min-w-0">
-              <span className={cn("text-[10px] px-1.5 py-px rounded font-medium whitespace-nowrap", categoryClass)}>
-                {item.category}
+            {/* Row 1: TierBadge + Title (plain text, NOT a link) */}
+            <div className="flex items-start gap-1.5">
+              <SourceTierBadge tier={item.sourceTier} />
+              <span
+                className={cn(
+                  "flex-1 min-w-0 text-sm text-foreground leading-snug",
+                  isEmphasis ? "font-semibold" : "font-medium"
+                )}
+              >
+                {item.title}
               </span>
-              <span className="text-muted-foreground/40 text-[10px]">·</span>
-              <span className="text-[10px] text-muted-foreground whitespace-nowrap">{timeAgo}</span>
-              {/* ExternalLink: the ONLY way to navigate to the original URL */}
-              <a
-                href={item.originalUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-muted-foreground/40 hover:text-primary transition-colors"
-                title="查看原文"
-              >
-                <ExternalLink className="h-3 w-3" />
-              </a>
-              {visibleTags.map(tag => (
-                <span key={tag} className="text-[10px] text-muted-foreground bg-[var(--tag-bg)] px-1.5 py-px rounded whitespace-nowrap">
-                  {tag}
-                </span>
-              ))}
-              {extraTagCount > 0 && (
-                <span className="text-[10px] text-muted-foreground">+{extraTagCount}</span>
-              )}
-              {item.relatedReportCount > 0 && (
-                <span className="text-[10px] text-muted-foreground/60 whitespace-nowrap">
-                  {item.relatedReportCount} 篇
-                </span>
-              )}
             </div>
 
-            {/* Right: feedback actions + chevron */}
-            <div className="flex items-center gap-1 shrink-0">
-              <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                <FeedbackActions itemId={item.id} onAction={onFeedback} />
-              </div>
-              <button
-                onClick={() => setShowBreakdown(prev => !prev)}
-                className="text-muted-foreground/40 hover:text-muted-foreground transition-colors p-1"
-                title={showBreakdown ? "收起解释" : "查看评分解释"}
-              >
-                <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showBreakdown && "rotate-180")} />
-              </button>
-            </div>
-          </div>
-
-          {/* Row 4: driver chips (always visible in folded state) */}
-          {(foldedPositive.length > 0 || foldedNegative.length > 0 || explanation.isRuleBasedOnly) && (
-            <div className="flex flex-wrap items-center gap-1">
-              {foldedPositive.map(d => (
-                <span
-                  key={d}
-                  className="text-[10px] px-1.5 py-px rounded border text-success border-success/25 bg-success/8 whitespace-nowrap"
-                >
-                  ↑ {d}
-                </span>
-              ))}
-              {foldedNegative.map(d => (
-                <span
-                  key={d}
-                  className="text-[10px] px-1.5 py-px rounded border text-muted-foreground border-border bg-muted/50 whitespace-nowrap"
-                >
-                  ↓ {d}
-                </span>
-              ))}
-              {foldedPositive.length === 0 && foldedNegative.length === 0 && explanation.isRuleBasedOnly && (
-                <span className="text-[10px] text-muted-foreground/55 px-1 py-px rounded border border-border/40 whitespace-nowrap">
-                  规则基线
-                </span>
-              )}
-              {(foldedPositive.length > 0 || foldedNegative.length > 0) && explanation.isRuleBasedOnly && (
-                <span className="text-[9px] text-muted-foreground/40 whitespace-nowrap">
-                  · 规则基线
-                </span>
-              )}
-            </div>
-          )}
-
-        </div>
-      </div>
-
-      {/* ── Expanded: full score explanation ── */}
-      {showBreakdown && (
-        <div className={cn("mt-2 space-y-2", bdIndent)}>
-
-          {/* One-line reason (header of expanded section) */}
-          {explanation.oneLineReason && (
-            <p className="text-[10px] text-muted-foreground/70 px-1 leading-relaxed">
-              推荐判断：{explanation.oneLineReason}
+            {/* Row 2: Source · Summary */}
+            <p className="text-xs text-muted-foreground line-clamp-1">
+              <span className="text-foreground/65 font-medium">{item.source}</span>
+              {' · '}
+              {item.summary}
             </p>
-          )}
 
-          {/* All positive + negative drivers */}
-          {(explanation.topPositiveDrivers.length > 0 || explanation.topNegativeDrivers.length > 0) && (
-            <div className="flex flex-wrap gap-1 px-1">
-              {explanation.topPositiveDrivers.map(d => (
-                <span key={d} className="text-[10px] px-1.5 py-0.5 rounded border text-success border-success/25 bg-success/8">
-                  ↑ {d}
+            {/* Row 3: meta + ExternalLink + feedback + chevron */}
+            <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1 flex-wrap flex-1 min-w-0">
+                <span className={cn("text-[10px] px-1.5 py-px rounded font-medium whitespace-nowrap", categoryClass)}>
+                  {item.category}
                 </span>
-              ))}
-              {explanation.topNegativeDrivers
-                .filter(d => !d.includes('分惩罚'))
-                .map(d => (
-                  <span key={d} className="text-[10px] px-1.5 py-0.5 rounded border text-muted-foreground border-border bg-muted/50">
-                    ↓ {d}
+                <span className="text-muted-foreground/40 text-[10px]">·</span>
+                <span className="text-[10px] text-muted-foreground whitespace-nowrap">{timeAgo}</span>
+                {/* ExternalLink: the ONLY way to navigate to the original URL */}
+                <a
+                  href={item.originalUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-muted-foreground/40 hover:text-primary transition-colors"
+                  title="查看原文"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+                {visibleTags.map(tag => (
+                  <span key={tag} className="text-[10px] text-muted-foreground bg-[var(--tag-bg)] px-1.5 py-px rounded whitespace-nowrap">
+                    {tag}
                   </span>
-                ))
-              }
-            </div>
-          )}
-
-          {/* Dimension bars with status */}
-          <div className="grid grid-cols-3 gap-x-6 gap-y-1.5 bg-muted/40 rounded-md p-3">
-            {explanation.dimensions.map(dim => (
-              <div key={dim.key} className="flex items-center gap-2">
-                <span className={cn("text-[10px] w-14 shrink-0 truncate", dimStatusColor[dim.status])}>
-                  {dim.label}
-                </span>
-                <Progress
-                  value={dim.status === 'missing' ? 0 : dim.rawValue}
-                  className={cn("h-1 flex-1", dim.status === 'fallback' && "opacity-40")}
-                />
-                <span className={cn("text-[10px] font-mono w-5 text-right tabular-nums", dimStatusColor[dim.status])}>
-                  {dim.status === 'missing' ? '—' : dim.rawValue}
-                </span>
-                {dim.status !== 'available' && (
-                  <span className="text-[9px] text-muted-foreground/40 w-6 shrink-0">
-                    {dimStatusText[dim.status]}
+                ))}
+                {extraTagCount > 0 && (
+                  <span className="text-[10px] text-muted-foreground">+{extraTagCount}</span>
+                )}
+                {item.relatedReportCount > 0 && (
+                  <span className="text-[10px] text-muted-foreground/60 whitespace-nowrap">
+                    {item.relatedReportCount} 篇
                   </span>
                 )}
               </div>
-            ))}
+
+              {/* Right: feedback + chevron */}
+              <div className="flex items-center gap-1 shrink-0">
+                <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                  <FeedbackActions itemId={item.id} onAction={onFeedback} />
+                </div>
+                <button
+                  onClick={() => setOpen(prev => !prev)}
+                  className="text-muted-foreground/40 hover:text-muted-foreground transition-colors p-1"
+                  title="查看详情"
+                >
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Row 4: driver chips */}
+            {(foldedPositive.length > 0 || foldedNegative.length > 0 || explanation.isRuleBasedOnly) && (
+              <div className="flex flex-wrap items-center gap-1">
+                {foldedPositive.map(d => (
+                  <span
+                    key={d}
+                    className="text-[10px] px-1.5 py-px rounded border text-success border-success/25 bg-success/8 whitespace-nowrap"
+                  >
+                    ↑ {d}
+                  </span>
+                ))}
+                {foldedNegative.map(d => (
+                  <span
+                    key={d}
+                    className="text-[10px] px-1.5 py-px rounded border text-muted-foreground border-border bg-muted/50 whitespace-nowrap"
+                  >
+                    ↓ {d}
+                  </span>
+                ))}
+                {foldedPositive.length === 0 && foldedNegative.length === 0 && explanation.isRuleBasedOnly && (
+                  <span className="text-[10px] text-muted-foreground/55 px-1 py-px rounded border border-border/40 whitespace-nowrap">
+                    规则基线
+                  </span>
+                )}
+                {(foldedPositive.length > 0 || foldedNegative.length > 0) && explanation.isRuleBasedOnly && (
+                  <span className="text-[9px] text-muted-foreground/40 whitespace-nowrap">
+                    · 规则基线
+                  </span>
+                )}
+              </div>
+            )}
+
+          </div>
+        </div>
+      </div>
+
+      {/* ── Detail dialog ── */}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent
+          className="max-w-2xl w-full max-h-[88vh] overflow-y-auto p-0 gap-0"
+        >
+          {/* DialogTitle is required for accessibility */}
+          <DialogTitle className="sr-only">{item.title}</DialogTitle>
+
+          {/* Sticky header */}
+          <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border px-6 py-3">
+            <p className="text-[10px] text-muted-foreground font-medium tracking-wider uppercase">
+              信息详情
+            </p>
           </div>
 
-          {/* Penalty badges */}
-          {explanation.penalties.length > 0 && (
-            <div className="flex items-center gap-1.5 flex-wrap px-1">
-              <span className="text-[10px] text-muted-foreground/60">惩罚：</span>
-              {explanation.penalties.map(p => (
-                <span key={p.key} className="text-[10px] px-1.5 py-0.5 rounded border text-danger/80 border-danger/20 bg-danger/5">
-                  -{p.amount} {p.label}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {/* Rule-based scoring note */}
-          {explanation.isRuleBasedOnly && (
-            <p className="text-[10px] text-muted-foreground/45 px-1">
-              当前为规则引擎基线评分，多数维度尚未经 AI 评分（显示为默认值 50）
-            </p>
-          )}
-
-        </div>
-      )}
-    </div>
+          {/* Scrollable content */}
+          <div className="px-6 py-5">
+            <ItemDetailPanel item={item} />
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
