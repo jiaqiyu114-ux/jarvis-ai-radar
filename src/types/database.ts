@@ -452,6 +452,12 @@ export type DbTopic = {
   material_urls:  string[]
   priority:       DbTopicPriority
   status:         DbTopicStatus
+  // Topic pool from item v1
+  source_name:    string | null
+  source_url:     string | null
+  final_score:    number | null
+  truth_score:    number | null
+  ev_score:       number | null
   created_at:     string
   updated_at:     string
 }
@@ -470,6 +476,12 @@ export type DbTopicInsert = {
   material_urls?:  string[]
   priority?:       DbTopicPriority
   status?:         DbTopicStatus
+  // Topic pool from item v1
+  source_name?:    string
+  source_url?:     string
+  final_score?:    number
+  truth_score?:    number
+  ev_score?:       number
 }
 
 // ── providers ─────────────────────────────────────────────────────────────────

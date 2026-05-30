@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ExternalLink, BookOpen, Eye, Pencil, GitBranch, ImageOff, Loader2, RefreshCw } from "lucide-react"
+import { ExternalLink, BookOpen, Eye, Pencil, GitBranch, ImageOff, Loader2, RefreshCw, BookmarkPlus } from "lucide-react"
 import { formatDistanceToNow, format } from "date-fns"
 import { zhCN } from "date-fns/locale"
 import { Progress } from "@/components/ui/progress"
@@ -63,6 +63,80 @@ function Section({ label, children }: { label: string; children: React.ReactNode
 
 function Divider() {
   return <div className="h-px bg-border/60" />
+}
+
+// ── Add to topic pool button ──────────────────────────────────────────────────
+
+type TopicState = 'idle' | 'loading' | 'done' | 'error'
+
+function AddToTopicPoolButton({ itemId, isReal }: { itemId: string; isReal: boolean }) {
+  const [state, setState]   = useState<TopicState>('idle')
+  const [errMsg, setErrMsg] = useState<string | null>(null)
+
+  if (!isReal) {
+    return (
+      <span className="text-xs text-muted-foreground/50 cursor-not-allowed">
+        演示数据不能加入选题池
+      </span>
+    )
+  }
+
+  async function handleAdd() {
+    if (state === 'loading' || state === 'done') return
+    setState('loading')
+    setErrMsg(null)
+    try {
+      const res = await fetch('/api/topics/from-item', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ itemId }),
+      })
+      const data = await res.json() as { ok: boolean; alreadyExists?: boolean; error?: string }
+      if (data.ok) {
+        setState('done')
+      } else {
+        setErrMsg(data.error ?? '加入失败')
+        setState('error')
+      }
+    } catch {
+      setErrMsg('网络错误')
+      setState('error')
+    }
+  }
+
+  if (state === 'loading') {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        加入中…
+      </span>
+    )
+  }
+
+  if (state === 'done') {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-success">
+        <BookmarkPlus className="h-3.5 w-3.5" />
+        已在选题池 · 可在 /topics 查看
+      </span>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      {state === 'error' && errMsg && (
+        <span className="text-xs text-danger/80">{errMsg}</span>
+      )}
+      <button
+        type="button"
+        onClick={handleAdd}
+        className="flex items-center gap-1.5 text-xs text-primary border border-primary/20 bg-primary/5 hover:bg-primary/12 rounded px-2 py-1 transition-colors"
+      >
+        <BookmarkPlus className="h-3 w-3" />
+        加入选题池
+      </button>
+    </div>
+  )
 }
 
 // ── Analysis gate section ─────────────────────────────────────────────────────
@@ -334,7 +408,7 @@ function FetchButton({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ItemDetailPanel({ item }: { item: InformationItem }) {
+export function ItemDetailPanel({ item, isReal = true }: { item: InformationItem; isReal?: boolean }) {
   // Local article content — updated after a successful fetch without page reload
   const [localContent, setLocalContent] = useState<ArticleContent | undefined>(item.articleContent)
 
@@ -414,6 +488,10 @@ export function ItemDetailPanel({ item }: { item: InformationItem }) {
               </div>
             )
           })}
+        </div>
+        {/* 加入选题池 — placed below insights as a next-step action */}
+        <div className="pt-1 flex items-center gap-3">
+          <AddToTopicPoolButton itemId={item.id} isReal={isReal} />
         </div>
       </Section>
 

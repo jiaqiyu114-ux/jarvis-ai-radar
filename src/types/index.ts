@@ -182,17 +182,23 @@ export interface MockSource {
 }
 
 export interface TopicItem {
-  id: string
-  sourceItemId: string
-  topicTitle: string
-  coreInfo: string
-  possibleAngles: string[]
-  targetPlatform: Platform
-  targetReader: string
+  id:              string
+  sourceItemId:    string
+  topicTitle:      string
+  coreInfo:        string
+  possibleAngles:  string[]
+  targetPlatform:  Platform
+  targetReader:    string
   readerPainPoint: string
-  priority: 'high' | 'medium' | 'low'
-  status: TopicStatus
-  createdAt: string
+  priority:        'high' | 'medium' | 'low'
+  status:          TopicStatus
+  createdAt:       string
+  // Topic pool from item v1
+  sourceName?:     string | null
+  sourceUrl?:      string | null
+  finalScore?:     number | null
+  truthScore?:     number | null
+  evScore?:        number | null
 }
 
 export interface MockCluster {

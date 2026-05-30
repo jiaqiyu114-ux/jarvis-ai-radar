@@ -41,6 +41,11 @@ function mapDbTopic(topic: DbTopic): TopicItem {
     priority:        topic.priority,
     status:          topicStatusMap[topic.status] ?? 'pending',
     createdAt:       topic.created_at,
+    sourceName:      topic.source_name ?? null,
+    sourceUrl:       topic.source_url  ?? null,
+    finalScore:      topic.final_score  ?? null,
+    truthScore:      topic.truth_score  ?? null,
+    evScore:         topic.ev_score     ?? null,
   }
 }
 
