@@ -3,10 +3,14 @@
 import { useState, useEffect } from "react"
 import {
   Bookmark, Eye, Pencil, GitBranch,
-  ShieldCheck, ShieldOff, AlertTriangle, Copy, TrendingDown, XCircle,
+  ShieldCheck, ShieldOff, AlertTriangle, Copy, TrendingDown, TrendingUp, XCircle,
   Loader2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import {
+  FEEDBACK_TYPE_DESCRIPTIONS,
+  FEEDBACK_TYPE_LABELS,
+} from "@/lib/feedback/feedback-labels"
 import type { DbItemFeedbackType } from "@/types/database"
 
 // ── Feedback action definitions ───────────────────────────────────────────────
@@ -21,17 +25,18 @@ type FeedbackAction = {
 
 const FEEDBACK_ACTIONS: FeedbackAction[] = [
   // Positive / processing intent
-  { type: 'save_reference',       label: '保存资料',    icon: Bookmark,      group: 'positive',   activeColor: 'text-primary border-primary/40 bg-primary/10' },
-  { type: 'add_to_watch',         label: '加入观察',    icon: Eye,           group: 'positive',   activeColor: 'text-sky-500 border-sky-400/40 bg-sky-400/10' },
-  { type: 'worth_writing',        label: '值得写',      icon: Pencil,        group: 'positive',   activeColor: 'text-violet-500 border-violet-400/40 bg-violet-400/10' },
-  { type: 'project_related',      label: '项目相关',    icon: GitBranch,     group: 'positive',   activeColor: 'text-emerald-500 border-emerald-400/40 bg-emerald-400/10' },
-  { type: 'strong_evidence',      label: '证据强',      icon: ShieldCheck,   group: 'positive',   activeColor: 'text-success border-success/40 bg-success/10' },
-  { type: 'weak_evidence',        label: '证据弱',      icon: ShieldOff,     group: 'calibrate',  activeColor: 'text-warning border-warning/40 bg-warning/10' },
+  { type: 'save_reference',       label: FEEDBACK_TYPE_LABELS.save_reference,    icon: Bookmark,      group: 'positive',   activeColor: 'text-primary border-primary/40 bg-primary/10' },
+  { type: 'add_to_watch',         label: FEEDBACK_TYPE_LABELS.add_to_watch,      icon: Eye,           group: 'positive',   activeColor: 'text-sky-500 border-sky-400/40 bg-sky-400/10' },
+  { type: 'worth_writing',        label: FEEDBACK_TYPE_LABELS.worth_writing,     icon: Pencil,        group: 'positive',   activeColor: 'text-violet-500 border-violet-400/40 bg-violet-400/10' },
+  { type: 'project_related',      label: FEEDBACK_TYPE_LABELS.project_related,   icon: GitBranch,     group: 'positive',   activeColor: 'text-emerald-500 border-emerald-400/40 bg-emerald-400/10' },
+  { type: 'strong_evidence',      label: FEEDBACK_TYPE_LABELS.strong_evidence,   icon: ShieldCheck,   group: 'positive',   activeColor: 'text-success border-success/40 bg-success/10' },
+  { type: 'weak_evidence',        label: FEEDBACK_TYPE_LABELS.weak_evidence,     icon: ShieldOff,     group: 'calibrate',  activeColor: 'text-warning border-warning/40 bg-warning/10' },
   // Calibration
-  { type: 'clickbait_or_marketing', label: '标题党/营销', icon: AlertTriangle, group: 'calibrate', activeColor: 'text-orange-500 border-orange-400/40 bg-orange-400/10' },
-  { type: 'duplicate_info',         label: '重复信息',    icon: Copy,          group: 'calibrate', activeColor: 'text-muted-foreground border-border bg-muted/50' },
-  { type: 'overestimated',          label: '系统高估',    icon: TrendingDown,  group: 'calibrate', activeColor: 'text-warning border-warning/40 bg-warning/10' },
-  { type: 'not_worth_reading',      label: '不值得看',    icon: XCircle,       group: 'calibrate', activeColor: 'text-danger/80 border-danger/30 bg-danger/8' },
+  { type: 'clickbait_or_marketing', label: FEEDBACK_TYPE_LABELS.clickbait_or_marketing, icon: AlertTriangle, group: 'calibrate', activeColor: 'text-orange-500 border-orange-400/40 bg-orange-400/10' },
+  { type: 'duplicate_info',         label: FEEDBACK_TYPE_LABELS.duplicate_info,         icon: Copy,          group: 'calibrate', activeColor: 'text-muted-foreground border-border bg-muted/50' },
+  { type: 'overestimated',          label: FEEDBACK_TYPE_LABELS.overestimated,          icon: TrendingDown,  group: 'calibrate', activeColor: 'text-warning border-warning/40 bg-warning/10' },
+  { type: 'underestimated',         label: FEEDBACK_TYPE_LABELS.underestimated,         icon: TrendingUp,    group: 'calibrate', activeColor: 'text-sky-500 border-sky-400/40 bg-sky-400/10' },
+  { type: 'not_worth_reading',      label: FEEDBACK_TYPE_LABELS.not_worth_reading,      icon: XCircle,       group: 'calibrate', activeColor: 'text-danger/80 border-danger/30 bg-danger/8' },
 ]
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -104,6 +109,9 @@ export function ItemFeedbackActions({ itemId, contextPage = 'feed' }: Props) {
 
   const positiveActions  = FEEDBACK_ACTIONS.filter(a => a.group === 'positive')
   const calibrateActions = FEEDBACK_ACTIONS.filter(a => a.group === 'calibrate')
+  const activeLabels = FEEDBACK_ACTIONS
+    .filter(action => active.has(action.type))
+    .map(action => action.label)
 
   function renderButton(action: FeedbackAction) {
     const isActive = active.has(action.type)
@@ -116,7 +124,7 @@ export function ItemFeedbackActions({ itemId, contextPage = 'feed' }: Props) {
         type="button"
         disabled={state === 'loading' || loadingInit}
         onClick={() => handleClick(action.type)}
-        title={isActive ? `取消标注：${action.label}` : `标注：${action.label}`}
+        title={isActive ? `取消标注：${action.label}` : FEEDBACK_TYPE_DESCRIPTIONS[action.type]}
         className={cn(
           "inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded border transition-colors",
           "disabled:opacity-50 disabled:cursor-not-allowed",
@@ -140,8 +148,13 @@ export function ItemFeedbackActions({ itemId, contextPage = 'feed' }: Props) {
           我的判断标注
         </p>
         <p className="text-[10px] text-muted-foreground/50 mb-3">
-          这些标注用于校准信息质量和后续处理意图，不作为喜好信号。
+          这些标注用于校准信息质量和后续处理意图，不作为兴趣偏好直接调权。
         </p>
+        {activeLabels.length > 0 && (
+          <p className="mb-3 text-[10px] text-primary/80">
+            已标注：{activeLabels.join('、')}
+          </p>
+        )}
       </div>
 
       {/* Primary actions */}

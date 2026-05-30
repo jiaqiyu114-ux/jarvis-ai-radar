@@ -4,7 +4,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
   LayoutDashboard, Rss, Star, GitBranch, FileText,
-  BookOpen, Radio, Settings, Layers
+  BookOpen, Radio, Settings, Layers, MessageSquareText
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -16,6 +16,7 @@ const navItems = [
   { href: "/clusters",  label: "事件簇",    icon: GitBranch       },
   { href: "/reports",   label: "日报",      icon: FileText        },
   { href: "/topics",    label: "选题池",    icon: BookOpen        },
+  { href: "/feedback",  label: "反馈记录",  icon: MessageSquareText },
   { href: "/sources",   label: "信源管理",  icon: Radio           },
   { href: "/settings",  label: "配置",      icon: Settings        },
 ]
