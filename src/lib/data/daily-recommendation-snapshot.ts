@@ -214,6 +214,7 @@ export type DailyRecommendationSnapshotItem = TodayRecommendationItem & {
 export type DailyRecommendationSnapshot = {
   date: string
   hasSnapshot: boolean
+  isTodaySnapshot: boolean
   run: DailyRecommendationRunView | null
   items: DailyRecommendationSnapshotItem[]
   grouped: Record<DbDailyRecommendationSection, DailyRecommendationSnapshotItem[]>
@@ -807,6 +808,7 @@ export async function getDailyRecommendationSnapshot(date?: string): Promise<Dai
   const empty = {
     date: runDate,
     hasSnapshot: false,
+    isTodaySnapshot: false,
     run: null,
     items: [],
     grouped: { must_read: [], high_value: [], observe: [] },
@@ -867,6 +869,82 @@ export async function getDailyRecommendationSnapshot(date?: string): Promise<Dai
   return {
     date: runDate,
     hasSnapshot: true,
+    isTodaySnapshot: runDate === todayDateString(),
+    run,
+    items,
+    grouped: groupedItems(items),
+  }
+}
+
+/**
+ * Returns the most recent snapshot regardless of run_date.
+ * Use this on /dashboard and /reports so yesterday's snapshot is still visible today.
+ */
+export async function getLatestDailyRecommendationSnapshot(): Promise<DailyRecommendationSnapshot> {
+  const empty: DailyRecommendationSnapshot = {
+    date: todayDateString(),
+    hasSnapshot: false,
+    isTodaySnapshot: false,
+    run: null,
+    items: [],
+    grouped: { must_read: [], high_value: [], observe: [] },
+  }
+
+  if (!isServerSupabaseConfigured || !supabaseServer) return empty
+
+  const { data: run, error: runErr } = await supabaseServer
+    .from('daily_recommendation_runs')
+    .select('*')
+    .eq('status', 'generated')
+    .order('generated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (runErr) {
+    if (isMissingRelationError(runErr)) return empty
+    throw new Error(`[daily-recommendation] get latest run: ${runErr.message}`)
+  }
+  if (!run) return empty
+
+  const select = [
+    'id', 'run_id', 'item_id', 'rank', 'section',
+    'recommendation_reason', 'reason_tags',
+    'score_snapshot', 'source_snapshot', 'item_snapshot', 'created_at',
+    `items!daily_recommendation_items_item_id_fkey(${ITEM_SELECT})`,
+  ].join(', ')
+
+  const { data, error } = await supabaseServer
+    .from('daily_recommendation_items')
+    .select(select)
+    .eq('run_id', run.id)
+    .order('rank', { ascending: true })
+
+  if (error) {
+    if (isMissingRelationError(error)) return empty
+    throw new Error(`[daily-recommendation] get latest snapshot items: ${error.message}`)
+  }
+
+  const items = ((data ?? []) as unknown as SnapshotItemRow[])
+    .filter(row => row.items)
+    .map(row => {
+      const itemRow = row.items as CandidateRow
+      const section = row.section
+      const noise   = detectLowValueNoise(
+        normalizeDisplayText(itemRow.title),
+        itemRow.summary ?? '',
+        itemRow.content_word_count,
+      )
+      const reason = row.recommendation_reason ?? recommendationReason(itemRow, section, noise)
+      return mapSnapshotItem(itemRow, {
+        runId: row.run_id, rank: row.rank, section, reason,
+        tags: row.reason_tags ?? [], run,
+      })
+    })
+
+  return {
+    date: run.run_date,
+    hasSnapshot: true,
+    isTodaySnapshot: run.run_date === todayDateString(),
     run,
     items,
     grouped: groupedItems(items),

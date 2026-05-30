@@ -108,7 +108,9 @@ export default function ReportsClient({ snapshot, topSignal }: Props) {
         {/* ── Editorial header ── */}
         <div className="mb-6">
           <p className="page-kicker mb-1">{reportDate} · Daily Brief</p>
-          <h1 className="editorial-title text-[2.25rem]">今日日报</h1>
+          <h1 className="editorial-title text-[2.25rem]">
+            {snapshot.isTodaySnapshot ? "今日日报" : "最近一次日报快照"}
+          </h1>
           <p className="page-subtitle mt-1.5">
             生成于 {generatedAt}
             {run && (
@@ -118,6 +120,11 @@ export default function ReportsClient({ snapshot, topSignal }: Props) {
               </>
             )}
           </p>
+          {!snapshot.isTodaySnapshot && (
+            <div className="mt-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+              当前暂无今日日报，以下展示最近一次生成的日报快照（{run?.run_date ?? snapshot.date}）。
+            </div>
+          )}
         </div>
 
         {/* ── Stats bar ── */}
@@ -146,7 +153,7 @@ export default function ReportsClient({ snapshot, topSignal }: Props) {
             {/* 今日必看 */}
             {mustReadItems.length > 0 && (
               <section>
-                <SectionHeader label="今日必看" count={mustReadItems.length} accent="bg-primary animate-pulse" />
+                <SectionHeader label={snapshot.isTodaySnapshot ? "今日必看" : "快照必看"} count={mustReadItems.length} accent="bg-primary animate-pulse" />
                 <div className="border border-primary/15 rounded-lg overflow-hidden bg-primary/3">
                   {mustReadItems.map(item => <SnapshotItemCard key={item.id} item={item} />)}
                 </div>
@@ -189,7 +196,7 @@ export default function ReportsClient({ snapshot, topSignal }: Props) {
             {/* 今日内容方向 */}
             {catDist.length > 0 && (
               <div className="border border-border rounded-lg p-4 bg-card">
-                <p className="muted-label mb-3">今日内容方向</p>
+                <p className="muted-label mb-3">{snapshot.isTodaySnapshot ? "今日内容方向" : "快照内容方向"}</p>
                 <div className="space-y-2">
                   {catDist.map(({ cat, count }) => (
                     <div key={cat} className="flex items-center gap-2">
@@ -207,7 +214,7 @@ export default function ReportsClient({ snapshot, topSignal }: Props) {
                   ))}
                 </div>
                 <p className="text-[10px] text-muted-foreground/50 mt-3">
-                  基于今日 {items.length} 条推荐条目统计，不调用 LLM。
+                  基于 {items.length} 条推荐条目统计，不调用 LLM。
                 </p>
               </div>
             )}
@@ -238,7 +245,7 @@ export default function ReportsClient({ snapshot, topSignal }: Props) {
             {/* 顶部高分参考 */}
             {items.length > 0 && (
               <div className="border border-border rounded-lg p-4 bg-card">
-                <p className="muted-label mb-3">今日评分前三</p>
+                <p className="muted-label mb-3">{snapshot.isTodaySnapshot ? "今日评分前三" : "快照评分前三"}</p>
                 <div className="space-y-2">
                   {[...items].sort((a, b) => b.finalScore - a.finalScore).slice(0, 3).map(item => (
                     <div key={item.id} className="flex items-center gap-2.5 py-1">

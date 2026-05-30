@@ -7,7 +7,7 @@ import { ScoreBadge } from "@/components/feed/score-badge"
 import { SourceTierBadge } from "@/components/feed/source-tier-badge"
 import { TodayRecommendationCard } from "./_today-recommendation-card"
 import {
-  getDailyRecommendationSnapshot,
+  getLatestDailyRecommendationSnapshot,
   getLiveDailyRecommendationPreview,
 } from "@/lib/data/daily-recommendation-snapshot"
 import type { DailyRecommendationSnapshotItem } from "@/lib/data/daily-recommendation-snapshot"
@@ -93,7 +93,7 @@ function SectionBlock({
 }
 
 export default async function DashboardPage() {
-  const snapshot = await getDailyRecommendationSnapshot()
+  const snapshot = await getLatestDailyRecommendationSnapshot()
   const livePreview = snapshot.hasSnapshot
     ? null
     : await getLiveDailyRecommendationPreview(12)
@@ -140,7 +140,9 @@ export default async function DashboardPage() {
             <div>
               <p className="page-kicker mb-1">Today&apos;s Recommendations</p>
               <h1 className="editorial-title text-[2.15rem]">
-                {snapshot.hasSnapshot ? "今日推荐快照" : "今日推荐尚未生成"}
+                {snapshot.hasSnapshot
+                  ? snapshot.isTodaySnapshot ? "今日推荐快照" : "最近一次推荐快照"
+                  : "今日推荐尚未生成"}
               </h1>
               <p className="page-subtitle mt-1.5">
                 {snapshot.hasSnapshot && snapshot.run
@@ -166,6 +168,13 @@ export default async function DashboardPage() {
               </span>
             )}
           </div>
+
+          {snapshot.hasSnapshot && !snapshot.isTodaySnapshot && (
+            <div className="mt-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+              当前暂无今日快照，以下展示的是最近一次生成的推荐快照
+              {snapshot.run ? `（${snapshot.run.run_date}，生成于 ${formatTime(snapshot.run.generated_at)}）` : ""}。
+            </div>
+          )}
         </header>
 
         <div className="grid grid-cols-5 gap-3 mb-6">
@@ -250,7 +259,7 @@ export default async function DashboardPage() {
 
           <aside className="col-span-1 space-y-4">
             <SideSection
-              title="今日高分参考"
+              title={snapshot.isTodaySnapshot ? "今日高分参考" : "高分参考"}
               empty="暂无高分参考"
               items={highScoreReference}
             />
