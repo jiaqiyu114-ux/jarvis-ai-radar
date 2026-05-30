@@ -54,7 +54,7 @@ export function InformationCard({
 }: InformationCardProps) {
   const [showBreakdown, setShowBreakdown] = useState(variant === 'expanded')
 
-  // Build score explanation (pure computation, no I/O)
+  // Build score explanation — pure computation, no I/O
   const explanation = buildScoreExplanation(item.scoreBreakdown, item.finalScore, item.penalties)
 
   const timeAgo = formatDistanceToNow(new Date(item.publishedAt), {
@@ -63,12 +63,12 @@ export function InformationCard({
   })
 
   const categoryClass = categoryColors[item.category] ?? categoryColors['其他']
-  const visibleTags = item.tags.slice(0, 3)
+  const visibleTags   = item.tags.slice(0, 3)
   const extraTagCount = item.tags.length - 3
 
   /* ──────────────────────────────────────────
-     MINIMAL variant — for narrow columns / dashboard sidebar
-     Single-line title, compact meta, no tags/actions
+     MINIMAL variant — for narrow columns / dashboard sidebar.
+     Clicking the title navigates to the original URL (compact context).
      ────────────────────────────────────────── */
   if (variant === 'minimal') {
     return (
@@ -104,21 +104,43 @@ export function InformationCard({
 
   /* ──────────────────────────────────────────
      STANDARD variants: compact / emphasis / expanded
+
+     Interaction contract:
+       • Clicking the card background (non-interactive area) → toggle expansion.
+       • Clicking the ExternalLink <a> → navigate to original URL, NOT expand.
+       • Clicking FeedbackAction buttons → action only, NOT expand.
+       • Clicking the chevron button → toggle expansion, NOT navigate.
+       • Title is plain text (span) — only ExternalLink icon navigates.
+
+     Implementation: outer div handles onClick, checks e.target.closest('a, button')
+     to skip toggle when the user clicked an actual interactive element.
      ────────────────────────────────────────── */
   const isEmphasis    = variant === 'emphasis'
   const effectiveSize = scoreSize
   const bdIndent      = effectiveSize === 'md' ? 'ml-12' : 'ml-10'
 
+  // Positive driver chips for folded view (max 2, available-status preferred)
+  const foldedPositive = explanation.topPositiveDrivers.slice(0, 2)
+  // Negative driver chips for folded view (max 1, exclude penalty text)
+  const foldedNegative = explanation.topNegativeDrivers
+    .filter(d => !d.includes('分惩罚'))
+    .slice(0, 1)
+
   return (
     <div
       className={cn(
-        "group border-b border-border transition-colors hover:bg-accent",
+        "group border-b border-border transition-colors hover:bg-accent cursor-pointer",
         isEmphasis ? "py-3.5 px-4" : "py-2.5 px-4"
       )}
+      onClick={(e) => {
+        // Only toggle when clicking non-interactive areas (not links or buttons)
+        const t = e.target as HTMLElement
+        if (!t.closest('a, button')) setShowBreakdown(prev => !prev)
+      }}
     >
       <div className="flex items-start gap-3">
 
-        {/* ── Score column: badge + band label ── */}
+        {/* ── Score column: badge + scoreBand label ── */}
         <div className="flex flex-col items-center gap-0.5 shrink-0">
           <ScoreBadge score={item.finalScore} size={effectiveSize} />
           <span className={cn(
@@ -132,20 +154,17 @@ export function InformationCard({
         {/* ── Content block ── */}
         <div className="flex-1 min-w-0 space-y-1">
 
-          {/* Row 1: TierBadge + Title */}
+          {/* Row 1: TierBadge + Title (plain text, NOT a link) */}
           <div className="flex items-start gap-1.5">
             <SourceTierBadge tier={item.sourceTier} />
-            <a
-              href={item.originalUrl}
-              target="_blank"
-              rel="noopener noreferrer"
+            <span
               className={cn(
-                "flex-1 min-w-0 text-sm text-foreground hover:text-primary leading-snug line-clamp-2 transition-colors",
+                "flex-1 min-w-0 text-sm text-foreground leading-snug",
                 isEmphasis ? "font-semibold" : "font-medium"
               )}
             >
               {item.title}
-            </a>
+            </span>
           </div>
 
           {/* Row 2: Source · Summary */}
@@ -155,7 +174,7 @@ export function InformationCard({
             {item.summary}
           </p>
 
-          {/* Row 3: Category · Time · Tags · Actions · Chevron */}
+          {/* Row 3: meta + external link + feedback + chevron */}
           <div className="flex items-center gap-1.5">
             <div className="flex items-center gap-1 flex-wrap flex-1 min-w-0">
               <span className={cn("text-[10px] px-1.5 py-px rounded font-medium whitespace-nowrap", categoryClass)}>
@@ -163,11 +182,13 @@ export function InformationCard({
               </span>
               <span className="text-muted-foreground/40 text-[10px]">·</span>
               <span className="text-[10px] text-muted-foreground whitespace-nowrap">{timeAgo}</span>
+              {/* ExternalLink: the ONLY way to navigate to the original URL */}
               <a
                 href={item.originalUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+                className="text-muted-foreground/40 hover:text-primary transition-colors"
+                title="查看原文"
               >
                 <ExternalLink className="h-3 w-3" />
               </a>
@@ -186,37 +207,70 @@ export function InformationCard({
               )}
             </div>
 
+            {/* Right: feedback actions + chevron */}
             <div className="flex items-center gap-1 shrink-0">
               <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                 <FeedbackActions itemId={item.id} onAction={onFeedback} />
               </div>
               <button
-                onClick={() => setShowBreakdown(!showBreakdown)}
+                onClick={() => setShowBreakdown(prev => !prev)}
                 className="text-muted-foreground/40 hover:text-muted-foreground transition-colors p-1"
-                title="查看评分解释"
+                title={showBreakdown ? "收起解释" : "查看评分解释"}
               >
                 <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showBreakdown && "rotate-180")} />
               </button>
             </div>
           </div>
 
-          {/* Row 4: One-line score reason */}
-          {explanation.oneLineReason && (
-            <p className="text-[10px] text-muted-foreground/55 leading-snug">
-              {explanation.oneLineReason}
-            </p>
+          {/* Row 4: driver chips (always visible in folded state) */}
+          {(foldedPositive.length > 0 || foldedNegative.length > 0 || explanation.isRuleBasedOnly) && (
+            <div className="flex flex-wrap items-center gap-1">
+              {foldedPositive.map(d => (
+                <span
+                  key={d}
+                  className="text-[10px] px-1.5 py-px rounded border text-success border-success/25 bg-success/8 whitespace-nowrap"
+                >
+                  ↑ {d}
+                </span>
+              ))}
+              {foldedNegative.map(d => (
+                <span
+                  key={d}
+                  className="text-[10px] px-1.5 py-px rounded border text-muted-foreground border-border bg-muted/50 whitespace-nowrap"
+                >
+                  ↓ {d}
+                </span>
+              ))}
+              {foldedPositive.length === 0 && foldedNegative.length === 0 && explanation.isRuleBasedOnly && (
+                <span className="text-[10px] text-muted-foreground/55 px-1 py-px rounded border border-border/40 whitespace-nowrap">
+                  规则基线
+                </span>
+              )}
+              {(foldedPositive.length > 0 || foldedNegative.length > 0) && explanation.isRuleBasedOnly && (
+                <span className="text-[9px] text-muted-foreground/40 whitespace-nowrap">
+                  · 规则基线
+                </span>
+              )}
+            </div>
           )}
 
         </div>
       </div>
 
-      {/* ── Enhanced score breakdown (expanded) ── */}
+      {/* ── Expanded: full score explanation ── */}
       {showBreakdown && (
         <div className={cn("mt-2 space-y-2", bdIndent)}>
 
-          {/* Driver chips */}
+          {/* One-line reason (header of expanded section) */}
+          {explanation.oneLineReason && (
+            <p className="text-[10px] text-muted-foreground/70 px-1 leading-relaxed">
+              推荐判断：{explanation.oneLineReason}
+            </p>
+          )}
+
+          {/* All positive + negative drivers */}
           {(explanation.topPositiveDrivers.length > 0 || explanation.topNegativeDrivers.length > 0) && (
-            <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap gap-1 px-1">
               {explanation.topPositiveDrivers.map(d => (
                 <span key={d} className="text-[10px] px-1.5 py-0.5 rounded border text-success border-success/25 bg-success/8">
                   ↑ {d}
@@ -233,7 +287,7 @@ export function InformationCard({
             </div>
           )}
 
-          {/* Dimension bars */}
+          {/* Dimension bars with status */}
           <div className="grid grid-cols-3 gap-x-6 gap-y-1.5 bg-muted/40 rounded-md p-3">
             {explanation.dimensions.map(dim => (
               <div key={dim.key} className="flex items-center gap-2">
@@ -244,7 +298,7 @@ export function InformationCard({
                   value={dim.status === 'missing' ? 0 : dim.rawValue}
                   className={cn("h-1 flex-1", dim.status === 'fallback' && "opacity-40")}
                 />
-                <span className={cn("text-[10px] font-mono w-5 text-right", dimStatusColor[dim.status])}>
+                <span className={cn("text-[10px] font-mono w-5 text-right tabular-nums", dimStatusColor[dim.status])}>
                   {dim.status === 'missing' ? '—' : dim.rawValue}
                 </span>
                 {dim.status !== 'available' && (
@@ -256,7 +310,7 @@ export function InformationCard({
             ))}
           </div>
 
-          {/* Penalties */}
+          {/* Penalty badges */}
           {explanation.penalties.length > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap px-1">
               <span className="text-[10px] text-muted-foreground/60">惩罚：</span>
@@ -268,7 +322,7 @@ export function InformationCard({
             </div>
           )}
 
-          {/* Rule-based note */}
+          {/* Rule-based scoring note */}
           {explanation.isRuleBasedOnly && (
             <p className="text-[10px] text-muted-foreground/45 px-1">
               当前为规则引擎基线评分，多数维度尚未经 AI 评分（显示为默认值 50）

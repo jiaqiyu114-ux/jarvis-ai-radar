@@ -1,3 +1,8 @@
+// Force dynamic rendering so the dashboard always fetches real DB data at request time.
+// Without this, Next.js pre-renders at build time when Supabase is unavailable,
+// causing it to fall back to mockItems and display demo content.
+export const dynamic = 'force-dynamic'
+
 import { ExternalLink, LayoutDashboard, TrendingUp, GitBranch, BookOpen } from "lucide-react"
 import { AppShell } from "@/components/layout/app-shell"
 import { StatCard } from "@/components/dashboard/stat-card"

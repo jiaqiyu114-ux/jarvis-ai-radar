@@ -113,9 +113,11 @@ export async function getFeedItems(opts?: { includeDemo?: boolean }): Promise<In
           const origin = (r as { data_origin?: string }).data_origin
           return origin !== 'demo' && origin !== 'mock'
         })
-    if (relevant.length > 0) return relevant.map(mapDbItem)
+    // In DB mode: return whatever the DB has (may be empty array).
+    // Do NOT fall back to mockItems — that would re-introduce demo data into real pages.
+    return relevant.map(mapDbItem)
   }
-  return mockItems
+  return mockItems   // Non-DB mode only (no Supabase configured)
 }
 
 /**
