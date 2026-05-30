@@ -52,6 +52,12 @@ function mapDbItem(item: DbItemWithSource): InformationItem {
       content_potential: item.content_potential_score,
       personal_fit:      item.personal_fit_score,
     },
+    penalties: {
+      duplicate:     item.duplicate_penalty    ?? 0,
+      clickbait:     item.clickbait_penalty    ?? 0,
+      marketing:     item.marketing_penalty    ?? 0,
+      cognitiveLoad: item.cognitive_load_penalty ?? 0,
+    },
     originalUrl:        item.url,
     relatedReportCount: 0,
   }

@@ -50,6 +50,13 @@ export interface ScoreBreakdown {
   personal_fit: number
 }
 
+export interface ItemPenalties {
+  duplicate:     number
+  clickbait:     number
+  marketing:     number
+  cognitiveLoad: number
+}
+
 export interface InformationItem {
   id: string
   title: string
@@ -63,6 +70,7 @@ export interface InformationItem {
   scoreBreakdown: ScoreBreakdown
   originalUrl: string
   relatedReportCount: number
+  penalties?: ItemPenalties   // populated from DB penalty columns
 }
 
 export interface MockSource {

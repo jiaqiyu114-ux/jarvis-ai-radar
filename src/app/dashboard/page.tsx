@@ -5,6 +5,7 @@ import { InformationCard } from "@/components/feed/information-card"
 import { ScoreBadge } from "@/components/feed/score-badge"
 import { SourceTierBadge } from "@/components/feed/source-tier-badge"
 import { getFeedItems, getDashboardStats } from "@/lib/data/feed-adapter"
+import { buildScoreExplanation } from "@/lib/scoring/explanation"
 import type { TopSignalData } from "@/components/layout/app-shell"
 import { cn } from "@/lib/utils"
 import type { InformationItem } from "@/types"
@@ -56,6 +57,10 @@ export default async function DashboardPage() {
     ? { score: topItem.finalScore, title: topItem.title, category: topItem.category }
     : undefined
 
+  const topExplanation = topItem
+    ? buildScoreExplanation(topItem.scoreBreakdown, topItem.finalScore, topItem.penalties)
+    : null
+
   const topCatColor = topItem
     ? (categoryColorMap[topItem.category] ?? 'text-stone-500 bg-stone-100 dark:text-muted-foreground dark:bg-muted')
     : ''
@@ -96,6 +101,9 @@ export default async function DashboardPage() {
                 {topItem.title}
               </a>
               <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{topItem.summary}</p>
+              {topExplanation?.oneLineReason && (
+                <p className="text-[10px] text-muted-foreground/55 mt-0.5">{topExplanation.oneLineReason}</p>
+              )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <SourceTierBadge tier={topItem.sourceTier} />

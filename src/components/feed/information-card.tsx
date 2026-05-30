@@ -9,7 +9,9 @@ import { SourceTierBadge } from "./source-tier-badge"
 import { FeedbackActions } from "./feedback-actions"
 import { Progress } from "@/components/ui/progress"
 import { cn } from "@/lib/utils"
+import { buildScoreExplanation } from "@/lib/scoring/explanation"
 import type { InformationItem, FeedbackAction } from "@/types"
+import type { DimensionStatus } from "@/lib/scoring/explanation"
 
 interface InformationCardProps {
   item: InformationItem
@@ -32,16 +34,16 @@ const categoryColors: Record<string, string> = {
   '其他':     'text-stone-500 bg-stone-100 dark:text-muted-foreground dark:bg-muted',
 }
 
-const dimensionLabels: Record<string, string> = {
-  importance:        '重要性',
-  ai_relevance:      'AI相关',
-  source_score:      '信源质量',
-  novelty:           '新颖性',
-  momentum:          '势头',
-  credibility:       '可信度',
-  actionability:     '可操作',
-  content_potential: '内容潜力',
-  personal_fit:      '个人适配',
+const dimStatusText: Record<DimensionStatus, string> = {
+  available: '',
+  fallback:  '默认',
+  missing:   '缺失',
+}
+
+const dimStatusColor: Record<DimensionStatus, string> = {
+  available: 'text-muted-foreground',
+  fallback:  'text-muted-foreground/50',
+  missing:   'text-danger/60',
 }
 
 export function InformationCard({
@@ -51,6 +53,9 @@ export function InformationCard({
   onFeedback,
 }: InformationCardProps) {
   const [showBreakdown, setShowBreakdown] = useState(variant === 'expanded')
+
+  // Build score explanation (pure computation, no I/O)
+  const explanation = buildScoreExplanation(item.scoreBreakdown, item.finalScore, item.penalties)
 
   const timeAgo = formatDistanceToNow(new Date(item.publishedAt), {
     addSuffix: true,
@@ -71,7 +76,6 @@ export function InformationCard({
         <div className="flex items-start gap-2.5">
           <ScoreBadge score={item.finalScore} size="sm" />
           <div className="flex-1 min-w-0">
-            {/* Row 1: TierBadge + Title */}
             <div className="flex items-start gap-1.5">
               <SourceTierBadge tier={item.sourceTier} />
               <a
@@ -83,7 +87,6 @@ export function InformationCard({
                 {item.title}
               </a>
             </div>
-            {/* Row 2: Source · Category · Time */}
             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
               <span className="text-[11px] text-muted-foreground">{item.source}</span>
               <span className="text-muted-foreground/40">·</span>
@@ -101,13 +104,10 @@ export function InformationCard({
 
   /* ──────────────────────────────────────────
      STANDARD variants: compact / emphasis / expanded
-     Three-row layout — title row is NEVER mixed with meta.
-     Eliminates the "category/time pushes title to wrap" bug.
      ────────────────────────────────────────── */
-  const isEmphasis = variant === 'emphasis'
+  const isEmphasis    = variant === 'emphasis'
   const effectiveSize = scoreSize
-  /* Indent rows 2+ to align with content block start after ScoreBadge + gap */
-  const bdIndent = effectiveSize === 'md' ? 'ml-12' : 'ml-10'
+  const bdIndent      = effectiveSize === 'md' ? 'ml-12' : 'ml-10'
 
   return (
     <div
@@ -117,13 +117,22 @@ export function InformationCard({
       )}
     >
       <div className="flex items-start gap-3">
-        {/* Score badge — always left-anchored */}
-        <ScoreBadge score={item.finalScore} size={effectiveSize} />
 
-        {/* Content block — all rows in one flex-1 container */}
+        {/* ── Score column: badge + band label ── */}
+        <div className="flex flex-col items-center gap-0.5 shrink-0">
+          <ScoreBadge score={item.finalScore} size={effectiveSize} />
+          <span className={cn(
+            "text-[9px] px-1 py-px rounded border font-medium whitespace-nowrap",
+            explanation.scoreBand.color,
+          )}>
+            {explanation.scoreBand.label}
+          </span>
+        </div>
+
+        {/* ── Content block ── */}
         <div className="flex-1 min-w-0 space-y-1">
 
-          {/* ── Row 1: TierBadge + Title ── */}
+          {/* Row 1: TierBadge + Title */}
           <div className="flex items-start gap-1.5">
             <SourceTierBadge tier={item.sourceTier} />
             <a
@@ -139,16 +148,15 @@ export function InformationCard({
             </a>
           </div>
 
-          {/* ── Row 2: Source · Summary ── */}
+          {/* Row 2: Source · Summary */}
           <p className="text-xs text-muted-foreground line-clamp-1">
             <span className="text-foreground/65 font-medium">{item.source}</span>
             {' · '}
             {item.summary}
           </p>
 
-          {/* ── Row 3: Category · Time · Tags · Related · Actions ── */}
+          {/* Row 3: Category · Time · Tags · Actions · Chevron */}
           <div className="flex items-center gap-1.5">
-            {/* Left: chips + tags — can wrap freely without touching title */}
             <div className="flex items-center gap-1 flex-wrap flex-1 min-w-0">
               <span className={cn("text-[10px] px-1.5 py-px rounded font-medium whitespace-nowrap", categoryClass)}>
                 {item.category}
@@ -178,7 +186,6 @@ export function InformationCard({
               )}
             </div>
 
-            {/* Right: actions — always shrink-0 at end, never wraps */}
             <div className="flex items-center gap-1 shrink-0">
               <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                 <FeedbackActions itemId={item.id} onAction={onFeedback} />
@@ -186,27 +193,88 @@ export function InformationCard({
               <button
                 onClick={() => setShowBreakdown(!showBreakdown)}
                 className="text-muted-foreground/40 hover:text-muted-foreground transition-colors p-1"
+                title="查看评分解释"
               >
                 <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showBreakdown && "rotate-180")} />
               </button>
             </div>
           </div>
 
+          {/* Row 4: One-line score reason */}
+          {explanation.oneLineReason && (
+            <p className="text-[10px] text-muted-foreground/55 leading-snug">
+              {explanation.oneLineReason}
+            </p>
+          )}
+
         </div>
       </div>
 
-      {/* ── Score breakdown (below main layout, indented) ── */}
+      {/* ── Enhanced score breakdown (expanded) ── */}
       {showBreakdown && (
-        <div className={cn("mt-2 grid grid-cols-3 gap-x-6 gap-y-1.5 bg-muted/40 rounded-md p-3", bdIndent)}>
-          {Object.entries(item.scoreBreakdown).map(([key, value]) => (
-            <div key={key} className="flex items-center gap-2">
-              <span className="text-[10px] text-muted-foreground w-14 shrink-0">
-                {dimensionLabels[key] ?? key}
-              </span>
-              <Progress value={value} className="h-1 flex-1" />
-              <span className="text-[10px] font-mono text-muted-foreground w-5 text-right">{value}</span>
+        <div className={cn("mt-2 space-y-2", bdIndent)}>
+
+          {/* Driver chips */}
+          {(explanation.topPositiveDrivers.length > 0 || explanation.topNegativeDrivers.length > 0) && (
+            <div className="flex flex-wrap gap-1">
+              {explanation.topPositiveDrivers.map(d => (
+                <span key={d} className="text-[10px] px-1.5 py-0.5 rounded border text-success border-success/25 bg-success/8">
+                  ↑ {d}
+                </span>
+              ))}
+              {explanation.topNegativeDrivers
+                .filter(d => !d.includes('分惩罚'))
+                .map(d => (
+                  <span key={d} className="text-[10px] px-1.5 py-0.5 rounded border text-muted-foreground border-border bg-muted/50">
+                    ↓ {d}
+                  </span>
+                ))
+              }
             </div>
-          ))}
+          )}
+
+          {/* Dimension bars */}
+          <div className="grid grid-cols-3 gap-x-6 gap-y-1.5 bg-muted/40 rounded-md p-3">
+            {explanation.dimensions.map(dim => (
+              <div key={dim.key} className="flex items-center gap-2">
+                <span className={cn("text-[10px] w-14 shrink-0 truncate", dimStatusColor[dim.status])}>
+                  {dim.label}
+                </span>
+                <Progress
+                  value={dim.status === 'missing' ? 0 : dim.rawValue}
+                  className={cn("h-1 flex-1", dim.status === 'fallback' && "opacity-40")}
+                />
+                <span className={cn("text-[10px] font-mono w-5 text-right", dimStatusColor[dim.status])}>
+                  {dim.status === 'missing' ? '—' : dim.rawValue}
+                </span>
+                {dim.status !== 'available' && (
+                  <span className="text-[9px] text-muted-foreground/40 w-6 shrink-0">
+                    {dimStatusText[dim.status]}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Penalties */}
+          {explanation.penalties.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap px-1">
+              <span className="text-[10px] text-muted-foreground/60">惩罚：</span>
+              {explanation.penalties.map(p => (
+                <span key={p.key} className="text-[10px] px-1.5 py-0.5 rounded border text-danger/80 border-danger/20 bg-danger/5">
+                  -{p.amount} {p.label}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Rule-based note */}
+          {explanation.isRuleBasedOnly && (
+            <p className="text-[10px] text-muted-foreground/45 px-1">
+              当前为规则引擎基线评分，多数维度尚未经 AI 评分（显示为默认值 50）
+            </p>
+          )}
+
         </div>
       )}
     </div>
