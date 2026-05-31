@@ -7,31 +7,9 @@ import { ItemDetailPanel } from "@/components/feed/item-detail-panel"
 import { ScoreBadge } from "@/components/feed/score-badge"
 import { SourceTierBadge } from "@/components/feed/source-tier-badge"
 import { cn } from "@/lib/utils"
+import { classifyRecommendationItem } from "@/lib/recommendations/recommendation-quality"
 import type { TodayRecommendationItem } from "@/lib/data/today-adapter"
 import type { ReactNode } from "react"
-
-const analysisTierLabel: Record<string, string> = {
-  cluster:  "事件追踪",
-  deep:     "深度分析",
-  standard: "标准分析",
-  light:    "轻量观察",
-  none:     "未分流",
-}
-
-const evidenceLabel: Record<string, string> = {
-  very_high: "证据强",
-  high:      "证据好",
-  medium:    "证据中",
-  low:       "证据弱",
-}
-
-const tierClass: Record<string, string> = {
-  cluster:  "text-success border-success/30 bg-success/10",
-  deep:     "text-primary border-primary/30 bg-primary/10",
-  standard: "text-sky-600 border-sky-400/30 bg-sky-400/10 dark:text-sky-400",
-  light:    "text-muted-foreground border-border bg-muted/50",
-  none:     "text-muted-foreground/50 border-border/40 bg-muted/30",
-}
 
 function SmallBadge({
   children,
@@ -49,8 +27,41 @@ function SmallBadge({
 
 export function TodayRecommendationCard({ item }: { item: TodayRecommendationItem }) {
   const [open, setOpen] = useState(false)
-  const analysisTier = item.analysisTier ?? "none"
-  const evidenceLevel = item.evidenceProfile?.evidenceLevel ?? null
+
+  // Get section from snapshot items (DailyRecommendationSnapshotItem has .section)
+  const section = (item as unknown as Record<string, unknown>).section as string | null | undefined
+
+  const quality = classifyRecommendationItem({
+    finalScore:             item.finalScore,
+    sourceTier:             item.sourceTier,
+    analysisTier:           item.analysisTier,
+    shouldTrackEvent:       item.shouldTrackEvent,
+    shouldEnterDailyReport: item.shouldEnterDailyReport,
+    shouldDeepAnalyze:      item.shouldDeepAnalyze,
+    shouldEnterTopicPool:   item.analysisGate?.shouldEnterTopicPool,
+    isUserCurated:          item.isUserCurated,
+    evidenceScore:          item.evidenceScore,
+    truthScore:             item.truthScore,
+    sourceTraceScore:       item.sourceTraceScore,
+    wordCount:              item.articleContent?.wordCount,
+    contentFetchStatus:     item.articleContent?.fetchStatus,
+    penalties: item.penalties
+      ? {
+          clickbait:    item.penalties.clickbait,
+          marketing:    item.penalties.marketing,
+          duplicate:    item.penalties.duplicate,
+          cognitiveLoad: item.penalties.cognitiveLoad,
+        }
+      : null,
+    hasOriginalSource: item.evidenceProfile?.hasOriginalSource,
+    section: section ?? null,
+  })
+
+  // Show risk badge if there are penalties or weak source
+  const showRiskBadge =
+    (item.penalties?.clickbait ?? 0) >= 10 ||
+    (item.penalties?.marketing ?? 0) >= 10 ||
+    quality.evidenceStatus === '证据不足'
 
   return (
     <>
@@ -77,32 +88,37 @@ export function TodayRecommendationCard({ item }: { item: TodayRecommendationIte
                 {item.summary || "暂无简介"}
               </p>
 
+              {/* ── Quality badges row ── */}
+              <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                <SmallBadge className={quality.roleColor}>{quality.roleLabel}</SmallBadge>
+                <SmallBadge className={quality.sourceStatusColor}>{quality.sourceStatus}</SmallBadge>
+                {showRiskBadge && (
+                  <SmallBadge className="text-warning/80 border-warning/25 bg-warning/8">
+                    {quality.evidenceStatus}
+                  </SmallBadge>
+                )}
+                {item.isUserCurated && (
+                  <SmallBadge className="text-teal-700 border-teal-400/40 bg-teal-50 dark:text-teal-400 dark:border-teal-400/30 dark:bg-teal-400/10">
+                    我的源
+                  </SmallBadge>
+                )}
+              </div>
+
+              {/* ── Recommendation reason ── */}
               <p className="mt-1.5 text-xs text-foreground/80 leading-relaxed">
                 {item.recommendationReason}
               </p>
             </button>
 
+            {/* ── Bottom meta row ── */}
             <div className="mt-2 flex items-center gap-1.5 flex-wrap">
               <span className="text-[10px] text-muted-foreground truncate max-w-44">
                 {item.source}
               </span>
-              <SmallBadge className={tierClass[analysisTier] ?? tierClass.none}>
-                {analysisTierLabel[analysisTier] ?? analysisTier}
-              </SmallBadge>
-              {evidenceLevel && (
-                <SmallBadge className="text-muted-foreground border-border bg-muted/40">
-                  {evidenceLabel[evidenceLevel] ?? evidenceLevel}
-                </SmallBadge>
-              )}
-              {item.shouldEnterDailyReport && (
-                <SmallBadge className="text-primary border-primary/25 bg-primary/8">
-                  日报候选
-                </SmallBadge>
-              )}
-              {item.shouldTrackEvent && (
-                <SmallBadge className="text-success border-success/25 bg-success/8">
-                  事件候选
-                </SmallBadge>
+              {item.isUserCurated && (
+                <span className="text-[10px] text-teal-600/70 dark:text-teal-400/60">
+                  · 用户认可源，仍需多源验证
+                </span>
               )}
 
               <a
@@ -129,7 +145,36 @@ export function TodayRecommendationCard({ item }: { item: TodayRecommendationIte
             </p>
           </div>
           <div className="px-6 py-5">
-            <ItemDetailPanel item={item} recommendationReason={item.recommendationReason} contextPage="dashboard" />
+            <ItemDetailPanel
+              item={item}
+              recommendationReason={item.recommendationReason}
+              contextPage="dashboard"
+              qualityInput={{
+                finalScore:             item.finalScore,
+                sourceTier:             item.sourceTier,
+                analysisTier:           item.analysisTier,
+                shouldTrackEvent:       item.shouldTrackEvent,
+                shouldEnterDailyReport: item.shouldEnterDailyReport,
+                shouldDeepAnalyze:      item.shouldDeepAnalyze,
+                shouldEnterTopicPool:   item.analysisGate?.shouldEnterTopicPool,
+                isUserCurated:          item.isUserCurated,
+                evidenceScore:          item.evidenceScore,
+                truthScore:             item.truthScore,
+                sourceTraceScore:       item.sourceTraceScore,
+                wordCount:              item.articleContent?.wordCount,
+                contentFetchStatus:     item.articleContent?.fetchStatus,
+                penalties:              item.penalties
+                  ? {
+                      clickbait:     item.penalties.clickbait,
+                      marketing:     item.penalties.marketing,
+                      duplicate:     item.penalties.duplicate,
+                      cognitiveLoad: item.penalties.cognitiveLoad,
+                    }
+                  : null,
+                hasOriginalSource: item.evidenceProfile?.hasOriginalSource,
+                section: section ?? null,
+              }}
+            />
           </div>
         </DialogContent>
       </Dialog>

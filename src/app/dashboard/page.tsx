@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 
 import { Brain, GitBranch, ListChecks, Newspaper, Radio } from "lucide-react"
+import Link from "next/link"
 import { AppShell } from "@/components/layout/app-shell"
 import { StatCard } from "@/components/dashboard/stat-card"
 import { ScoreBadge } from "@/components/feed/score-badge"
@@ -86,6 +87,15 @@ function ClusterSideSection({
         : <p className="py-4 text-center text-xs text-muted-foreground">{empty}</p>
       }
     </section>
+  )
+}
+
+function QualityPill({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+      <span className={`font-mono font-semibold tabular-nums ${color}`}>{value}</span>
+      {label}
+    </span>
   )
 }
 
@@ -182,6 +192,17 @@ export default async function DashboardPage() {
     .filter(item => item.analysisGate?.analysisStage === 'unprocessed' || item.analysisStage === 'unprocessed')
     .slice(0, 5)
 
+  // ── Quality overview (computed from existing recommendations data) ────────────
+  const qualityStats = {
+    mustRead:       snapshot.hasSnapshot ? snapshot.grouped.must_read.length  : recommendations.filter(r => r.shouldEnterDailyReport).length,
+    highValue:      snapshot.hasSnapshot ? snapshot.grouped.high_value.length  : 0,
+    observe:        snapshot.hasSnapshot ? snapshot.grouped.observe.length     : 0,
+    multiSource:    recommendations.filter(r => r.analysisTier === 'cluster' || (r.shouldTrackEvent && r.analysisTier !== null)).length,
+    userCurated:    recommendations.filter(r => r.isUserCurated === true).length,
+    withEvidence:   recommendations.filter(r => (r.evidenceScore ?? 0) >= 55 || (r.truthScore ?? 0) >= 55).length,
+    estimatedExcluded: Math.max(0, stats.captureTotal - stats.recommendationCount),
+  }
+
   return (
     <AppShell topSignal={topSignal}>
       <div className="max-w-[1280px] p-6 md:p-8">
@@ -261,6 +282,38 @@ export default async function DashboardPage() {
           />
         </div>
 
+        {/* ── Quality overview strip ── */}
+        {recommendations.length > 0 && (
+          <div className="mb-5 flex items-center gap-2 flex-wrap rounded-lg border border-border bg-card px-4 py-2.5">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mr-1">质量分布</span>
+            {qualityStats.mustRead > 0 && (
+              <QualityPill label="重点推荐" value={qualityStats.mustRead} color="text-success" />
+            )}
+            {qualityStats.highValue > 0 && (
+              <QualityPill label="高价值" value={qualityStats.highValue} color="text-primary" />
+            )}
+            {qualityStats.observe > 0 && (
+              <QualityPill label="观察" value={qualityStats.observe} color="text-sky-600 dark:text-sky-400" />
+            )}
+            <span className="w-px h-3 bg-border mx-0.5" />
+            {qualityStats.multiSource > 0 && (
+              <QualityPill label="多源验证" value={qualityStats.multiSource} color="text-success" />
+            )}
+            {qualityStats.userCurated > 0 && (
+              <QualityPill label="我的源" value={qualityStats.userCurated} color="text-teal-600 dark:text-teal-400" />
+            )}
+            {qualityStats.withEvidence > 0 && (
+              <QualityPill label="证据充分" value={qualityStats.withEvidence} color="text-foreground" />
+            )}
+            {qualityStats.estimatedExcluded > 0 && (
+              <>
+                <span className="w-px h-3 bg-border mx-0.5" />
+                <QualityPill label="候选未入选" value={qualityStats.estimatedExcluded} color="text-muted-foreground" />
+              </>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-3 gap-6">
           <main className="col-span-2">
             <div className="mb-2 flex items-center gap-2">
@@ -323,6 +376,40 @@ export default async function DashboardPage() {
               empty="暂无待处理候选"
               items={pendingCandidates}
             />
+
+            {/* ── 暂未推荐的候选信号 ── */}
+            {qualityStats.estimatedExcluded > 0 && (
+              <section className="border border-border rounded-lg bg-card px-3 py-2.5">
+                <h2 className="section-title mb-1.5">暂未推荐的候选信号</h2>
+                <p className="text-[11px] text-muted-foreground leading-relaxed mb-2.5">
+                  当前窗口约有{' '}
+                  <span className="font-mono font-medium text-foreground">{qualityStats.estimatedExcluded}</span>{' '}
+                  条信息进入候选池但未入正式推荐。常见原因：
+                </p>
+                <ul className="space-y-1 mb-3">
+                  {[
+                    '综合评分未达入选门槛（< 65分）',
+                    '标题或内容含营销/重复信号，已降权',
+                    '当前窗口候选位已满（各分区有上限）',
+                    '证据信号偏弱，暂时归入观察池',
+                  ].map(reason => (
+                    <li key={reason} className="flex items-start gap-1.5 text-[10px] text-muted-foreground/70">
+                      <span className="text-muted-foreground/40 mt-0.5 shrink-0">–</span>
+                      {reason}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-[10px] text-muted-foreground/60 mb-2">
+                  反馈标注只作为质量校准信号，不会影响个人化推荐偏好。
+                </p>
+                <Link
+                  href="/feed"
+                  className="inline-flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 border border-primary/20 bg-primary/5 hover:bg-primary/10 rounded px-2 py-1 transition-colors"
+                >
+                  查看全量信息流 →
+                </Link>
+              </section>
+            )}
           </aside>
         </div>
       </div>

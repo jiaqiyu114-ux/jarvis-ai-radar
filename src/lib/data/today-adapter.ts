@@ -96,7 +96,7 @@ const TODAY_SELECT = [
   'should_track_event',
   'should_enter_daily_report',
   'should_enter_topic_pool',
-  'sources!items_source_id_fkey(name, url, source_tier)',
+  'sources!items_source_id_fkey(name, url, source_tier, is_user_curated, is_official)',
 ].join(', ')
 
 const validCategories: readonly Category[] = [
@@ -113,9 +113,11 @@ const validCategories: readonly Category[] = [
 ]
 
 type SourceJoin = {
-  name?: string | null
-  url?: string | null
-  source_tier?: DbSourceTier | string | null
+  name?:           string | null
+  url?:            string | null
+  source_tier?:    DbSourceTier | string | null
+  is_user_curated?: boolean | null
+  is_official?:    boolean | null
 } | null
 
 type TodayRow = {
@@ -493,6 +495,8 @@ function mapRecommendation(row: TodayRow): TodayRecommendationItem {
     analysisGate: mapAnalysisGate(row),
     sourceId: row.source_id,
     sourceUrl: source?.url ?? null,
+    isUserCurated: source?.is_user_curated ?? undefined,
+    isOfficial: source?.is_official ?? undefined,
     recommendationReason: reason,
     recommendation_reason: reason,
     evidenceScore: row.ev_score,

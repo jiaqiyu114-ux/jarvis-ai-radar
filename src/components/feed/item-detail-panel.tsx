@@ -18,6 +18,11 @@ import type { InsightType } from "@/lib/content/detail-explanation"
 import { ItemFeedbackActions } from "@/components/feedback/item-feedback-actions"
 import { ItemClusterLink } from "@/components/clusters/item-cluster-link"
 import { SourceOriginBadge } from "@/components/sources/source-origin-badge"
+import {
+  classifyRecommendationItem,
+  type RecommendationQualityInput,
+  type RecommendationQualityResult,
+} from "@/lib/recommendations/recommendation-quality"
 
 // ── Colors / maps ─────────────────────────────────────────────────────────────
 
@@ -522,6 +527,83 @@ function FetchButton({
   )
 }
 
+// ── System Judgment Section ───────────────────────────────────────────────────
+
+function SystemJudgmentSection({ quality }: { quality: RecommendationQualityResult }) {
+  return (
+    <Section label="系统判断">
+      {/* Quality band + role + source + evidence badges */}
+      <div className="flex items-center gap-1.5 flex-wrap mb-3">
+        <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-medium", quality.qualityColor)}>
+          {quality.qualityLabel}
+        </span>
+        <span className={cn("text-[10px] px-1.5 py-0.5 rounded border", quality.roleColor)}>
+          {quality.roleLabel}
+        </span>
+        <span className={cn("text-[10px] px-1.5 py-0.5 rounded border", quality.sourceStatusColor)}>
+          {quality.sourceStatus}
+        </span>
+        <span className={cn("text-[10px] px-1.5 py-0.5 rounded border", quality.confidenceColor)}>
+          {quality.confidenceLabel}
+        </span>
+      </div>
+
+      {/* Reasons */}
+      {quality.reasons.length > 0 && (
+        <div className="mb-2.5">
+          <p className="text-[10px] font-semibold text-muted-foreground mb-1.5">判断依据</p>
+          <ul className="space-y-1">
+            {quality.reasons.map((r, i) => (
+              <li key={i} className="flex items-start gap-1.5 text-xs text-foreground/80">
+                <span className="text-success mt-0.5 shrink-0">•</span>
+                {r}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Risks */}
+      {quality.risks.length > 0 && (
+        <div className="mb-2.5">
+          <p className="text-[10px] font-semibold text-muted-foreground mb-1.5">当前风险</p>
+          <ul className="space-y-1">
+            {quality.risks.map((r, i) => (
+              <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                <span className="text-warning mt-0.5 shrink-0">△</span>
+                {r}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Missing signals */}
+      {quality.missingSignals.length > 0 && (
+        <div className="mb-2.5">
+          <p className="text-[10px] font-semibold text-muted-foreground mb-1.5">缺失信号</p>
+          <ul className="space-y-1">
+            {quality.missingSignals.map((s, i) => (
+              <li key={i} className="text-xs text-muted-foreground/60">— {s}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Next action */}
+      <div className="rounded bg-muted/40 border border-border/50 px-3 py-2.5">
+        <p className="text-[10px] font-semibold text-muted-foreground mb-1">下一步建议</p>
+        <p className="text-xs text-foreground/80 leading-relaxed">{quality.nextAction}</p>
+      </div>
+
+      <p className="mt-2 text-[10px] text-muted-foreground/50 leading-relaxed">
+        系统判断基于评分、信源、证据结构和分析标记生成，不使用用户点击或收藏行为作为偏好信号。
+        反馈标注只用于质量校准，不影响个性化推荐权重。
+      </p>
+    </Section>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function ItemDetailPanel({
@@ -529,6 +611,7 @@ export function ItemDetailPanel({
   isReal = true,
   recommendationReason: overrideReason,
   contextPage = 'feed',
+  qualityInput,
 }: {
   item: InformationItem
   isReal?: boolean
@@ -536,6 +619,8 @@ export function ItemDetailPanel({
   recommendationReason?: string
   /** Which page this panel is opened from — recorded with feedback annotations. */
   contextPage?: string
+  /** Optional quality context from the recommendation system for the 系统判断 section. */
+  qualityInput?: Partial<RecommendationQualityInput>
 }) {
   const [localContent, setLocalContent] = useState<ArticleContent | undefined>(item.articleContent)
 
@@ -543,6 +628,33 @@ export function ItemDetailPanel({
   const explanation  = buildScoreExplanation(item.scoreBreakdown, item.finalScore, item.penalties)
   const detail       = buildInformationDetail(item, explanation, localContent)
   const readingIntro = buildReadableLead(item, localContent)
+
+  // Build quality classification from item data + optional context from caller
+  const qualityData: RecommendationQualityResult = classifyRecommendationItem({
+    finalScore:             item.finalScore,
+    sourceTier:             item.sourceTier,
+    analysisTier:           qualityInput?.analysisTier ?? item.analysisGate?.analysisTier ?? null,
+    shouldTrackEvent:       qualityInput?.shouldTrackEvent ?? item.analysisGate?.shouldTrackEvent,
+    shouldEnterDailyReport: qualityInput?.shouldEnterDailyReport ?? item.analysisGate?.shouldEnterDailyReport,
+    shouldDeepAnalyze:      qualityInput?.shouldDeepAnalyze ?? item.analysisGate?.shouldDeepAnalyze,
+    shouldEnterTopicPool:   qualityInput?.shouldEnterTopicPool ?? item.analysisGate?.shouldEnterTopicPool,
+    isUserCurated:          qualityInput?.isUserCurated ?? item.isUserCurated,
+    evidenceScore:          qualityInput?.evidenceScore ?? item.evidenceProfile?.evidenceScore,
+    truthScore:             qualityInput?.truthScore ?? item.evidenceProfile?.truthScore,
+    sourceTraceScore:       qualityInput?.sourceTraceScore ?? item.evidenceProfile?.sourceTraceScore,
+    wordCount:              qualityInput?.wordCount ?? (localContent?.wordCount ?? item.articleContent?.wordCount),
+    contentFetchStatus:     qualityInput?.contentFetchStatus ?? localContent?.fetchStatus ?? item.articleContent?.fetchStatus,
+    penalties:              qualityInput?.penalties ?? (item.penalties
+      ? {
+          clickbait:    item.penalties.clickbait,
+          marketing:    item.penalties.marketing,
+          duplicate:    item.penalties.duplicate,
+          cognitiveLoad: item.penalties.cognitiveLoad,
+        }
+      : null),
+    hasOriginalSource:      qualityInput?.hasOriginalSource ?? item.evidenceProfile?.hasOriginalSource,
+    section:                qualityInput?.section ?? null,
+  })
 
   const categoryClass = categoryColors[item.category] ?? categoryColors['其他']
   const publishedAgo  = formatDistanceToNow(new Date(item.publishedAt), { addSuffix: true, locale: zhCN })
@@ -625,6 +737,11 @@ export function ItemDetailPanel({
           <p className="text-xs text-muted-foreground">{detail.whyItMatters.tierNote}</p>
         </div>
       </Section>
+
+      <Divider />
+
+      {/* ── 3.5 系统判断 ── */}
+      <SystemJudgmentSection quality={qualityData} />
 
       <Divider />
 
