@@ -1,31 +1,9 @@
 import { AppShell } from "@/components/layout/app-shell"
 import { InformationCard } from "@/components/feed/information-card"
 import { getSelectedItems } from "@/lib/data/feed-adapter"
-import type { TopSignalData } from "@/components/layout/app-shell"
-import type { InformationItem } from "@/types"
+import { enrichItemWithEngine, TIER_LABELS, TIER_COLORS } from "@/lib/recommendations/recommendation-engine"
 import { cn } from "@/lib/utils"
-
-const SELECTED_MIN_SCORE = 75
-
-function getEntryReasons(item: InformationItem): string[] {
-  const reasons: string[] = []
-  if (item.sourceTier === 'S') reasons.push('S 级信源')
-  else if (item.sourceTier === 'A') reasons.push('A 级信源')
-  if (item.scoreBreakdown.importance >= 85) reasons.push('高重要性')
-  if (item.scoreBreakdown.content_potential >= 80) reasons.push('内容潜力')
-  if (item.scoreBreakdown.novelty >= 85) reasons.push('新颖信号')
-  if (item.scoreBreakdown.momentum >= 85) reasons.push('趋势上升')
-  if (item.scoreBreakdown.actionability >= 80) reasons.push('高可操作')
-  if (item.scoreBreakdown.credibility >= 85) reasons.push('高可信度')
-  return reasons.slice(0, 3)
-}
-
-function getSuggestedAction(item: InformationItem): string {
-  if (item.scoreBreakdown.content_potential >= 80) return '加入选题池'
-  if (item.relatedReportCount >= 15) return '跟进事件簇'
-  if (item.scoreBreakdown.actionability >= 80) return '立即行动'
-  return '归档备查'
-}
+import type { TopSignalData } from "@/components/layout/app-shell"
 
 export default async function SelectedPage({
   searchParams,
@@ -34,11 +12,34 @@ export default async function SelectedPage({
 }) {
   const sp          = await searchParams
   const includeDemo = sp.includeDemo === 'true' || sp.mode === 'all'
-  const items       = await getSelectedItems({ includeDemo })
-  const selected    = [...items].sort((a, b) => b.finalScore - a.finalScore)
+  const rawItems = await getSelectedItems({ includeDemo })
+  // Enrich with engine classification and filter to high_value+
+  const enriched = rawItems.map(item => ({
+    item,
+    engine: enrichItemWithEngine({
+      finalScore:    item.finalScore,
+      sourceTier:    item.sourceTier,
+      title:         item.title,
+      summary:       item.summary,
+      publishedAt:   item.publishedAt,
+      fetchedAt:     item.fetchedAt,
+      isOfficial:    item.isOfficial,
+      isUserCurated: item.isUserCurated,
+      evScore:       item.evidenceProfile?.evidenceScore,
+      truthScore:    item.evidenceProfile?.truthScore,
+      penalties:     item.penalties,
+      wordCount:     item.articleContent?.wordCount,
+      shouldTrackEvent:       item.analysisGate?.shouldTrackEvent,
+      shouldEnterDailyReport: item.analysisGate?.shouldEnterDailyReport,
+      analysisTier:           item.analysisGate?.analysisTier,
+    }),
+  }))
+  const selected = enriched
+    .filter(({ engine }) => engine.recommendationTier === 'must_read' || engine.recommendationTier === 'high_value')
+    .sort((a, b) => b.engine.recommendationScore - a.engine.recommendationScore)
 
   const topSignal: TopSignalData | undefined = selected[0]
-    ? { score: selected[0].finalScore, title: selected[0].title, category: selected[0].category }
+    ? { score: selected[0].engine.recommendationScore, title: selected[0].item.title, category: selected[0].item.category }
     : undefined
 
   return (
@@ -63,7 +64,7 @@ export default async function SelectedPage({
             </div>
           </div>
           <p className="page-subtitle mt-1.5">
-            最终分 ≥ {SELECTED_MIN_SCORE} · 今日重点判断队列 · {selected.length} 条
+            推荐分层 must_read / high_value · 今日重点判断队列 · {selected.length} 条
           </p>
         </div>
 
@@ -78,28 +79,32 @@ export default async function SelectedPage({
         {/* ── Cards with entry rationale ── */}
         <div className={cn("rounded-lg overflow-hidden border bg-card", selected.length > 0 ? "border-border/70" : "border-border")}>
           {selected.length > 0
-            ? selected.map(item => {
-                const reasons = getEntryReasons(item)
-                const action  = getSuggestedAction(item)
-                return (
-                  <div key={item.id}>
-                    <div className="flex items-center gap-3 px-4 py-1.5 bg-surface border-b border-border/40">
-                      <span className="text-[10px] text-muted-foreground">
-                        入选：{reasons.join(' · ')}
+            ? selected.map(({ item, engine }) => (
+                <div key={item.id}>
+                  <div className="flex items-center gap-2 px-4 py-1.5 bg-surface border-b border-border/40 flex-wrap">
+                    <span className={cn(
+                      "text-[9px] px-1.5 py-0.5 rounded border font-medium",
+                      TIER_COLORS[engine.recommendationTier],
+                    )}>
+                      {TIER_LABELS[engine.recommendationTier]}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground flex-1 min-w-0 truncate">
+                      {engine.recommendationReason}
+                    </span>
+                    {engine.nextStep && (
+                      <span className="text-[10px] text-primary font-medium whitespace-nowrap shrink-0">
+                        → {engine.nextStep.split('，')[0]}
                       </span>
-                      <span className="ml-auto text-[10px] text-primary font-medium whitespace-nowrap">
-                        → {action}
-                      </span>
-                    </div>
-                    <InformationCard item={item} variant="emphasis" scoreSize="md" />
+                    )}
                   </div>
-                )
-              })
+                  <InformationCard item={item} variant="emphasis" scoreSize="md" />
+                </div>
+              ))
             : (
               <div className="py-12 text-center">
                 <p className="text-sm text-muted-foreground">暂无精选内容</p>
                 <p className="text-xs text-muted-foreground/60 mt-1">
-                  等待高质量真实信号进入（最终分 ≥ {SELECTED_MIN_SCORE}）
+                  等待 must_read / high_value 级真实信号进入系统
                 </p>
               </div>
             )

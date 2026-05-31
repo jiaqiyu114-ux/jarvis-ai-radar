@@ -44,6 +44,7 @@ const FEED_TIMEOUT_MS = 9_000
 type FallbackFeed = { name: string; feedUrl: string; category: string }
 
 const FALLBACK_FEEDS: FallbackFeed[] = [
+  // ── Already in DB (from seed or prior runs) — kept for no-DB fallback ──────
   {
     name:     'The Verge AI',
     feedUrl:  'https://www.theverge.com/rss/ai-artificial-intelligence/index.xml',
@@ -63,6 +64,27 @@ const FALLBACK_FEEDS: FallbackFeed[] = [
     name:     'AIHOT 精选',
     feedUrl:  'https://aihot.virxact.com/feed.xml',
     category: 'AI技术',
+  },
+  // ── Additional high-quality fallbacks ─────────────────────────────────────
+  {
+    name:     'MIT Technology Review',
+    feedUrl:  'https://www.technologyreview.com/feed/',
+    category: 'AI技术',
+  },
+  {
+    name:     'VentureBeat AI',
+    feedUrl:  'https://venturebeat.com/ai/feed/',
+    category: '行业趋势',
+  },
+  {
+    name:     'The Decoder',
+    feedUrl:  'https://the-decoder.com/feed/',
+    category: 'AI技术',
+  },
+  {
+    name:     'GitHub Blog',
+    feedUrl:  'https://github.blog/feed/',
+    category: '开源项目',
   },
 ]
 
