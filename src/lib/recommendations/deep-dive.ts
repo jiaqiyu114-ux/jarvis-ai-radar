@@ -13,7 +13,7 @@ import type {
 export type RecommendationDeepDiveStatus = 'generated' | 'fallback' | 'skipped' | 'error'
 export type RecommendationDeepDiveInputQuality = 'rss_summary_only' | 'partial' | 'full_text'
 export type FinalDeepDiveMode = 'llm' | 'deterministic'
-export type DeepDiveContentStatus = 'full_article' | 'rss_summary' | 'title_only' | 'unknown'
+export type DeepDiveContentStatus = 'full_article' | 'partial' | 'rss_summary' | 'title_only' | 'missing' | 'unknown'
 export type DeepDiveQualityLevel = 'high' | 'medium' | 'low'
 
 export type DeepDiveInputDiagnostics = {
@@ -26,6 +26,7 @@ export type DeepDiveInputDiagnostics = {
   fallbackReason: string | null
   qualityWarnings: string[]
   qualityFailures: string[]
+  rawModelContentStatus?: string
 }
 
 export type RecommendationDeepDive = {
@@ -232,9 +233,13 @@ function computeInputDiagnostics(
   const titleLen = safeText(input.title, '').length
   const summaryLen = safeText(input.summary, '').length
   const fullContentLen = safeText(input.fullContent, '').length
-  const hasFC = Boolean(input.hasFullContent) || fullContentLen >= 400
+
+  // contentSource and hasFullContent based ONLY on actual fullContent length —
+  // NOT the hasFullContent flag (which reflects DB wordCount, not model input).
+  const hasFC = fullContentLen >= 400
   const contentSrc: DeepDiveInputDiagnostics['contentSource'] =
-    hasFC ? 'fetched_article' : summaryLen > 0 ? 'rss_summary' : 'unknown'
+    fullContentLen >= 400 ? 'fetched_article' : summaryLen > 0 ? 'rss_summary' : 'unknown'
+
   return {
     inputTitleLength: titleLen,
     inputSummaryLength: summaryLen,
@@ -243,8 +248,8 @@ function computeInputDiagnostics(
     hasFullContent: hasFC,
     generationStatus: status,
     fallbackReason,
-    qualityWarnings,
-    qualityFailures,
+    qualityWarnings: [...qualityWarnings],
+    qualityFailures: [...qualityFailures],
   }
 }
 
@@ -287,15 +292,18 @@ function inferInputQuality(input: RecommendationDeepDiveInput): RecommendationDe
 }
 
 function inferContentStatus(input: RecommendationDeepDiveInput): DeepDiveContentStatus {
-  const summary = safeText(input.summary, '')
+  // Determined ONLY from what was actually passed to the model.
+  // hasFullContent flag and wordCount are DB metadata — they do NOT mean
+  // the content was included in this input. Never return full_article when
+  // fullContent is absent.
   const fullContent = safeText(input.fullContent, '')
-  const hasFullContent = Boolean(input.hasFullContent)
-  const wordCount = Number(input.wordCount ?? 0)
+  const summary = safeText(input.summary, '')
 
-  if (hasFullContent || fullContent.length >= 400 || wordCount >= 500) return 'full_article'
+  if (fullContent.length >= 1500) return 'full_article'
+  if (fullContent.length >= 500) return 'partial'
   if (summary.length >= 20) return 'rss_summary'
   if (safeText(input.title, '').length > 0) return 'title_only'
-  return 'unknown'
+  return 'missing'
 }
 
 function tierLabel(tier: string | null | undefined): string {
@@ -505,7 +513,10 @@ function normalizeLlmLevel(raw: unknown, fallback: DeepDiveQualityLevel): DeepDi
 }
 
 function normalizeContentStatus(raw: unknown, fallback: DeepDiveContentStatus): DeepDiveContentStatus {
-  if (raw === 'full_article' || raw === 'rss_summary' || raw === 'title_only' || raw === 'unknown') {
+  if (
+    raw === 'full_article' || raw === 'partial' || raw === 'rss_summary' ||
+    raw === 'title_only' || raw === 'missing' || raw === 'unknown'
+  ) {
     return raw
   }
   return fallback
@@ -677,17 +688,22 @@ function buildLlmUserPrompt(input: RecommendationDeepDiveInput, retryHint?: stri
     '- 目标篇幅建议 700-1200 中文字。',
   ]
 
-  if (contentStatus === 'rss_summary' || contentStatus === 'title_only') {
-    const dataDesc = contentStatus === 'title_only'
-      ? `仅有标题（无摘要，fullContent=null）`
-      : `RSS 摘要约 ${summaryLen} 字（fullContent=${fullContentLen === 0 ? 'null' : `${fullContentLen}字`}）`
+  if (contentStatus !== 'full_article') {
+    const dataDesc =
+      contentStatus === 'title_only'
+        ? `only title (no summary, fullContent=null)`
+        : contentStatus === 'missing'
+          ? `no content at all (title only or empty, fullContent=null)`
+          : contentStatus === 'partial'
+            ? `partial article text (${fullContentLen} chars, not full article)`
+            : `RSS summary (~${summaryLen} chars, fullContent=${fullContentLen === 0 ? 'null' : `${fullContentLen}chars`})`
     instruction.push('')
-    instruction.push(`⚠️ 内容质量警告：当前输入只有 ${dataDesc}，没有完整原文。`)
-    instruction.push('⚠️ 必须在 whatHappened 开头或 oneSentence 中明确注明”当前只有摘要”或”仅基于有限信息”。')
-    instruction.push('⚠️ 不能写得像读过完整原文一样。sourceNotes 必须写明”内容来自 RSS 摘要，非完整原文”。')
-    instruction.push('⚠️ evidenceGaps 必须包含”缺少完整原文，无法做完整论据分析”。')
-    instruction.push('⚠️ contentStatus 必须返回 “rss_summary”（不能返回 “full_article”）。')
-    instruction.push('⚠️ quality.evidenceSufficiency 不能为 “high”。')
+    instruction.push(`CONTENT QUALITY WARNING: input has ${dataDesc}. No full article text available.`)
+    instruction.push('You MUST acknowledge this limitation in whatHappened or oneSentence: say “based on limited summary only” or similar.')
+    instruction.push('Do NOT write as if you read the full article. sourceNotes MUST state “content from RSS summary, not full article”.')
+    instruction.push('evidenceGaps MUST include “missing full article text, unable to do complete evidence analysis”.')
+    instruction.push(`contentStatus MUST be “${contentStatus === 'partial' ? 'partial' : 'rss_summary'}” (NOT “full_article”).`)
+    instruction.push('quality.evidenceSufficiency MUST be “low” or “medium” (NOT “high”).')
   }
 
   if (Boolean(input.isSingleSource) || sourceStatus === 'single_source') {
@@ -718,19 +734,25 @@ function parseLlmDeepDivePayload(
     ? payload.quality as Record<string, unknown>
     : {}
 
-  // If model incorrectly claimed full_article when we only had a summary, override it
-  const expectedContentStatus = inferContentStatus(input)
-  const rawModelContentStatus = normalizeContentStatus(payload.contentStatus, fallback.contentStatus)
-  const resolvedContentStatus: DeepDiveContentStatus =
-    (rawModelContentStatus === 'full_article' && expectedContentStatus !== 'full_article')
-      ? expectedContentStatus
-      : rawModelContentStatus
+  // System always determines contentStatus — LLM claim is stored for audit only.
+  const systemContentStatus = inferContentStatus(input)
+  const rawModelContentStatus = normalizeContentStatus(payload.contentStatus, systemContentStatus)
+
+  // Quality warning when model claimed full article but input had no content
+  const qualityWarningsFromParsing: string[] = []
+  if (
+    rawModelContentStatus === 'full_article' &&
+    systemContentStatus !== 'full_article' &&
+    systemContentStatus !== 'partial'
+  ) {
+    qualityWarningsFromParsing.push('model_claimed_full_article_but_input_full_content_empty')
+  }
 
   const parsed: ParsedDeepDivePayload = {
     status: 'generated',
     model: safeText(model, 'llm', 80) || 'llm',
     provider: safeText(provider, 'unknown', 40) || 'unknown',
-    contentStatus: resolvedContentStatus,
+    contentStatus: systemContentStatus,  // system wins
     oneSentence: normalizeLlmField(payload.oneSentence, fallback.oneSentence, 180),
     whatHappened: normalizeLlmField(payload.whatHappened, fallback.whatHappened, 2600),
     context: normalizeLlmField(payload.context, fallback.context, 2200),
@@ -747,7 +769,10 @@ function parseLlmDeepDivePayload(
     },
   }
 
-  const inputDiagnostics = computeInputDiagnostics(input, 'generated', model, provider)
+  const baseDiag = computeInputDiagnostics(input, 'generated', model, provider, null, qualityWarningsFromParsing)
+  const inputDiagnostics: DeepDiveInputDiagnostics = rawModelContentStatus !== systemContentStatus
+    ? { ...baseDiag, rawModelContentStatus }
+    : baseDiag
 
   return buildDeepDive({
     status: 'generated',

@@ -86,7 +86,7 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
   const showGeneratedHint = deepDive?.status === "generated" && deepDive.model !== "deterministic-v1"
   const showFallbackHint = deepDive?.status === "fallback" || deepDive?.model === "deterministic-v1"
   const contentStatus = deepDive?.contentStatus
-  const showSummaryOnlyWarning = contentStatus === "rss_summary" || contentStatus === "title_only"
+  const showSummaryOnlyWarning = contentStatus === "rss_summary" || contentStatus === "title_only" || contentStatus === "partial" || contentStatus === "missing"
   const inputDiag = deepDive?.inputDiagnostics
 
   return (
@@ -131,12 +131,18 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
                   <section className="rounded-lg border border-amber-400/30 bg-amber-400/8 px-4 py-2.5">
                     <p className="text-xs leading-relaxed">
                       <span className="font-semibold text-amber-700 dark:text-amber-400">
-                        {contentStatus === "title_only" ? "仅有标题信息" : "基于 RSS 摘要分析"}
+                        {contentStatus === "title_only" || contentStatus === "missing"
+                          ? "仅有标题信息"
+                          : contentStatus === "partial"
+                            ? "部分正文分析"
+                            : "基于 RSS 摘要分析"}
                       </span>
                       <span className="text-amber-700/80 dark:text-amber-400/80">
-                        {contentStatus === "title_only"
+                        {contentStatus === "title_only" || contentStatus === "missing"
                           ? "：深度解读基于极有限内容，结论仅供参考，建议查看原文。"
-                          : `：深度解读基于 RSS 摘要（${inputDiag?.inputSummaryLength ?? "?"}字），非完整原文。结论受限，建议查看原文获取完整上下文。`}
+                          : contentStatus === "partial"
+                            ? `：当前只抓到部分正文（${inputDiag?.inputFullContentLength ?? "?"}字），非完整原文分析，结论受限。`
+                            : `：深度解读基于 RSS 摘要（${inputDiag?.inputSummaryLength ?? "?"}字），非完整原文。结论受限，建议查看原文获取完整上下文。`}
                       </span>
                     </p>
                   </section>

@@ -6,331 +6,397 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$allOk = $true
+$script:allOk = $true
 
-function Ok([string]$m)   { Write-Host "[OK]   $m" -ForegroundColor Green }
-function Warn([string]$m) { Write-Host "[WARN] $m" -ForegroundColor Yellow }
-function Fail([string]$m) { Write-Host "[FAIL] $m" -ForegroundColor Red; $script:allOk = $false }
-function Info([string]$m) { Write-Host "[INFO] $m" -ForegroundColor Gray }
-
-function Looks-Garbled([string]$text) {
-  if ([string]::IsNullOrWhiteSpace($text)) { return $false }
-  return [regex]::IsMatch($text, "�|锟")
+function Write-Ok {
+  param([string]$Message)
+  Write-Host ("[OK]   {0}" -f $Message) -ForegroundColor Green
 }
 
-function Test-DeepDiveObject($obj, [string]$prefix) {
-  if ($null -eq $obj) { Fail "$prefix deepDive is null"; return $false }
+function Write-Warn {
+  param([string]$Message)
+  Write-Host ("[WARN] {0}" -f $Message) -ForegroundColor Yellow
+}
 
-  $requiredText = @(
-    "oneSentence",
-    "whatHappened",
-    "whyItMatters",
-    "userValue",
-    "uncertainty"
-  )
+function Write-Fail {
+  param([string]$Message)
+  Write-Host ("[FAIL] {0}" -f $Message) -ForegroundColor Red
+  $script:allOk = $false
+}
 
+function Write-Info {
+  param([string]$Message)
+  Write-Host ("[INFO] {0}" -f $Message) -ForegroundColor Gray
+}
+
+function Test-Garbled {
+  param([string]$Text)
+  if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+  return ($Text -match [char]0xFFFD)
+}
+
+function Test-DeepDiveFields {
+  param($Obj, [string]$Prefix)
+  if ($null -eq $Obj) {
+    Write-Fail ("{0} deepDive is null" -f $Prefix)
+    return $false
+  }
+  $required = @("oneSentence","whatHappened","whyItMatters","userValue","uncertainty")
   $ok = $true
-  foreach ($k in $requiredText) {
-    if (-not ($obj.PSObject.Properties.Name -contains $k)) {
-      Fail "$prefix missing field: $k"
+  foreach ($k in $required) {
+    if (-not ($Obj.PSObject.Properties.Name -contains $k)) {
+      Write-Fail ("{0} missing field: {1}" -f $Prefix, $k)
       $ok = $false
       continue
     }
-    $v = [string]$obj.$k
+    $v = [string]$Obj.$k
     if ([string]::IsNullOrWhiteSpace($v)) {
-      Fail "$prefix empty field: $k"
+      Write-Fail ("{0} empty field: {1}" -f $Prefix, $k)
       $ok = $false
     }
-    if (Looks-Garbled $v) {
-      Fail "$prefix garbled field: $k"
+    if (Test-Garbled $v) {
+      Write-Fail ("{0} garbled field: {1}" -f $Prefix, $k)
       $ok = $false
     }
   }
-
-  if (-not ($obj.PSObject.Properties.Name -contains "followUp")) {
-    Fail "$prefix missing field: followUp"
+  if (-not ($Obj.PSObject.Properties.Name -contains "followUp")) {
+    Write-Fail ("{0} missing field: followUp" -f $Prefix)
     $ok = $false
   } else {
-    $followCount = @($obj.followUp).Count
-    if ($followCount -lt 1) {
-      Fail "$prefix followUp empty"
+    $fc = @($Obj.followUp).Count
+    if ($fc -lt 1) {
+      Write-Fail ("{0} followUp empty" -f $Prefix)
       $ok = $false
     }
   }
-
-  if (-not ($obj.PSObject.Properties.Name -contains "provider")) {
-    Fail "$prefix missing field: provider"
+  if (-not ($Obj.PSObject.Properties.Name -contains "provider")) {
+    Write-Fail ("{0} missing field: provider" -f $Prefix)
     $ok = $false
   }
-
-  if (-not ($obj.PSObject.Properties.Name -contains "contentStatus")) {
-    Warn "$prefix missing field: contentStatus (older snapshot)"
+  if (-not ($Obj.PSObject.Properties.Name -contains "contentStatus")) {
+    Write-Warn ("{0} contentStatus field missing (older snapshot)" -f $Prefix)
   }
-
   return $ok
 }
 
-function Is-FinalTier([string]$tier) {
-  return $tier -eq "must_read" -or $tier -eq "high_value"
+function Test-IsFinalTier {
+  param([string]$Tier)
+  return ($Tier -eq "must_read" -or $Tier -eq "high_value")
 }
+
+# ── env setup ─────────────────────────────────────────────────────────────────
 
 $llmEnabledRaw = $env:LLM_DEEPDIVE_ENABLED
 if ($null -eq $llmEnabledRaw) { $llmEnabledRaw = "" }
-$llmEnabled = ($llmEnabledRaw.ToLower() -eq "true")
-$llmKeySet = -not [string]::IsNullOrWhiteSpace($env:LLM_API_KEY)
-$expectLlm = $llmEnabled -and $llmKeySet
+$llmEnabled  = ($llmEnabledRaw.ToLower() -eq "true")
+$llmKeySet   = -not [string]::IsNullOrWhiteSpace($env:LLM_API_KEY)
+$expectLlm   = $llmEnabled -and $llmKeySet
 $defaultModel = if ([string]::IsNullOrWhiteSpace($env:LLM_MODEL)) { "deepseek-reasoner" } else { [string]$env:LLM_MODEL }
-$fastModel = if ([string]::IsNullOrWhiteSpace($env:LLM_FAST_MODEL)) { $defaultModel } else { [string]$env:LLM_FAST_MODEL }
-$proModel = if ([string]::IsNullOrWhiteSpace($env:LLM_PRO_MODEL)) { $defaultModel } else { [string]$env:LLM_PRO_MODEL }
+$proModel     = if ([string]::IsNullOrWhiteSpace($env:LLM_PRO_MODEL)) { $defaultModel } else { [string]$env:LLM_PRO_MODEL }
 
 Write-Host ""
-Write-Host "=== Verify Recommendation Deep Dives (LLM v2) ===" -ForegroundColor Cyan
-Write-Host "Base: $Base"
-Write-Host "Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-Write-Host "enabled=$llmEnabled keySet=$llmKeySet fastModel=$fastModel proModel=$proModel"
-Write-Host "LLM expected: $expectLlm"
+Write-Host "=== Verify Recommendation Deep Dives ===" -ForegroundColor Cyan
+Write-Host ("Base:        {0}" -f $Base)
+Write-Host ("Time:        {0}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"))
+Write-Host ("enabled={0}  keySet={1}  proModel={2}" -f $llmEnabled, $llmKeySet, $proModel)
+Write-Host ("LLM expected: {0}" -f $expectLlm)
 Write-Host ""
+
+# ── 0) Refresh ────────────────────────────────────────────────────────────────
 
 $refresh = $null
 if ($SkipRefresh) {
-  Warn "0) Refresh skipped by -SkipRefresh"
+  Write-Warn "Refresh skipped by -SkipRefresh flag"
 } else {
-  $refreshUrl = "$Base/api/recommendations/refresh?deepDive=llm"
-  Write-Host "0) Trigger refresh: $refreshUrl"
+  $refreshUrl = ("{0}/api/recommendations/refresh?deepDive=llm" -f $Base.TrimEnd('/'))
+  Write-Host ("0) POST {0}" -f $refreshUrl)
   try {
     $refresh = Invoke-RestMethod -Method Post -Uri $refreshUrl -TimeoutSec 180
-    if ($refresh.ok) { Ok "refresh ok=true" } else { Fail "refresh ok=false" }
+    if ($refresh.ok) { Write-Ok "refresh ok=true" } else { Write-Fail "refresh ok=false" }
     if ($refresh.deepDiveStats) {
-      Info ("deepDiveStats: total={0} generated={1} fallback={2} failed={3} model={4} provider={5}" -f `
-        $refresh.deepDiveStats.total, $refresh.deepDiveStats.generated, $refresh.deepDiveStats.fallback, $refresh.deepDiveStats.failed, $refresh.deepDiveStats.model, $refresh.deepDiveStats.provider)
-      Info "actualDeepDiveModel: $($refresh.deepDiveStats.model)"
-      Info "actualProvider:      $($refresh.deepDiveStats.provider)"
-      # Verify LLM_PRO_MODEL actually used
+      $ds = $refresh.deepDiveStats
+      Write-Info ("deepDiveStats: total={0} generated={1} fallback={2} failed={3} model={4} provider={5}" -f `
+        $ds.total, $ds.generated, $ds.fallback, $ds.failed, $ds.model, $ds.provider)
+      Write-Info ("actualDeepDiveModel: {0}" -f $ds.model)
+      Write-Info ("actualProvider:      {0}" -f $ds.provider)
       if ($expectLlm -and -not [string]::IsNullOrWhiteSpace($proModel)) {
-        $usedModel = [string]$refresh.deepDiveStats.model
+        $usedModel = [string]$ds.model
         if ($usedModel -eq $proModel) {
-          Ok "LLM_PRO_MODEL verified: $usedModel"
+          Write-Ok ("LLM_PRO_MODEL verified: {0}" -f $usedModel)
         } else {
-          Warn "LLM_PRO_MODEL expected=$proModel but used=$usedModel"
+          Write-Warn ("LLM_PRO_MODEL: expected={0} used={1}" -f $proModel, $usedModel)
         }
       }
     } else {
-      Warn "refresh response missing deepDiveStats"
+      Write-Warn "refresh response missing deepDiveStats"
     }
   } catch {
-    Fail "refresh request failed: $($_.Exception.Message)"
+    Write-Fail ("refresh request failed: {0}" -f $_.Exception.Message)
   }
   Write-Host ""
 }
 
-$recUrl = "$Base/api/recommendations?windowHours=72&limit=$ItemLimit"
-Write-Host "1) Recommendations: $recUrl"
+# ── 1) Recommendations ────────────────────────────────────────────────────────
+
+$recUrl = ("{0}/api/recommendations?windowHours=72&limit={1}" -f $Base.TrimEnd('/'), $ItemLimit)
+Write-Host ("1) GET {0}" -f $recUrl)
 try {
   $rec = Invoke-RestMethod -Method Get -Uri $recUrl -TimeoutSec 30
   if (-not $rec.ok) {
-    Fail "recommendations ok=false"
+    Write-Fail "recommendations ok=false"
   } else {
-    Ok "recommendations ok=true source=$($rec.source)"
+    Write-Ok ("recommendations ok=true  source={0}" -f $rec.source)
 
-    $items = @()
-    if ($rec.items) { $items = @($rec.items) }
-    $finalItems = @($items | Where-Object { Is-FinalTier ([string]$_.recommendationTier) })
+    $items        = @(); if ($rec.items) { $items = @($rec.items) }
+    $finalItems   = @($items | Where-Object { Test-IsFinalTier ([string]$_.recommendationTier) })
     $observeItems = @($items | Where-Object { ([string]$_.recommendationTier) -eq "observe" })
     $archiveItems = @($items | Where-Object { ([string]$_.recommendationTier) -eq "archive" })
 
-    Ok "final recommendation items (must_read/high_value): $($finalItems.Count)"
-    Info "observe items: $($observeItems.Count)  archive items: $($archiveItems.Count)"
+    Write-Ok ("final items (must_read/high_value): {0}" -f $finalItems.Count)
+    Write-Info ("observe={0}  archive={1}" -f $observeItems.Count, $archiveItems.Count)
 
     # FAIL: must_read/high_value must all have deepDive
-    $missingDeepDive = @($finalItems | Where-Object { $null -eq $_.deepDive })
-    if ($missingDeepDive.Count -gt 0) {
-      Fail "must_read/high_value items missing deepDive: $($missingDeepDive.Count)"
+    $missingDD = @($finalItems | Where-Object { $null -eq $_.deepDive })
+    if ($missingDD.Count -gt 0) {
+      Write-Fail ("must_read/high_value items missing deepDive: {0}" -f $missingDD.Count)
     } else {
-      Ok "all final items have deepDive"
+      Write-Ok "all final items have deepDive"
     }
 
-    # FAIL: observe/archive should NOT have non-skipped deepDive with station content
-    $observeWithFullDive = @($observeItems | Where-Object {
+    # WARN: observe should NOT have non-skipped deepDive
+    $observeWithDive = @($observeItems | Where-Object {
       $null -ne $_.deepDive -and ([string]$_.deepDive.status) -ne "skipped"
     })
-    if ($observeWithFullDive.Count -gt 0) {
-      Warn "observe items with non-skipped deepDive: $($observeWithFullDive.Count) (check pipeline config)"
+    if ($observeWithDive.Count -gt 0) {
+      Write-Warn ("observe items with non-skipped deepDive: {0}" -f $observeWithDive.Count)
     }
 
-    $llmModelCount = 0
-    $fallbackCount = 0
-    $fallbackWithReason = 0
-    $observedLlmPath = $false
-    $contentStatusCounts = @{}
-    $titleLengths = @()
-    $summaryLengths = @()
-    $fullContentLengths = @()
-    $summaryOnlyCount = 0
-    $diagMissingCount = 0
+    # ── per-item stats ────────────────────────────────────────────────────────
+    $llmModelCount   = 0
+    $fallbackCount   = 0
+    $fbWithReason    = 0
+    $seenLlmPath     = $false
+    $csDistrib       = @{}
+    $srcDistrib      = @{}
+    $titleLens       = @()
+    $summaryLens     = @()
+    $fullContentLens = @()
+    $summaryOnlyN    = 0
+    $diagMissing     = 0
 
     for ($i = 0; $i -lt $finalItems.Count; $i++) {
-      $it = $finalItems[$i]
-      $prefix = "final[$i] tier=$($it.recommendationTier)"
-      $okFields = Test-DeepDiveObject $it.deepDive $prefix
-      if (-not $okFields) { continue }
+      $it     = $finalItems[$i]
+      $dd     = $it.deepDive
+      $pfx    = ("final[{0}] tier={1}" -f $i, $it.recommendationTier)
+      $ok     = Test-DeepDiveFields $dd $pfx
+      if (-not $ok) { continue }
 
-      $model = [string]$it.deepDive.model
-      $provider = [string]$it.deepDive.provider
-      $status = [string]$it.deepDive.status
-      $contentStatus = if ($it.deepDive.PSObject.Properties.Name -contains "contentStatus") { [string]$it.deepDive.contentStatus } else { "unknown" }
-      $oneSentenceLen = ([string]$it.deepDive.oneSentence).Length
-      $followCount = @($it.deepDive.followUp).Count
+      $model     = [string]$dd.model
+      $provider  = [string]$dd.provider
+      $status    = [string]$dd.status
+      $cs        = if ($dd.PSObject.Properties.Name -contains "contentStatus") { [string]$dd.contentStatus } else { "unknown" }
+      $osLen     = ([string]$dd.oneSentence).Length
+      $fuCount   = @($dd.followUp).Count
 
-      Write-Host ("  [{0}] status={1} | contentStatus={2} | model={3} | provider={4} | oneSentenceLen={5} | followUpCount={6}" -f `
-        $i, $status, $contentStatus, $model, $provider, $oneSentenceLen, $followCount)
+      Write-Host ("  [{0}] status={1} | contentStatus={2} | model={3} | provider={4} | oneSentLen={5} | followUps={6}" -f `
+        $i, $status, $cs, $model, $provider, $osLen, $fuCount)
 
-      # Track contentStatus distribution
-      if (-not $contentStatusCounts.ContainsKey($contentStatus)) { $contentStatusCounts[$contentStatus] = 0 }
-      $contentStatusCounts[$contentStatus]++
-      if ($contentStatus -eq "rss_summary" -or $contentStatus -eq "title_only") { $summaryOnlyCount++ }
-
-      # Track input diagnostics
-      if ($it.deepDive.PSObject.Properties.Name -contains "inputDiagnostics" -and $null -ne $it.deepDive.inputDiagnostics) {
-        $diag = $it.deepDive.inputDiagnostics
-        if ($diag.PSObject.Properties.Name -contains "inputTitleLength") { $titleLengths += [int]$diag.inputTitleLength }
-        if ($diag.PSObject.Properties.Name -contains "inputSummaryLength") { $summaryLengths += [int]$diag.inputSummaryLength }
-        if ($diag.PSObject.Properties.Name -contains "inputFullContentLength") { $fullContentLengths += [int]$diag.inputFullContentLength }
-        $diagInfo = "  inputDiag: contentSource={0} summaryLen={1} fullContentLen={2}" -f `
-          $diag.contentSource, $diag.inputSummaryLength, $diag.inputFullContentLength
-        Write-Host $diagInfo -ForegroundColor DarkGray
-      } else {
-        $diagMissingCount++
-        Write-Host "  inputDiagnostics: missing (pre-v2 snapshot)" -ForegroundColor DarkGray
+      # contentStatus distribution
+      if (-not $csDistrib.ContainsKey($cs)) { $csDistrib[$cs] = 0 }
+      $csDistrib[$cs]++
+      if ($cs -eq "rss_summary" -or $cs -eq "title_only" -or $cs -eq "partial" -or $cs -eq "missing") {
+        $summaryOnlyN++
       }
 
-      # Check fallback reason
+      # FAIL: full_article with empty fullContent
+      if ($dd.PSObject.Properties.Name -contains "inputDiagnostics" -and $null -ne $dd.inputDiagnostics) {
+        $diag    = $dd.inputDiagnostics
+        $fcLen   = 0
+        $sumLen  = 0
+        $titLen  = 0
+        $cSrc    = "unknown"
+        if ($diag.PSObject.Properties.Name -contains "inputTitleLength")       { $titLen = [int]$diag.inputTitleLength }
+        if ($diag.PSObject.Properties.Name -contains "inputSummaryLength")     { $sumLen = [int]$diag.inputSummaryLength }
+        if ($diag.PSObject.Properties.Name -contains "inputFullContentLength") { $fcLen  = [int]$diag.inputFullContentLength }
+        if ($diag.PSObject.Properties.Name -contains "contentSource")          { $cSrc   = [string]$diag.contentSource }
+
+        $titleLens       += $titLen
+        $summaryLens     += $sumLen
+        $fullContentLens += $fcLen
+
+        if (-not $srcDistrib.ContainsKey($cSrc)) { $srcDistrib[$cSrc] = 0 }
+        $srcDistrib[$cSrc]++
+
+        # FAIL: full_article contentStatus but fullContent is empty
+        if ($cs -eq "full_article" -and $fcLen -lt 500) {
+          Write-Fail ("{0} contentStatus=full_article but inputFullContentLength={1}" -f $pfx, $fcLen)
+        }
+        # WARN: fetched_article contentSource but fullContent is empty
+        if ($cSrc -eq "fetched_article" -and $fcLen -lt 400) {
+          Write-Warn ("{0} contentSource=fetched_article but inputFullContentLength={1}" -f $pfx, $fcLen)
+        }
+        # rawModelContentStatus audit
+        $rawMCS = ""
+        if ($diag.PSObject.Properties.Name -contains "rawModelContentStatus") {
+          $rawMCS = [string]$diag.rawModelContentStatus
+        }
+        $qw = ""
+        if ($diag.PSObject.Properties.Name -contains "qualityWarnings") {
+          $qw = ($diag.qualityWarnings -join "; ")
+        }
+        $diagLine = ("    diag: src={0} titleLen={1} sumLen={2} fcLen={3}" -f $cSrc, $titLen, $sumLen, $fcLen)
+        if ($rawMCS -ne "" -and $rawMCS -ne $cs) {
+          $diagLine += (" [model claimed {0} -> system overrode to {1}]" -f $rawMCS, $cs)
+        }
+        if ($qw -ne "") { $diagLine += ("  warns=[{0}]" -f $qw) }
+        Write-Host $diagLine -ForegroundColor DarkGray
+      } else {
+        $diagMissing++
+        Write-Host "    inputDiagnostics: missing (pre-v2 snapshot)" -ForegroundColor DarkGray
+      }
+
+      # fallback reason check
       if ($status -eq "fallback") {
         $fallbackCount++
-        $fr = [string]$it.deepDive.fallbackReason
+        $fr = [string]$dd.fallbackReason
         if (-not [string]::IsNullOrWhiteSpace($fr)) {
-          $fallbackWithReason++
-          Info "  fallbackReason: $($fr.Substring(0, [Math]::Min(80, $fr.Length)))"
+          $fbWithReason++
+          Write-Info ("  fallbackReason: {0}" -f $fr.Substring(0, [Math]::Min(80, $fr.Length)))
         } else {
-          Warn "$prefix fallbackReason missing"
+          Write-Warn ("{0} fallbackReason missing" -f $pfx)
         }
       }
-
       if ($model -ne "deterministic-v1" -and $status -eq "generated") {
         $llmModelCount++
-        $observedLlmPath = $true
+        $seenLlmPath = $true
       }
     }
 
-    # Print contentStatus distribution
+    # contentStatus distribution
     Write-Host ""
     Write-Host "  --- contentStatus distribution ---"
-    foreach ($k in $contentStatusCounts.Keys) {
-      $cnt = $contentStatusCounts[$k]
-      $color = if ($k -eq "full_article") { "Green" } elseif ($k -eq "unknown") { "Red" } else { "Yellow" }
+    foreach ($k in ($csDistrib.Keys | Sort-Object)) {
+      $cnt   = $csDistrib[$k]
+      $color = if ($k -eq "full_article") { "Green" } elseif ($k -eq "unknown" -or $k -eq "missing") { "Red" } else { "Yellow" }
       Write-Host ("  {0}: {1}" -f $k, $cnt) -ForegroundColor $color
     }
 
-    # FAIL: contentStatus all unknown
-    if ($contentStatusCounts.ContainsKey("unknown") -and $contentStatusCounts["unknown"] -eq $finalItems.Count -and $finalItems.Count -gt 0) {
-      Fail "All contentStatus are 'unknown' — inputDiagnostics likely not being populated"
+    # contentSource distribution
+    if ($srcDistrib.Count -gt 0) {
+      Write-Host "  --- contentSource distribution ---"
+      foreach ($k in ($srcDistrib.Keys | Sort-Object)) {
+        Write-Host ("  {0}: {1}" -f $k, $srcDistrib[$k])
+      }
     }
 
-    # Print avg input lengths
-    if ($summaryLengths.Count -gt 0) {
-      $avgSummary = [Math]::Round(($summaryLengths | Measure-Object -Average).Average, 1)
-      $avgTitle = if ($titleLengths.Count -gt 0) { [Math]::Round(($titleLengths | Measure-Object -Average).Average, 1) } else { "N/A" }
-      $avgFC = if ($fullContentLengths.Count -gt 0) { [Math]::Round(($fullContentLengths | Measure-Object -Average).Average, 1) } else { "N/A" }
+    # FAIL: all contentStatus are unknown
+    if ($csDistrib.ContainsKey("unknown") -and $csDistrib["unknown"] -eq $finalItems.Count -and $finalItems.Count -gt 0) {
+      Write-Fail "All contentStatus are 'unknown' — inputDiagnostics not being populated"
+    }
+
+    # Average input lengths
+    if ($summaryLens.Count -gt 0) {
+      $avgT  = [Math]::Round(($titleLens       | Measure-Object -Average).Average, 1)
+      $avgS  = [Math]::Round(($summaryLens     | Measure-Object -Average).Average, 1)
+      $avgFC = [Math]::Round(($fullContentLens | Measure-Object -Average).Average, 1)
       Write-Host ""
       Write-Host "  --- average input lengths ---"
-      Write-Host "  avg title:       $avgTitle chars"
-      Write-Host "  avg summary:     $avgSummary chars  (RSS capped at ~300 chars)"
-      Write-Host "  avg fullContent: $avgFC chars"
-      if ($fullContentLengths.Count -gt 0 -and ($fullContentLengths | Measure-Object -Average).Average -lt 50) {
-        Warn "avg fullContent very short ($avgFC chars) — LLM only saw RSS summary"
+      Write-Host ("  avg title:       {0} chars" -f $avgT)
+      Write-Host ("  avg summary:     {0} chars  (RSS capped ~300)" -f $avgS)
+      Write-Host ("  avg fullContent: {0} chars" -f $avgFC)
+      if ($avgFC -lt 50) {
+        Write-Warn ("avg fullContent very short ({0} chars). LLM only saw RSS summary." -f $avgFC)
       }
-    } elseif ($diagMissingCount -gt 0) {
-      Warn "inputDiagnostics missing on $diagMissingCount items — run a fresh snapshot to get diagnostics"
+    } elseif ($diagMissing -gt 0) {
+      Write-Warn ("inputDiagnostics missing on {0} items -- run fresh snapshot first" -f $diagMissing)
     }
 
-    if ($summaryOnlyCount -gt 0) {
-      Info "summary_only items (rss_summary/title_only): $summaryOnlyCount / $($finalItems.Count)"
+    if ($summaryOnlyN -gt 0) {
+      Write-Info ("summary-limited items (rss_summary/title_only/partial/missing): {0}/{1}" -f $summaryOnlyN, $finalItems.Count)
     }
 
+    # LLM path verification
     if ($expectLlm) {
-      if ($refresh.deepDiveStats -and [int]$refresh.deepDiveStats.generated -le 0) {
-        Fail "LLM expected but refresh.deepDiveStats.generated <= 0"
+      if ($null -ne $refresh -and $refresh.deepDiveStats -and [int]$refresh.deepDiveStats.generated -le 0) {
+        Write-Fail "LLM expected but refresh.deepDiveStats.generated <= 0"
       }
       if ($finalItems.Count -gt 0 -and $llmModelCount -lt 1) {
-        Fail "LLM expected but no final item used non-deterministic model"
+        Write-Fail "LLM expected but no final item used non-deterministic model"
       } else {
-        Ok "LLM path verified (non-deterministic generated items: $llmModelCount)"
+        Write-Ok ("LLM path verified (generated items: {0})" -f $llmModelCount)
       }
     } else {
       if ($fallbackCount -eq 0) {
-        Info "no fallback items in final recommendations."
-      } elseif ($fallbackWithReason -eq $fallbackCount) {
-        Ok "fallback path verified with explicit fallbackReason ($fallbackCount items)"
+        Write-Info "no fallback items in final recommendations"
+      } elseif ($fbWithReason -eq $fallbackCount) {
+        Write-Ok ("fallback path verified with fallbackReason ({0} items)" -f $fallbackCount)
       } else {
-        Warn "fallbackReason missing on $($fallbackCount - $fallbackWithReason) / $fallbackCount fallback items"
+        Write-Warn ("fallbackReason missing on {0}/{1} fallback items" -f ($fallbackCount - $fbWithReason), $fallbackCount)
       }
-      if ($observedLlmPath) {
-        Info "runtime used LLM path (service env differs from current shell env)."
+      if ($seenLlmPath) {
+        Write-Info "runtime used LLM path (service env differs from shell env)"
       }
     }
   }
 } catch {
-  Fail "recommendations request failed: $($_.Exception.Message)"
+  Write-Fail ("recommendations request failed: {0}" -f $_.Exception.Message)
 }
 Write-Host ""
 
-$snapUrl = "$Base/api/recommendations/snapshots?limit=$SnapshotLimit&includeItems=true&itemsLimit=20"
-Write-Host "2) Snapshots with items: $snapUrl"
+# ── 2) Snapshots ──────────────────────────────────────────────────────────────
+
+$snapUrl = ("{0}/api/recommendations/snapshots?limit={1}&includeItems=true&itemsLimit=20" -f $Base.TrimEnd('/'), $SnapshotLimit)
+Write-Host ("2) GET {0}" -f $snapUrl)
 try {
   $snaps = Invoke-RestMethod -Method Get -Uri $snapUrl -TimeoutSec 30
   if (-not $snaps.ok) {
-    Fail "snapshots ok=false"
+    Write-Fail "snapshots ok=false"
   } else {
-    Ok "snapshots ok=true count=$($snaps.count)"
-    if ($snaps.count -gt 0 -and $snaps.snapshots[0].items) {
+    Write-Ok ("snapshots ok=true  count={0}" -f $snaps.count)
+    if ($snaps.count -gt 0 -and $null -ne $snaps.snapshots[0].items) {
       $latestItems = @($snaps.snapshots[0].items)
-      $latestFinal = @($latestItems | Where-Object { Is-FinalTier ([string]$_.recommendationTier) })
+      $latestFinal = @($latestItems | Where-Object { Test-IsFinalTier ([string]$_.recommendationTier) })
       if ($latestFinal.Count -gt 0) {
-        $item = $latestFinal[0]
-        $okFields = Test-DeepDiveObject $item.deepDive "latestSnapshot.final[0]"
-        if ($okFields) {
-          Ok "latest snapshot final item has complete deepDive"
-          # Check contentStatus preserved from snapshot
-          $cs = if ($item.deepDive.PSObject.Properties.Name -contains "contentStatus") { [string]$item.deepDive.contentStatus } else { "unknown" }
-          Info "snapshot contentStatus: $cs"
+        $item    = $latestFinal[0]
+        $okSnap  = Test-DeepDiveFields $item.deepDive "latestSnapshot.final[0]"
+        if ($okSnap) {
+          Write-Ok "latest snapshot final item has complete deepDive"
+          $scs = if ($item.deepDive.PSObject.Properties.Name -contains "contentStatus") { [string]$item.deepDive.contentStatus } else { "unknown" }
+          Write-Info ("snapshot contentStatus: {0}" -f $scs)
           if ($item.deepDive.PSObject.Properties.Name -contains "inputDiagnostics" -and $null -ne $item.deepDive.inputDiagnostics) {
-            $diag = $item.deepDive.inputDiagnostics
-            Info "snapshot inputDiag: summaryLen=$($diag.inputSummaryLength) fullContentLen=$($diag.inputFullContentLength) contentSource=$($diag.contentSource)"
-            Ok "inputDiagnostics preserved in snapshot"
+            $d = $item.deepDive.inputDiagnostics
+            Write-Info ("snapshot inputDiag: sumLen={0} fcLen={1} src={2}" -f $d.inputSummaryLength, $d.inputFullContentLength, $d.contentSource)
+            Write-Ok "inputDiagnostics preserved in snapshot"
+            # FAIL: snapshot shows full_article but fullContent is empty
+            $sfc = if ($d.PSObject.Properties.Name -contains "inputFullContentLength") { [int]$d.inputFullContentLength } else { 0 }
+            if ($scs -eq "full_article" -and $sfc -lt 500) {
+              Write-Fail ("snapshot contentStatus=full_article but inputFullContentLength={0}" -f $sfc)
+            }
           } else {
-            Warn "inputDiagnostics not in snapshot (pre-v2 or not encoded)"
+            Write-Warn "inputDiagnostics not in snapshot (pre-v2 or not encoded)"
           }
-          # Check fallbackReason preserved
           if ($item.deepDive.PSObject.Properties.Name -contains "fallbackReason" -and -not [string]::IsNullOrWhiteSpace([string]$item.deepDive.fallbackReason)) {
-            Info "fallbackReason in snapshot: $($item.deepDive.fallbackReason)"
+            Write-Info ("snapshot fallbackReason: {0}" -f [string]$item.deepDive.fallbackReason)
           }
         }
       } else {
-        Warn "latest snapshot has no must_read/high_value items"
+        Write-Warn "latest snapshot has no must_read/high_value items"
       }
     } else {
-      Warn "latest snapshot has no items"
+      Write-Warn "latest snapshot has no items"
     }
   }
 } catch {
-  Fail "snapshots request failed: $($_.Exception.Message)"
+  Write-Fail ("snapshots request failed: {0}" -f $_.Exception.Message)
 }
 Write-Host ""
 
+# ── Summary ───────────────────────────────────────────────────────────────────
+
 Write-Host "=== Summary ==="
-if ($allOk) {
+if ($script:allOk) {
   Write-Host "RESULT: PASS" -ForegroundColor Green
   exit 0
 }
-
 Write-Host "RESULT: FAIL" -ForegroundColor Red
 exit 1
