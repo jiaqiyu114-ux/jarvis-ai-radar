@@ -11,6 +11,8 @@ import { EngineRecommendationCard } from "./_engine-recommendation-card"
 import { listEventClusters, type EventClusterListItem } from "@/lib/db/event-clusters"
 import { getLatestDailyRecommendationSnapshot } from "@/lib/data/daily-recommendation-snapshot"
 import { getRecommendations, type RecommendedItem } from "@/lib/recommendations/recommendation-engine"
+import { getLatestRecommendationRun, type RecommendationRun } from "@/lib/db/recommendation-runs"
+import { cn } from "@/lib/utils"
 import type { DailyRecommendationSnapshotItem } from "@/lib/data/daily-recommendation-snapshot"
 import type { TodayRecommendationItem } from "@/lib/data/today-adapter"
 import type { TopSignalData } from "@/components/layout/app-shell"
@@ -86,6 +88,63 @@ function ClusterSideSection({
         : <p className="py-4 text-center text-xs text-muted-foreground">{empty}</p>
       }
     </section>
+  )
+}
+
+// ── Recommendation run status strip ──────────────────────────────────────────
+
+function timeAgo(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const diffMs  = Date.now() - new Date(iso).getTime()
+  const diffMin = Math.floor(diffMs / 60_000)
+  if (diffMin < 1)   return '刚刚'
+  if (diffMin < 60)  return `${diffMin}m 前`
+  const diffHr = Math.floor(diffMin / 60)
+  if (diffHr  < 24)  return `${diffHr}h 前`
+  return `${Math.floor(diffHr / 24)}d 前`
+}
+
+const RUN_STATUS_COLOR: Record<string, string> = {
+  success:          'text-success',
+  partial_success:  'text-warning',
+  running:          'text-sky-500 dark:text-sky-400',
+  failed:           'text-danger',
+}
+
+const RUN_STATUS_LABEL: Record<string, string> = {
+  success:          '正常',
+  partial_success:  '部分成功',
+  running:          '运行中',
+  failed:           '失败',
+}
+
+function RunStatusStrip({ run }: { run: RecommendationRun }) {
+  const statusColor = RUN_STATUS_COLOR[run.status] ?? 'text-muted-foreground'
+  const statusLabel = RUN_STATUS_LABEL[run.status] ?? run.status
+  const durationSec = run.duration_ms ? (run.duration_ms / 1000).toFixed(1) : null
+
+  return (
+    <div className="mb-4 flex items-center gap-2 flex-wrap px-1 text-[11px] text-muted-foreground/70">
+      <span className="text-muted-foreground/40 text-[10px] uppercase tracking-wider">推荐引擎</span>
+      <span className={cn("font-medium", statusColor)}>{statusLabel}</span>
+      <span className="text-muted-foreground/30">·</span>
+      <span>最近运行: {timeAgo(run.started_at)}</span>
+      {durationSec && <span>耗时 {durationSec}s</span>}
+      <span className="text-muted-foreground/30">·</span>
+      <span>捕捉 <span className="tabular-nums text-foreground/70">{run.captured_total}</span></span>
+      {run.must_read_count > 0 && (
+        <span className="text-success">MR <span className="tabular-nums">{run.must_read_count}</span></span>
+      )}
+      {run.high_value_count > 0 && (
+        <span className="text-primary">HV <span className="tabular-nums">{run.high_value_count}</span></span>
+      )}
+      {run.observe_count > 0 && (
+        <span className="text-sky-600 dark:text-sky-400">OB <span className="tabular-nums">{run.observe_count}</span></span>
+      )}
+      {run.status !== 'success' && (
+        <span className="text-warning/80">· 上次运行不完整，当前仍展示可用结果</span>
+      )}
+    </div>
   )
 }
 
@@ -256,6 +315,10 @@ export default async function DashboardPage() {
   const engineHighValue = engineItems.filter(i => i.recommendationTier === 'high_value')
   const engineObserve   = engineItems.filter(i => i.recommendationTier === 'observe')
 
+  // Latest recommendation run record (for the status strip)
+  // Returns null gracefully if recommendation-runs-v1.sql hasn't been executed yet
+  const latestRun = await getLatestRecommendationRun().catch(() => null)
+
   return (
     <AppShell topSignal={topSignal}>
       <div className="max-w-[1280px] p-6 md:p-8">
@@ -306,6 +369,9 @@ export default async function DashboardPage() {
             </div>
           )}
         </header>
+
+        {/* ── Recommendation run status strip ── */}
+        {latestRun && <RunStatusStrip run={latestRun} />}
 
         <div className="grid grid-cols-5 gap-3 mb-6">
           <StatCard
