@@ -175,34 +175,40 @@ const RUN_STATUS_LABEL: Record<string, string> = {
 }
 
 function RunStatusStrip({ run, engineSnapshot }: { run: RecommendationRun | null; engineSnapshot: RecommendationSnapshotView | null }) {
-  if (!engineSnapshot && !run) return null
+  // Always render: even with no data, the strip shows the refresh button.
+  const hasData = engineSnapshot !== null || run !== null
 
   const status      = engineSnapshot?.status ?? run?.status ?? 'unknown'
-  const statusColor = RUN_STATUS_COLOR[status] ?? 'text-muted-foreground'
-  const statusLabel = RUN_STATUS_LABEL[status] ?? status
+  const statusColor = hasData ? (RUN_STATUS_COLOR[status] ?? 'text-muted-foreground') : 'text-muted-foreground/50'
+  const statusLabel = hasData ? (RUN_STATUS_LABEL[status] ?? status) : '暂无记录'
   const durationMs  = run?.duration_ms ?? null
   const durationSec = durationMs ? (durationMs / 1000).toFixed(1) : null
-  const ts          = engineSnapshot?.generated_at ?? run?.started_at
-  const captured    = engineSnapshot?.captured_total     ?? run?.captured_total     ?? 0
-  const mustRead    = engineSnapshot?.must_read_count    ?? run?.must_read_count    ?? 0
-  const highValue   = engineSnapshot?.high_value_count   ?? run?.high_value_count   ?? 0
-  const observe     = engineSnapshot?.observe_count      ?? run?.observe_count      ?? 0
+  const ts          = engineSnapshot?.generated_at ?? run?.started_at ?? null
+  const captured    = engineSnapshot?.captured_total   ?? run?.captured_total   ?? 0
+  const mustRead    = engineSnapshot?.must_read_count  ?? run?.must_read_count  ?? 0
+  const highValue   = engineSnapshot?.high_value_count ?? run?.high_value_count ?? 0
+  const observe     = engineSnapshot?.observe_count    ?? run?.observe_count    ?? 0
 
   return (
     <div className="mb-3 flex items-center gap-2 flex-wrap px-1 text-[11px] text-muted-foreground/70">
       <span className="text-muted-foreground/40 text-[10px] uppercase tracking-wider">推荐引擎</span>
       <span className={cn("font-medium", statusColor)}>{statusLabel}</span>
-      <span className="text-muted-foreground/30">·</span>
-      <span>最近运行: {timeAgo(ts)}</span>
-      {durationSec && <span>耗时 {durationSec}s</span>}
-      <span className="text-muted-foreground/30">·</span>
-      <span>捕捉 <span className="tabular-nums text-foreground/70">{captured}</span></span>
-      {mustRead  > 0 && <span className="text-success">MR <span className="tabular-nums">{mustRead}</span></span>}
-      {highValue > 0 && <span className="text-primary">HV <span className="tabular-nums">{highValue}</span></span>}
-      {observe   > 0 && <span className="text-sky-600 dark:text-sky-400">OB <span className="tabular-nums">{observe}</span></span>}
-      {status !== 'success' && (
-        <span className="text-warning/80">· 上次运行不完整，当前仍展示可用结果</span>
+      {hasData && (
+        <>
+          <span className="text-muted-foreground/30">·</span>
+          {ts && <span>最近运行: {timeAgo(ts)}</span>}
+          {durationSec && <span>耗时 {durationSec}s</span>}
+          <span className="text-muted-foreground/30">·</span>
+          <span>捕捉 <span className="tabular-nums text-foreground/70">{captured}</span></span>
+          {mustRead  > 0 && <span className="text-success">MR <span className="tabular-nums">{mustRead}</span></span>}
+          {highValue > 0 && <span className="text-primary">HV <span className="tabular-nums">{highValue}</span></span>}
+          {observe   > 0 && <span className="text-sky-600 dark:text-sky-400">OB <span className="tabular-nums">{observe}</span></span>}
+          {hasData && status !== 'success' && (
+            <span className="text-warning/80">· 上次运行不完整，当前仍展示可用结果</span>
+          )}
+        </>
       )}
+      {/* Refresh button always visible */}
       <span className="ml-auto">
         <RefreshRecommendationsButton />
       </span>
@@ -381,12 +387,16 @@ export default async function DashboardPage() {
         {/* ── Run status strip + refresh button ── */}
         <RunStatusStrip run={latestRun} engineSnapshot={engineSnapshot} />
 
-        {/* Snapshot table not-ready notice */}
+        {/* Snapshot table not-ready / no-snapshot notice */}
         {!hasEngineSnapshot && !latestRun && (
-          <div className="mb-4 rounded border border-border bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground">
-            推荐快照表未就绪（migration 尚未执行）或尚无快照。
-            请执行 <code className="font-mono text-[11px] text-foreground">supabase/recommendation-snapshots-v1.sql</code>，
-            然后点击「刷新推荐」生成首个快照。
+          <div className="mb-4 rounded border border-border bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground space-y-1">
+            <p>暂无推荐快照，点击上方「刷新推荐」按钮生成首个快照。</p>
+            <p className="text-[10px] text-muted-foreground/60">
+              如果按钮提示失败，请先在 Supabase SQL Editor 执行{' '}
+              <code className="font-mono text-foreground/70">supabase/recommendation-snapshots-v1.sql</code>{' '}
+              和{' '}
+              <code className="font-mono text-foreground/70">supabase/recommendation-runs-v1.sql</code>
+            </p>
           </div>
         )}
 

@@ -59,8 +59,21 @@ export type RecommendationRunUpdate = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function isMissingTable(err: { code?: string | null; message?: string | null }): boolean {
-  return err.code === '42P01' || (err.message ?? '').includes('does not exist')
+/** Returns true for any error indicating the table/view doesn't exist yet. */
+function isMissingTable(err: { code?: string | null; message?: string | null; details?: string | null }): boolean {
+  const code = err.code ?? ''
+  const msg  = (err.message ?? '').toLowerCase()
+  const det  = (err.details  ?? '').toLowerCase()
+  return (
+    code === '42P01' ||                         // PostgreSQL: relation does not exist
+    code === 'PGRST200' || code === 'PGRST205' || // PostgREST: relation/column not found
+    msg.includes('does not exist') ||
+    msg.includes('schema cache') ||             // PostgREST schema cache miss
+    msg.includes('could not find the table') ||
+    msg.includes('could not find a relationship') ||
+    det.includes('schema cache') ||
+    det.includes('does not exist')
+  )
 }
 
 // Shorthand: cast server client to bypass Supabase's typed schema for this new table.
@@ -90,7 +103,7 @@ export async function insertRecommendationRun(
       .single()
 
     if (error) {
-      if (isMissingTable(error)) return null   // migration not run yet — silent fallback
+      if (isMissingTable(error)) { console.warn('[db/recommendation-runs] table not ready (insert)'); return null }
       console.error('[db/recommendation-runs] insert:', error.message)
       return null
     }
@@ -120,7 +133,7 @@ export async function updateRecommendationRun(
       .eq('id', id)
 
     if (error) {
-      if (isMissingTable(error)) return false
+      if (isMissingTable(error)) { console.warn('[db/recommendation-runs] table not ready (update)'); return false }
       console.error('[db/recommendation-runs] update:', error.message)
       return false
     }
@@ -144,7 +157,7 @@ export async function listRecommendationRuns(limit = 20): Promise<Recommendation
       .limit(Math.min(limit, 100))
 
     if (error) {
-      if (isMissingTable(error)) return []
+      if (isMissingTable(error)) { console.warn('[db/recommendation-runs] table not ready (list)'); return [] }
       console.error('[db/recommendation-runs] list:', error.message)
       return []
     }
@@ -169,7 +182,7 @@ export async function getLatestRecommendationRun(): Promise<RecommendationRun | 
       .maybeSingle()
 
     if (error) {
-      if (isMissingTable(error)) return null
+      if (isMissingTable(error)) { console.warn('[db/recommendation-runs] table not ready (getLatest)'); return null }
       console.error('[db/recommendation-runs] getLatest:', error.message)
       return null
     }

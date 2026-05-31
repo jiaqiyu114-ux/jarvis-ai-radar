@@ -60,8 +60,41 @@ export type RecommendationSnapshotSummary = Omit<RecommendationSnapshotView, 'it
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function db() { return supabaseServer as any }
 
-function isMissingTable(err: { code?: string | null; message?: string | null }): boolean {
-  return err.code === '42P01' || (err.message ?? '').includes('does not exist')
+/** Returns true for any error indicating the table/view doesn't exist yet. */
+function isMissingTable(err: { code?: string | null; message?: string | null; details?: string | null }): boolean {
+  const code = err.code ?? ''
+  const msg  = (err.message ?? '').toLowerCase()
+  const det  = (err.details  ?? '').toLowerCase()
+  return (
+    code === '42P01' ||                         // PostgreSQL: relation does not exist
+    code === 'PGRST200' || code === 'PGRST205' || // PostgREST: relation/column not found
+    msg.includes('does not exist') ||
+    msg.includes('schema cache') ||             // PostgREST schema cache miss
+    msg.includes('could not find the table') ||
+    msg.includes('could not find a relationship') ||
+    det.includes('schema cache') ||
+    det.includes('does not exist')
+  )
+}
+
+/** Detect mojibake patterns that survived cleanText(). */
+function looksGarbled(text: string): boolean {
+  if (!text || text.length < 4) return false
+  return (
+    text.includes('â€') ||
+    text.includes('Ã©') || text.includes('Ã ') || text.includes('Ã¨') ||
+    text.includes('â‚¬') ||
+    text.includes('�') ||
+    /[-]/.test(text)   // C1 control chars common in mojibake
+  )
+}
+
+/** Sanitize text for display: clean + garbled-check + safe fallback. */
+function sanitizeDisplayText(s: string | null | undefined, fallback = ''): string {
+  if (!s) return fallback
+  const cleaned = cleanText(s)
+  if (looksGarbled(cleaned)) return fallback
+  return cleaned
 }
 
 // ── Text cleaning ─────────────────────────────────────────────────────────────
@@ -109,13 +142,19 @@ function itemToRow(item: RecommendedItem, snapshotId: string, rank: number) {
 
 // ── Map snapshot item row → RecommendedItem ───────────────────────────────────
 
+// Fallback text for display layer (applied when field is empty or garbled)
+const FB_REASON = '证据较完整，具有继续阅读价值。'
+const FB_STEP   = '先查看原文和来源，再决定是否继续跟进。'
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function rowToItem(row: any): RecommendedItem {
+  // Apply display-layer sanitization: catch any mojibake that slipped through at write time
+  const title = sanitizeDisplayText(row.title, '标题解析异常，建议查看原文')
   return {
     id:            row.item_id ?? row.id,
-    title:         row.title ?? '(标题缺失)',
-    summary:       row.summary ?? '',
-    source:        row.source_name ?? 'Unknown',
+    title,
+    summary:       sanitizeDisplayText(row.summary, ''),
+    source:        sanitizeDisplayText(row.source_name, 'Unknown'),
     sourceTier:    row.source_tier ?? 'C',
     publishedAt:   row.published_at ?? row.created_at,
     fetchedAt:     row.fetched_at ?? null,
@@ -138,9 +177,10 @@ function rowToItem(row: any): RecommendedItem {
     sourceStatus:        (row.source_status          ?? 'single_source') as EngineSourceStatus,
     evidenceLevel:       'unknown' as EngineEvidenceLevel,
     qualityFlags:  Array.isArray(row.quality_flags) ? row.quality_flags : [],
-    recommendationReason: row.recommendation_reason ?? '',
-    riskNote:      row.risk_note   ?? '',
-    nextStep:      row.next_step   ?? '',
+    // Sanitize human-readable text with safe fallbacks
+    recommendationReason: sanitizeDisplayText(row.recommendation_reason, FB_REASON),
+    riskNote:             sanitizeDisplayText(row.risk_note, '') || '',
+    nextStep:             sanitizeDisplayText(row.next_step, FB_STEP),
   }
 }
 
@@ -181,7 +221,7 @@ export async function createRecommendationSnapshot(
       .single()
 
     if (snapErr) {
-      if (isMissingTable(snapErr)) return null
+      if (isMissingTable(snapErr)) { console.warn('[db/recommendation-snapshots] table not ready — run supabase/recommendation-snapshots-v1.sql'); return null }
       console.error('[db/recommendation-snapshots] insert snapshot:', snapErr.message)
       return null
     }
@@ -229,7 +269,7 @@ export async function getLatestRecommendationSnapshot(): Promise<RecommendationS
       .maybeSingle()
 
     if (snapErr) {
-      if (isMissingTable(snapErr)) return null
+      if (isMissingTable(snapErr)) { console.warn('[db/recommendation-snapshots] table not ready (getLatest)'); return null }
       console.error('[db/recommendation-snapshots] getLatest snapshot:', snapErr.message)
       return null
     }
@@ -346,7 +386,7 @@ export async function listRecommendationSnapshots(
       .limit(Math.min(limit, 100))
 
     if (error) {
-      if (isMissingTable(error)) return []
+      if (isMissingTable(error)) { console.warn('[db/recommendation-snapshots] table not ready (list)'); return [] }
       console.error('[db/recommendation-snapshots] list:', error.message)
       return []
     }
