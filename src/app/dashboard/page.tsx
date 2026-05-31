@@ -124,10 +124,11 @@ function LegacySectionBlock({ title, items, empty }: {
   )
 }
 
-function EngineSectionBlock({ title, items, empty }: {
+function EngineSectionBlock({ title, items, empty, enableDetail = false }: {
   title: string
   items: RecommendedItem[]
   empty: string
+  enableDetail?: boolean
 }) {
   if (items.length === 0) {
     return (
@@ -145,7 +146,7 @@ function EngineSectionBlock({ title, items, empty }: {
         <h2 className="section-title">{title}</h2>
         <span className="meta-text">{items.length} 条</span>
       </div>
-      {items.map(item => <EngineRecommendationCard key={item.id} item={item} />)}
+      {items.map(item => <EngineRecommendationCard key={item.id} item={item} enableDetail={enableDetail} />)}
     </section>
   )
 }
@@ -567,9 +568,9 @@ export default async function DashboardPage() {
             <div className="overflow-hidden rounded-lg border border-border bg-card">
               {hasEngineSnapshot ? (
                 <>
-                  <EngineSectionBlock title="Must Read" items={engineMustRead}
+                  <EngineSectionBlock title="Must Read" items={engineMustRead} enableDetail
                     empty="当前无 must_read 级推荐（需 recommendationScore ≥ 80）" />
-                  <EngineSectionBlock title="High Value" items={engineHighValue}
+                  <EngineSectionBlock title="High Value" items={engineHighValue} enableDetail
                     empty="当前无 high_value 级推荐（需 recommendationScore ≥ 65）" />
                   <EngineSectionBlock title="Observe" items={engineObserve}
                     empty="当前无 observe 级候选" />

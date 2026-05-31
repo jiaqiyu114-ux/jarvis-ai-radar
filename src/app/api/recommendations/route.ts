@@ -1,59 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getRecommendations, type RecommendationTier } from '@/lib/recommendations/recommendation-engine'
+import {
+  getRecommendations,
+  type RecommendationTier,
+  type RecommendedItem,
+} from '@/lib/recommendations/recommendation-engine'
 import { getLatestRecommendationSnapshot } from '@/lib/db/recommendation-snapshots'
-import { generateDeterministicDeepDive } from '@/lib/recommendations/deep-dive'
+import {
+  ensureDeterministicDeepDive,
+  shouldGenerateDeepDiveForTier,
+} from '@/lib/recommendations/deep-dive'
 
 export const dynamic = 'force-dynamic'
 
-function withDeepDive<T extends {
-  title: string
-  summary: string
-  source: string
-  sourceTier: string
-  category: string
-  finalScore: number
-  evScore: number | null
-  truthScore: number | null
-  recommendationTier: string
-  sourceStatus: string
-  recommendationReason: string
-  riskNote: string
-  nextStep: string
-  shouldTrackEvent: boolean
-  shouldEnterDailyReport: boolean
-  shouldDeepAnalyze: boolean
-  analysisTier: string | null
-  publishedAt: string
-  fetchedAt: string | null
-  originalUrl: string
-  deepDive?: unknown
-}>(items: T[]) {
+function withDeepDive(items: RecommendedItem[]): RecommendedItem[] {
   return items.map((item) => {
-    if (item.deepDive) return item
+    if (item.deepDive || !shouldGenerateDeepDiveForTier(item.recommendationTier)) return item
     return {
       ...item,
-      deepDive: generateDeterministicDeepDive({
-        title: item.title,
-        summary: item.summary,
-        source: item.source,
-        sourceTier: item.sourceTier,
-        category: item.category,
-        finalScore: item.finalScore,
-        evScore: item.evScore,
-        truthScore: item.truthScore,
-        recommendationTier: item.recommendationTier,
-        sourceStatus: item.sourceStatus,
-        recommendationReason: item.recommendationReason,
-        riskNote: item.riskNote,
-        nextStep: item.nextStep,
-        shouldTrackEvent: item.shouldTrackEvent,
-        shouldEnterDailyReport: item.shouldEnterDailyReport,
-        shouldDeepAnalyze: item.shouldDeepAnalyze,
-        analysisTier: item.analysisTier,
-        publishedAt: item.publishedAt,
-        fetchedAt: item.fetchedAt,
-        originalUrl: item.originalUrl,
-      }),
+      deepDive: ensureDeterministicDeepDive(item),
     }
   })
 }

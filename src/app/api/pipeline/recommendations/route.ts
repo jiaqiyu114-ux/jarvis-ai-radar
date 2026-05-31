@@ -37,7 +37,11 @@
 
 import { type NextRequest, NextResponse } from 'next/server'
 import { isServerSupabaseConfigured } from '@/lib/supabase/server'
-import { generateDeterministicDeepDive } from '@/lib/recommendations/deep-dive'
+import {
+  attachDeepDivesToRecommendations,
+  type FinalDeepDiveMode,
+} from '@/lib/recommendations/deep-dive'
+import { getDeepDiveModel, getLlmConfig } from '@/lib/llm/deep-dive-client'
 import {
   createAcc,
   runDeadlineAwareIngest,
@@ -62,59 +66,6 @@ import {
 
 export const dynamic = 'force-dynamic'
 
-function withDeepDive<T extends {
-  title: string
-  summary: string
-  source: string
-  sourceTier: string
-  category: string
-  finalScore: number
-  evScore: number | null
-  truthScore: number | null
-  recommendationTier: string
-  sourceStatus: string
-  recommendationReason: string
-  riskNote: string
-  nextStep: string
-  shouldTrackEvent: boolean
-  shouldEnterDailyReport: boolean
-  shouldDeepAnalyze: boolean
-  analysisTier: string | null
-  publishedAt: string
-  fetchedAt: string | null
-  originalUrl: string
-  deepDive?: unknown
-}>(items: T[]) {
-  return items.map((item) => {
-    if (item.deepDive) return item
-    return {
-      ...item,
-      deepDive: generateDeterministicDeepDive({
-        title: item.title,
-        summary: item.summary,
-        source: item.source,
-        sourceTier: item.sourceTier,
-        category: item.category,
-        finalScore: item.finalScore,
-        evScore: item.evScore,
-        truthScore: item.truthScore,
-        recommendationTier: item.recommendationTier,
-        sourceStatus: item.sourceStatus,
-        recommendationReason: item.recommendationReason,
-        riskNote: item.riskNote,
-        nextStep: item.nextStep,
-        shouldTrackEvent: item.shouldTrackEvent,
-        shouldEnterDailyReport: item.shouldEnterDailyReport,
-        shouldDeepAnalyze: item.shouldDeepAnalyze,
-        analysisTier: item.analysisTier,
-        publishedAt: item.publishedAt,
-        fetchedAt: item.fetchedAt,
-        originalUrl: item.originalUrl,
-      }),
-    }
-  })
-}
-
 // ── Param parsing ─────────────────────────────────────────────────────────────
 
 function clamp(n: number, min: number, max: number): number {
@@ -132,6 +83,7 @@ type PipelineParams = {
   refreshLimit:        number
   mode:                PipelineMode
   force:               boolean
+  deepDiveMode:        FinalDeepDiveMode
 }
 
 function parseParams(req: NextRequest): PipelineParams {
@@ -142,6 +94,9 @@ function parseParams(req: NextRequest): PipelineParams {
   const rawWindowHours = Number(sp.get('refreshWindowHours'))
   const rawLimit       = Number(sp.get('refreshLimit'))
   const rawMode        = sp.get('mode') ?? 'manual'
+  const deepDiveMode: FinalDeepDiveMode = sp.get('deepDive') === 'deterministic'
+    ? 'deterministic'
+    : 'llm'
 
   const mode: PipelineMode =
     rawMode === 'scheduled' ? 'scheduled' :
@@ -156,6 +111,7 @@ function parseParams(req: NextRequest): PipelineParams {
     refreshLimit:       clamp(Number.isFinite(rawLimit)       && rawLimit        > 0 ? rawLimit       : 50, 1, 100),
     mode,
     force:              sp.get('force') === 'true',
+    deepDiveMode,
   }
 }
 
@@ -204,6 +160,7 @@ export async function POST(req: NextRequest) {
   }
 
   const params    = parseParams(req)
+  const llmConfig = getLlmConfig()
   const startMs   = Date.now()
   const startedAt = new Date().toISOString()
   const hints:    string[] = []
@@ -251,7 +208,7 @@ export async function POST(req: NextRequest) {
 
   console.log(
     `[pipeline] start mode=${params.mode} ingest=${params.ingest} refresh=${params.refresh} ` +
-    `maxSources=${params.maxSources} ingestTimeoutMs=${params.ingestTimeoutMs}`,
+    `maxSources=${params.maxSources} ingestTimeoutMs=${params.ingestTimeoutMs} deepDive=${params.deepDiveMode}`,
   )
 
   // ── Phase 1: RSS Ingest ───────────────────────────────────────────────────
@@ -351,9 +308,15 @@ export async function POST(req: NextRequest) {
         })
       }
 
-      const snapshotItems = withDeepDive(
-        result.items.filter(i => i.recommendationTier !== 'archive'),
-      )
+      const snapshotItemsBase = result.items.filter(i => i.recommendationTier !== 'archive')
+      const {
+        items: snapshotItems,
+        deepDiveStats,
+      } = await attachDeepDivesToRecommendations(snapshotItemsBase, {
+        mode: params.deepDiveMode,
+        concurrency: 2,
+        includeSkipped: false,
+      })
       const snapshotId    = await createRecommendationSnapshot(
         {
           run_id:                    runId ?? undefined,
@@ -367,6 +330,10 @@ export async function POST(req: NextRequest) {
           observe_count:             result.stats.observeCount,
           archive_count:             result.stats.archiveCount,
           generated_at:              new Date().toISOString(),
+          metadata: {
+            deepDiveMode: params.deepDiveMode,
+            deepDiveStats,
+          },
         },
         snapshotItems,
       )
@@ -377,6 +344,8 @@ export async function POST(req: NextRequest) {
         ok:        true,
         runStatus,
         durationMs,
+        deepDiveMode: params.deepDiveMode,
+        deepDiveStats,
         run:       runId      ? { id: runId, status: runStatus, startedAt: refreshAt, durationMs } : null,
         snapshot:  snapshotId ? {
           id:                       snapshotId,
@@ -395,7 +364,7 @@ export async function POST(req: NextRequest) {
 
       hints.push(
         `Refresh: MR=${result.stats.mustReadCount} HV=${result.stats.highValueCount} ` +
-        `OB=${result.stats.observeCount} captured=${result.stats.capturedTotal}`,
+        `OB=${result.stats.observeCount} captured=${result.stats.capturedTotal} deepDive=${deepDiveStats.generated}/${deepDiveStats.total}`,
       )
       console.log(
         `[pipeline] refresh done — status=${runStatus} MR=${result.stats.mustReadCount} ` +
@@ -422,6 +391,16 @@ export async function POST(req: NextRequest) {
         ok:        false,
         runStatus: 'failed',
         durationMs,
+        deepDiveMode: params.deepDiveMode,
+        deepDiveStats: {
+          total: 0,
+          generated: 0,
+          fallback: 0,
+          failed: 0,
+          model: params.deepDiveMode === 'llm' ? getDeepDiveModel(llmConfig) : 'deterministic-v1',
+          provider: params.deepDiveMode === 'llm' ? llmConfig.provider : 'deterministic',
+          mode: params.deepDiveMode,
+        },
         error:     message,
         run:       runId ? { id: runId, status: 'failed', startedAt: refreshAt, durationMs } : null,
         snapshot:  null,
@@ -430,7 +409,11 @@ export async function POST(req: NextRequest) {
       hints.push(`Refresh failed: ${message.slice(0, 120)}`)
     }
   } else {
-    refreshResult = { enabled: false }
+    refreshResult = {
+      enabled: false,
+      deepDiveMode: params.deepDiveMode,
+      deepDiveStats: null,
+    }
     refreshOk     = null
     hints.push('Refresh skipped (refresh=false).')
   }
@@ -439,6 +422,7 @@ export async function POST(req: NextRequest) {
 
   const totalDurationMs = Date.now() - startMs
   const status          = computeStatus(params.ingest, ingestOk, params.refresh, refreshOk)
+  const deepDiveStats = (refreshResult as { deepDiveStats?: unknown } | null)?.deepDiveStats ?? null
 
   console.log(`[pipeline] finish status=${status} mode=${params.mode} totalMs=${totalDurationMs}`)
 
@@ -449,6 +433,8 @@ export async function POST(req: NextRequest) {
     startedAt,
     finishedAt: new Date().toISOString(),
     durationMs: totalDurationMs,
+    deepDiveMode: params.deepDiveMode,
+    deepDiveStats,
     ingest:     ingestResult,
     refresh:    refreshResult,
     hints,

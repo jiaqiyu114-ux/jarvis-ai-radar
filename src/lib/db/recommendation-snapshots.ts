@@ -10,7 +10,7 @@
 import { supabaseServer, isServerSupabaseConfigured } from '@/lib/supabase/server'
 import { cleanText } from '@/lib/text/clean-text'
 import {
-  generateDeterministicDeepDive,
+  ensureDeterministicDeepDive,
   type RecommendationDeepDive,
 } from '@/lib/recommendations/deep-dive'
 import type {
@@ -93,11 +93,11 @@ function isMissingColumn(err: { code?: string | null; message?: string | null; d
 function looksGarbled(text: string): boolean {
   if (!text || text.length < 4) return false
   return (
-    text.includes('芒鈧') ||
-    text.includes('脙') ||
     text.includes('锟') ||
-    text.includes('聙') ||
-    /[�]/.test(text)
+    text.includes('�') ||
+    text.includes('鈧') ||
+    text.includes('鑺') ||
+    text.includes('脙')
   )
 }
 
@@ -121,29 +121,7 @@ const FALLBACK_STEP = '优先查看原文和来源链路，再决定是否升级
 
 function ensureDeepDive(item: RecommendedItem): RecommendationDeepDive {
   if (item.deepDive) return item.deepDive
-  return generateDeterministicDeepDive({
-    title: item.title,
-    summary: item.summary,
-    source: item.source,
-    sourceTier: item.sourceTier,
-    category: item.category,
-    finalScore: item.finalScore,
-    evScore: item.evScore,
-    truthScore: item.truthScore,
-    sourceTraceScore: null,
-    recommendationTier: item.recommendationTier,
-    sourceStatus: item.sourceStatus,
-    recommendationReason: item.recommendationReason,
-    riskNote: item.riskNote,
-    nextStep: item.nextStep,
-    shouldTrackEvent: item.shouldTrackEvent,
-    shouldEnterDailyReport: item.shouldEnterDailyReport,
-    shouldDeepAnalyze: item.shouldDeepAnalyze,
-    analysisTier: item.analysisTier,
-    publishedAt: item.publishedAt,
-    fetchedAt: item.fetchedAt,
-    originalUrl: item.originalUrl,
-  })
+  return ensureDeterministicDeepDive(item)
 }
 
 function stripDeepDiveColumns<T extends Record<string, unknown>>(row: T): Omit<T,
@@ -212,29 +190,7 @@ function itemToRow(item: RecommendedItem, snapshotId: string, rank: number) {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildDeepDiveFromRow(row: any, item: RecommendedItem): RecommendationDeepDive {
-  const generated = generateDeterministicDeepDive({
-    title: item.title,
-    summary: item.summary,
-    source: item.source,
-    sourceTier: item.sourceTier,
-    category: item.category,
-    finalScore: item.finalScore,
-    evScore: item.evScore,
-    truthScore: item.truthScore,
-    recommendationTier: item.recommendationTier,
-    sourceStatus: item.sourceStatus,
-    recommendationReason: item.recommendationReason,
-    riskNote: item.riskNote,
-    nextStep: item.nextStep,
-    shouldTrackEvent: item.shouldTrackEvent,
-    shouldEnterDailyReport: item.shouldEnterDailyReport,
-    shouldDeepAnalyze: item.shouldDeepAnalyze,
-    analysisTier: item.analysisTier,
-    publishedAt: item.publishedAt,
-    fetchedAt: item.fetchedAt,
-    originalUrl: item.originalUrl,
-  })
-
+  const generated = ensureDeterministicDeepDive(item)
   return {
     status: sanitizeDisplayText(row.deep_dive_status, generated.status) as RecommendationDeepDive['status'],
     generatedAt: row.deep_dive_generated_at ?? generated.generatedAt,
@@ -244,12 +200,17 @@ function buildDeepDiveFromRow(row: any, item: RecommendedItem): RecommendationDe
     backgroundContext: sanitizeDisplayText(row.background_context, generated.backgroundContext),
     whyItMatters: sanitizeDisplayText(row.why_it_matters, generated.whyItMatters),
     userInsight: sanitizeDisplayText(row.user_insight, generated.userInsight),
+    userValue: sanitizeDisplayText(row.user_insight, generated.userValue),
     riskAndUncertainty: sanitizeDisplayText(row.risk_and_uncertainty, generated.riskAndUncertainty),
+    uncertainty: sanitizeDisplayText(row.risk_and_uncertainty, generated.uncertainty),
     followUpSuggestion: sanitizeDisplayText(row.follow_up_suggestion, generated.followUpSuggestion),
+    followUp: sanitizeDisplayText(row.follow_up_suggestion, generated.followUp),
     sourceReadingGuide: sanitizeDisplayText(row.source_reading_guide, generated.sourceReadingGuide),
     deepDiveStatus: sanitizeDisplayText(row.deep_dive_status, generated.deepDiveStatus) as RecommendationDeepDive['deepDiveStatus'],
     deepDiveGeneratedAt: row.deep_dive_generated_at ?? generated.deepDiveGeneratedAt,
     deepDiveModel: sanitizeDisplayText(row.deep_dive_model, generated.deepDiveModel),
+    inputQuality: generated.inputQuality,
+    fallbackReason: generated.fallbackReason ?? null,
   }
 }
 
@@ -332,18 +293,13 @@ export async function createRecommendationSnapshot(
 
     if (items.length > 0) {
       const rows = items.map((item, idx) => itemToRow(item, snapshotId, idx + 1))
-
-      const { error: itemsErr } = await db()
-        .from('recommendation_snapshot_items')
-        .insert(rows)
+      const { error: itemsErr } = await db().from('recommendation_snapshot_items').insert(rows)
 
       if (itemsErr) {
         if (isMissingColumn(itemsErr)) {
           console.warn('[db/recommendation-snapshots] deep-dive columns missing; writing legacy snapshot items only')
           const fallbackRows = rows.map(stripDeepDiveColumns)
-          const { error: legacyErr } = await db()
-            .from('recommendation_snapshot_items')
-            .insert(fallbackRows)
+          const { error: legacyErr } = await db().from('recommendation_snapshot_items').insert(fallbackRows)
           if (legacyErr && !isMissingTable(legacyErr)) {
             console.error('[db/recommendation-snapshots] insert legacy items failed:', legacyErr.message)
           }
@@ -390,7 +346,6 @@ export async function getLatestRecommendationSnapshot(): Promise<RecommendationS
     }
 
     const items = ((rows ?? []) as unknown[]).map(rowToItem)
-
     return {
       id: snap.id,
       run_id: snap.run_id ?? null,
@@ -442,7 +397,6 @@ export async function getRecommendationSnapshotById(id: string): Promise<Recomme
     }
 
     const items = ((rows ?? []) as unknown[]).map(rowToItem)
-
     return {
       id: snap.id,
       run_id: snap.run_id ?? null,
