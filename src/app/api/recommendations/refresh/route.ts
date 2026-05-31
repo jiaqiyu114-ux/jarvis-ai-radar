@@ -4,26 +4,25 @@ import {
   insertRecommendationRun,
   updateRecommendationRun,
 } from '@/lib/db/recommendation-runs'
+import {
+  createRecommendationSnapshot,
+} from '@/lib/db/recommendation-snapshots'
 
 export const dynamic = 'force-dynamic'
 
 /**
  * POST /api/recommendations/refresh
  *
- * Triggers a fresh recommendation engine run and records the result.
- * Designed as a lightweight trigger endpoint — no body required.
+ * The canonical entry point for generating a new recommendation snapshot.
  *
- * Intended for:
- *   - Manual on-demand refresh
- *   - Future Vercel Cron integration (body: {}) once cron is set up
- *   - CI / scheduled external calls
+ * Flow:
+ *   1. Run recommendation engine
+ *   2. Write recommendation_runs record
+ *   3. Write recommendation_snapshots + recommendation_snapshot_items
+ *   4. Return { ok, runStatus, run, snapshot, stats, items }
  *
- * Returns:
- *   { ok, runStatus, durationMs, run: { id, status, startedAt, durationMs }, stats }
- *
- * Note: GET /api/recommendations already triggers a run record.
- * This endpoint is useful when you want a dedicated refresh without
- * fetching the full items list in the response.
+ * After a successful refresh, GET /api/recommendations will return
+ * the new snapshot. Failures do NOT overwrite a previously good snapshot.
  */
 export async function POST() {
   const WINDOW_HOURS = 72
@@ -31,6 +30,7 @@ export async function POST() {
   const startMs      = Date.now()
   const startedAt    = new Date().toISOString()
 
+  // 1. Insert initial run record
   const runId = await insertRecommendationRun({
     status:       'running',
     window_hours: WINDOW_HOURS,
@@ -39,12 +39,16 @@ export async function POST() {
   })
 
   try {
-    const result     = await getRecommendations({ windowHours: WINDOW_HOURS, limit: LIMIT })
+    // 2. Run recommendation engine
+    const result     = await getRecommendations({ windowHours: WINDOW_HOURS, limit: LIMIT, includeArchive: true })
     const durationMs = Date.now() - startMs
 
+    const runStatus = result.items.length > 0 ? 'success' : 'partial_success'
+
+    // 3. Update run record with results
     if (runId) {
       await updateRecommendationRun(runId, {
-        status:                  'success',
+        status:                  runStatus,
         captured_total:          result.stats.capturedTotal,
         recommended_candidates:  result.stats.recommendationCandidates,
         must_read_count:         result.stats.mustReadCount,
@@ -56,14 +60,49 @@ export async function POST() {
       })
     }
 
+    // 4. Persist snapshot (filter out archive items for main snapshot)
+    const snapshotItems = result.items.filter(i => i.recommendationTier !== 'archive')
+
+    const snapshotId = await createRecommendationSnapshot(
+      {
+        run_id:                   runId ?? undefined,
+        status:                   runStatus,
+        window_hours:             WINDOW_HOURS,
+        limit_count:              LIMIT,
+        captured_total:           result.stats.capturedTotal,
+        recommendation_candidates: result.stats.recommendationCandidates,
+        must_read_count:          result.stats.mustReadCount,
+        high_value_count:         result.stats.highValueCount,
+        observe_count:            result.stats.observeCount,
+        archive_count:            result.stats.archiveCount,
+        generated_at:             new Date().toISOString(),
+      },
+      snapshotItems,
+    )
+
+    const run      = runId      ? { id: runId,      status: runStatus, startedAt, durationMs } : null
+    const snapshot = snapshotId ? {
+      id:                       snapshotId,
+      runId,
+      status:                   runStatus,
+      generatedAt:              new Date().toISOString(),
+      windowHours:              WINDOW_HOURS,
+      capturedTotal:            result.stats.capturedTotal,
+      recommendationCandidates: result.stats.recommendationCandidates,
+      mustReadCount:            result.stats.mustReadCount,
+      highValueCount:           result.stats.highValueCount,
+      observeCount:             result.stats.observeCount,
+      archiveCount:             result.stats.archiveCount,
+    } : null
+
     return NextResponse.json({
       ok:        true,
-      runStatus: 'success',
+      runStatus,
       durationMs,
-      run: runId
-        ? { id: runId, status: 'success', startedAt, durationMs }
-        : null,
-      stats: result.stats,
+      run,
+      snapshot,
+      stats:     result.stats,
+      items:     snapshotItems,
     })
 
   } catch (err) {
@@ -86,7 +125,8 @@ export async function POST() {
         runStatus: 'failed',
         error:     message,
         durationMs,
-        run: runId ? { id: runId, status: 'failed', startedAt, durationMs } : null,
+        run:       runId ? { id: runId, status: 'failed', startedAt, durationMs } : null,
+        snapshot:  null,
       },
       { status: 500 },
     )
