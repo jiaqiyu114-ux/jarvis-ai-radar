@@ -7,11 +7,10 @@ import { StatCard } from "@/components/dashboard/stat-card"
 import { ScoreBadge } from "@/components/feed/score-badge"
 import { SourceTierBadge } from "@/components/feed/source-tier-badge"
 import { TodayRecommendationCard } from "./_today-recommendation-card"
+import { EngineRecommendationCard } from "./_engine-recommendation-card"
 import { listEventClusters, type EventClusterListItem } from "@/lib/db/event-clusters"
-import {
-  getLatestDailyRecommendationSnapshot,
-  getLiveDailyRecommendationPreview,
-} from "@/lib/data/daily-recommendation-snapshot"
+import { getLatestDailyRecommendationSnapshot } from "@/lib/data/daily-recommendation-snapshot"
+import { getRecommendations, type RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import type { DailyRecommendationSnapshotItem } from "@/lib/data/daily-recommendation-snapshot"
 import type { TodayRecommendationItem } from "@/lib/data/today-adapter"
 import type { TopSignalData } from "@/components/layout/app-shell"
@@ -140,17 +139,47 @@ function SectionBlock({
   )
 }
 
+function EngineSectionBlock({
+  title,
+  items,
+  empty,
+}: {
+  title: string
+  items: RecommendedItem[]
+  empty: string
+}) {
+  if (items.length === 0) {
+    return (
+      <section className="border-b border-border last:border-b-0">
+        <div className="px-4 py-2.5">
+          <h2 className="section-title">{title}</h2>
+          <p className="mt-2 text-xs text-muted-foreground">{empty}</p>
+        </div>
+      </section>
+    )
+  }
+  return (
+    <section className="border-b border-border last:border-b-0">
+      <div className="flex items-center gap-2 px-4 py-2.5 bg-muted/20 border-b border-border">
+        <h2 className="section-title">{title}</h2>
+        <span className="meta-text">{items.length} 条</span>
+      </div>
+      {items.map(item => <EngineRecommendationCard key={item.id} item={item} />)}
+    </section>
+  )
+}
+
 export default async function DashboardPage() {
   const snapshot = await getLatestDailyRecommendationSnapshot()
-  const livePreview = snapshot.hasSnapshot
+
+  // When there's no stored snapshot, use the always-on engine (72h window, 20 items)
+  const engineResult = snapshot.hasSnapshot
     ? null
-    : await getLiveDailyRecommendationPreview(12)
+    : await getRecommendations({ windowHours: 72, limit: 20 }).catch(() => null)
 
   let eventClusters: EventClusterListItem[] = []
   try {
     const result = await listEventClusters({ limit: 20, includeItems: false })
-    // Only show clusters with real multi-item/multi-source signal
-    // confidence > 20 is above the single-item cap (max 20), indicating ≥2 items or URL match
     eventClusters = result.clusters
       .filter(cluster =>
         (cluster.status === "active" || cluster.status === "watching") &&
@@ -161,47 +190,71 @@ export default async function DashboardPage() {
     eventClusters = []
   }
 
-  const recommendations = snapshot.hasSnapshot
-    ? snapshot.items
-    : livePreview?.recommendations ?? []
-  const topItem = recommendations[0] ?? null
-  const topSignal: TopSignalData | undefined = topItem
-    ? { score: topItem.finalScore, title: topItem.title, category: topItem.category }
-    : undefined
+  // Snapshot items (for snapshot path) or engine items (for always-on path)
+  const snapshotItems = snapshot.hasSnapshot ? snapshot.items : []
+  const engineItems   = engineResult?.items ?? []
 
+  // Top signal for the app shell
+  const topSnapshotItem = snapshotItems[0] ?? null
+  const topEngineItem   = engineItems[0]   ?? null
+  const topSignal: TopSignalData | undefined = topSnapshotItem
+    ? { score: topSnapshotItem.finalScore, title: topSnapshotItem.title, category: topSnapshotItem.category }
+    : topEngineItem
+      ? { score: topEngineItem.recommendationScore, title: topEngineItem.title, category: topEngineItem.category }
+      : undefined
+
+  // Stats for the top stat cards
   const stats = snapshot.hasSnapshot && snapshot.run
     ? {
-        captureTotal: snapshot.run.total_candidates,
+        captureTotal:        snapshot.run.total_candidates,
         recommendationCount: snapshot.run.selected_count,
-        dailyReportCount: snapshot.run.must_read_count,
-        eventCandidateCount: recommendations.filter(item => item.shouldTrackEvent).length,
-        deepCandidateCount: recommendations.filter(item => item.shouldDeepAnalyze || item.analysisTier === 'deep' || item.analysisTier === 'cluster').length,
+        dailyReportCount:    snapshot.run.must_read_count,
+        eventCandidateCount: snapshotItems.filter(item => item.shouldTrackEvent).length,
+        deepCandidateCount:  snapshotItems.filter(item => item.shouldDeepAnalyze || item.analysisTier === 'deep' || item.analysisTier === 'cluster').length,
       }
-    : livePreview?.stats ?? {
-        captureTotal: 0,
-        recommendationCount: 0,
-        dailyReportCount: 0,
-        eventCandidateCount: 0,
-        deepCandidateCount: 0,
-      }
+    : engineResult?.stats
+      ? {
+          captureTotal:        engineResult.stats.capturedTotal,
+          recommendationCount: engineResult.stats.mustReadCount + engineResult.stats.highValueCount + engineResult.stats.observeCount,
+          dailyReportCount:    engineResult.stats.mustReadCount,
+          eventCandidateCount: engineItems.filter(i => i.shouldTrackEvent).length,
+          deepCandidateCount:  engineItems.filter(i => i.shouldDeepAnalyze).length,
+        }
+      : { captureTotal: 0, recommendationCount: 0, dailyReportCount: 0, eventCandidateCount: 0, deepCandidateCount: 0 }
 
-  const highScoreReference = [...recommendations]
-    .sort((a, b) => b.finalScore - a.finalScore)
-    .slice(0, 5)
-  const pendingCandidates = recommendations
+  // Sidebar reference items (from snapshot or engine)
+  const highScoreReference = snapshot.hasSnapshot
+    ? [...snapshotItems].sort((a, b) => b.finalScore - a.finalScore).slice(0, 5)
+    : []
+  const pendingCandidates = snapshotItems
     .filter(item => item.analysisGate?.analysisStage === 'unprocessed' || item.analysisStage === 'unprocessed')
     .slice(0, 5)
 
-  // ── Quality overview (computed from existing recommendations data) ────────────
-  const qualityStats = {
-    mustRead:       snapshot.hasSnapshot ? snapshot.grouped.must_read.length  : recommendations.filter(r => r.shouldEnterDailyReport).length,
-    highValue:      snapshot.hasSnapshot ? snapshot.grouped.high_value.length  : 0,
-    observe:        snapshot.hasSnapshot ? snapshot.grouped.observe.length     : 0,
-    multiSource:    recommendations.filter(r => r.analysisTier === 'cluster' || (r.shouldTrackEvent && r.analysisTier !== null)).length,
-    userCurated:    recommendations.filter(r => r.isUserCurated === true).length,
-    withEvidence:   recommendations.filter(r => (r.evidenceScore ?? 0) >= 55 || (r.truthScore ?? 0) >= 55).length,
-    estimatedExcluded: Math.max(0, stats.captureTotal - stats.recommendationCount),
-  }
+  // Quality overview pills
+  const qualityStats = snapshot.hasSnapshot
+    ? {
+        mustRead:          snapshot.grouped.must_read.length,
+        highValue:         snapshot.grouped.high_value.length,
+        observe:           snapshot.grouped.observe.length,
+        multiSource:       snapshotItems.filter(r => r.analysisTier === 'cluster').length,
+        userCurated:       snapshotItems.filter(r => r.isUserCurated === true).length,
+        withEvidence:      snapshotItems.filter(r => (r.evidenceScore ?? 0) >= 55).length,
+        estimatedExcluded: Math.max(0, stats.captureTotal - stats.recommendationCount),
+      }
+    : {
+        mustRead:          engineResult?.stats.mustReadCount  ?? 0,
+        highValue:         engineResult?.stats.highValueCount ?? 0,
+        observe:           engineResult?.stats.observeCount   ?? 0,
+        multiSource:       engineItems.filter(i => i.sourceStatus === 'multi_source').length,
+        userCurated:       engineItems.filter(i => i.isUserCurated).length,
+        withEvidence:      engineItems.filter(i => i.evidenceLevel === 'strong' || i.evidenceLevel === 'medium').length,
+        estimatedExcluded: Math.max(0, (engineResult?.stats.capturedTotal ?? 0) - stats.recommendationCount),
+      }
+
+  // Engine sections (when no snapshot)
+  const engineMustRead  = engineItems.filter(i => i.recommendationTier === 'must_read')
+  const engineHighValue = engineItems.filter(i => i.recommendationTier === 'high_value')
+  const engineObserve   = engineItems.filter(i => i.recommendationTier === 'observe')
 
   return (
     <AppShell topSignal={topSignal}>
@@ -213,29 +266,35 @@ export default async function DashboardPage() {
               <h1 className="editorial-title text-[2.15rem]">
                 {snapshot.hasSnapshot
                   ? snapshot.isTodaySnapshot ? "今日推荐快照" : "最近一次推荐快照"
-                  : "今日推荐尚未生成"}
+                  : "推荐雷达 · 实时"}
               </h1>
               <p className="page-subtitle mt-1.5">
                 {snapshot.hasSnapshot && snapshot.run
-                  ? `生成时间 ${formatTime(snapshot.run.generated_at)}`
-                  : "实时候选，不是正式日报快照"}
+                  ? `快照生成于 ${formatTime(snapshot.run.generated_at)}`
+                  : engineResult
+                    ? `实时引擎 · 最近 ${engineResult.windowHours}h 窗口`
+                    : "实时候选"}
                 {' · '}
                 当前窗口捕捉 <span className="font-medium text-foreground tabular-nums">{stats.captureTotal}</span> 条
                 {' · '}
                 推荐候选 <span className="font-medium text-foreground tabular-nums">{stats.recommendationCount}</span> 条
               </p>
-              <p className="mt-1 text-[11px] text-muted-foreground/70">
-                窗口范围：{snapshot.hasSnapshot && snapshot.run
-                  ? `${formatTime(snapshot.run.window_start)} - ${formatTime(snapshot.run.window_end)}`
-                  : livePreview
-                    ? `${formatTime(livePreview.window.startIso)} - ${formatTime(livePreview.window.endIso)}`
-                    : "未记录"}
-              </p>
+              {snapshot.hasSnapshot && snapshot.run && (
+                <p className="mt-1 text-[11px] text-muted-foreground/70">
+                  窗口范围：{formatTime(snapshot.run.window_start)} - {formatTime(snapshot.run.window_end)}
+                </p>
+              )}
+              {!snapshot.hasSnapshot && engineResult && (
+                <p className="mt-1 text-[11px] text-muted-foreground/70">
+                  窗口：{formatTime(engineResult.windowStart)} - {formatTime(engineResult.windowEnd)}
+                  {' · '}候选池 {engineResult.stats.capturedTotal} 条 · 已归档 {engineResult.stats.archiveCount} 条
+                </p>
+              )}
             </div>
 
             {!snapshot.hasSnapshot && (
-              <span className="rounded border border-warning/30 bg-warning/10 px-2 py-1 text-[10px] font-medium text-warning">
-                实时候选
+              <span className="rounded border border-sky-400/30 bg-sky-400/10 px-2 py-1 text-[10px] font-medium text-sky-600 dark:text-sky-400">
+                实时引擎
               </span>
             )}
           </div>
@@ -252,7 +311,7 @@ export default async function DashboardPage() {
           <StatCard
             label="当前窗口捕捉"
             value={stats.captureTotal}
-            change={snapshot.hasSnapshot ? "snapshot window" : livePreview?.window.label}
+            change={snapshot.hasSnapshot ? "snapshot window" : engineResult ? `最近 ${engineResult.windowHours}h` : "实时引擎"}
             icon={Radio}
           />
           <StatCard
@@ -283,7 +342,7 @@ export default async function DashboardPage() {
         </div>
 
         {/* ── Quality overview strip ── */}
-        {recommendations.length > 0 && (
+        {(snapshotItems.length > 0 || engineItems.length > 0) && (
           <div className="mb-5 flex items-center gap-2 flex-wrap rounded-lg border border-border bg-card px-4 py-2.5">
             <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mr-1">质量分布</span>
             {qualityStats.mustRead > 0 && (
@@ -319,9 +378,11 @@ export default async function DashboardPage() {
             <div className="mb-2 flex items-center gap-2">
               <div className="h-1.5 w-1.5 rounded-full bg-primary" />
               <h2 className="section-title text-primary/80">
-                {snapshot.hasSnapshot ? "正式推荐" : "实时候选，不是正式日报快照"}
+                {snapshot.hasSnapshot ? "正式推荐快照" : "实时推荐"}
               </h2>
-              <span className="meta-text">{recommendations.length} 条</span>
+              <span className="meta-text">
+                {snapshot.hasSnapshot ? snapshotItems.length : engineItems.length} 条
+              </span>
             </div>
 
             <div className="overflow-hidden rounded-lg border border-border bg-card">
@@ -345,27 +406,51 @@ export default async function DashboardPage() {
                     />
                   </>
                 )
-                : recommendations.length > 0
-                  ? recommendations.map(item => (
-                      <TodayRecommendationCard key={item.id} item={item} />
-                    ))
-                : (
-                  <div className="px-6 py-12 text-center">
-                    <p className="text-sm text-muted-foreground">
-                      暂无今日推荐。可以先运行处理队列，或等待更多真实信息进入系统。
-                    </p>
-                  </div>
-                )
+                : engineItems.length > 0
+                  ? (
+                    <>
+                      <EngineSectionBlock
+                        title="Must Read"
+                        items={engineMustRead}
+                        empty="当前无 must_read 级推荐（需 recommendationScore ≥ 80）"
+                      />
+                      <EngineSectionBlock
+                        title="High Value"
+                        items={engineHighValue}
+                        empty="当前无 high_value 级推荐（需 recommendationScore ≥ 65）"
+                      />
+                      <EngineSectionBlock
+                        title="Observe"
+                        items={engineObserve}
+                        empty="当前无 observe 级候选"
+                      />
+                    </>
+                  )
+                  : (
+                    <div className="px-6 py-12 text-center space-y-2">
+                      <p className="text-sm text-muted-foreground">
+                        当前暂无符合阈值的推荐
+                      </p>
+                      <p className="text-xs text-muted-foreground/60">
+                        请先触发 RSS 抓取，或在 /sources 页面添加高质量信源
+                      </p>
+                      <p className="text-[10px] text-muted-foreground/50 mt-1">
+                        诊断：<a href="/api/recommendations/health" target="_blank" className="underline underline-offset-2">GET /api/recommendations/health</a>
+                      </p>
+                    </div>
+                  )
               }
             </div>
           </main>
 
           <aside className="col-span-1 space-y-4">
-            <SideSection
-              title={snapshot.isTodaySnapshot ? "今日高分参考" : "高分参考"}
-              empty="暂无高分参考"
-              items={highScoreReference}
-            />
+            {highScoreReference.length > 0 && (
+              <SideSection
+                title={snapshot.isTodaySnapshot ? "今日高分参考" : "高分参考"}
+                empty="暂无高分参考"
+                items={highScoreReference}
+              />
+            )}
             <ClusterSideSection
               title="多源事件候选"
               empty="暂无多源事件候选（单条观察簇不在此展示）"

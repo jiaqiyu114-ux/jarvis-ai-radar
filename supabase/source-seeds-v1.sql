@@ -1,184 +1,210 @@
 -- ============================================================
---  J.A.R.V.I.S. High-Quality Source Seeds V1
---  Run AFTER schema.sql and rss-sources-seed.sql.
+--  J.A.R.V.I.S. High-Quality Source Seeds V1 (Revised)
 --
---  Adds ~25 high-quality AI/tech RSS sources.
---  Idempotent: UPDATE existing rows, INSERT missing ones.
---  Safe to run multiple times.
+--  Execute in Supabase SQL Editor AFTER schema.sql.
+--  Uses ON CONFLICT (url) DO UPDATE for idempotency.
+--  Safe to run multiple times — will not delete existing data.
 --
---  Confidence notes:
---    [HIGH]   URL confirmed valid from multiple sources
---    [MEDIUM] URL format inferred from site structure; may need adjustment
---    [LOW]    Best guess; verify manually before relying on
+--  Confidence:
+--    [HIGH]   URL confirmed valid and consistently returns RSS
+--    [MED]    URL inferred from site structure; likely correct
+--    [LOW]    Best guess — verify manually, may return 404
 --
---  is_user_curated defaults to FALSE for all seeds.
---  Users can mark preferred sources from the /sources page.
+--  is_user_curated = FALSE by default.
+--  Mark sources as "我的源" from the /sources management page.
+--  AIHOT 精选 is the only exception (user-designated curated source).
 -- ============================================================
 
--- ── MIT Technology Review [HIGH] ─────────────────────────────────────────────
-UPDATE sources SET name='MIT Technology Review', platform='rss', source_tier='A',
-  base_score=82, reliability_score=88, category='AI技术', is_official=false, is_blocked=false
-WHERE url='https://www.technologyreview.com/feed/';
-INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'MIT Technology Review','https://www.technologyreview.com/feed/','rss','A',82,88,'AI技术',false,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://www.technologyreview.com/feed/');
+-- ────────────────────────────────────────────────────────────
+--  S TIER — Official model labs / primary sources
+-- ────────────────────────────────────────────────────────────
 
--- ── VentureBeat AI [HIGH] ────────────────────────────────────────────────────
-UPDATE sources SET name='VentureBeat AI', platform='rss', source_tier='B',
-  base_score=74, reliability_score=76, category='行业趋势', is_official=false, is_blocked=false
-WHERE url='https://venturebeat.com/ai/feed/';
+-- OpenAI Blog [MED]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'VentureBeat AI','https://venturebeat.com/ai/feed/','rss','B',74,76,'行业趋势',false,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://venturebeat.com/ai/feed/');
+VALUES ('OpenAI Blog', 'https://openai.com/blog/rss.xml', 'rss', 'S', 95, 95, 'AI技术', true, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, reliability_score = EXCLUDED.reliability_score,
+  is_official = EXCLUDED.is_official, is_blocked = false;
 
--- ── The Decoder [HIGH] ───────────────────────────────────────────────────────
-UPDATE sources SET name='The Decoder', platform='rss', source_tier='B',
-  base_score=72, reliability_score=75, category='AI技术', is_official=false, is_blocked=false
-WHERE url='https://the-decoder.com/feed/';
+-- Anthropic News [LOW — RSS not confirmed]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'The Decoder','https://the-decoder.com/feed/','rss','B',72,75,'AI技术',false,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://the-decoder.com/feed/');
+VALUES ('Anthropic News', 'https://www.anthropic.com/rss.xml', 'rss', 'S', 95, 95, 'AI技术', true, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_official = EXCLUDED.is_official, is_blocked = false;
 
--- ── GitHub Blog [HIGH] ───────────────────────────────────────────────────────
-UPDATE sources SET name='GitHub Blog', platform='rss', source_tier='A',
-  base_score=80, reliability_score=85, category='开源项目', is_official=true, is_blocked=false
-WHERE url='https://github.blog/feed/';
+-- ────────────────────────────────────────────────────────────
+--  A TIER — High-quality media and research
+-- ────────────────────────────────────────────────────────────
+
+-- Hugging Face Blog [HIGH]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'GitHub Blog','https://github.blog/feed/','rss','A',80,85,'开源项目',true,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://github.blog/feed/');
+VALUES ('Hugging Face Blog', 'https://huggingface.co/blog/feed.xml', 'rss', 'A', 82, 85, 'AI技术', false, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, reliability_score = EXCLUDED.reliability_score, is_blocked = false;
 
--- ── Ars Technica AI [HIGH] ───────────────────────────────────────────────────
-UPDATE sources SET name='Ars Technica AI', platform='rss', source_tier='B',
-  base_score=73, reliability_score=78, category='AI技术', is_official=false, is_blocked=false
-WHERE url='https://feeds.arstechnica.com/arstechnica/technology-lab';
+-- MIT Technology Review [HIGH]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'Ars Technica AI','https://feeds.arstechnica.com/arstechnica/technology-lab','rss','B',73,78,'AI技术',false,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://feeds.arstechnica.com/arstechnica/technology-lab');
+VALUES ('MIT Technology Review', 'https://www.technologyreview.com/feed/', 'rss', 'A', 82, 88, 'AI技术', false, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, reliability_score = EXCLUDED.reliability_score, is_blocked = false;
 
--- ── Wired AI [MEDIUM] ────────────────────────────────────────────────────────
-UPDATE sources SET name='Wired AI', platform='rss', source_tier='B',
-  base_score=70, reliability_score=72, category='AI技术', is_official=false, is_blocked=false
-WHERE url='https://www.wired.com/feed/tag/artificial-intelligence/latest/rss';
+-- Google Research Blog [MED]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'Wired AI','https://www.wired.com/feed/tag/artificial-intelligence/latest/rss','rss','B',70,72,'AI技术',false,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://www.wired.com/feed/tag/artificial-intelligence/latest/rss');
+VALUES ('Google Research Blog', 'https://blog.research.google/feeds/posts/default', 'rss', 'A', 85, 88, '研究报告', true, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_official = EXCLUDED.is_official, is_blocked = false;
 
--- ── MarkTechPost [HIGH] ──────────────────────────────────────────────────────
-UPDATE sources SET name='MarkTechPost', platform='rss', source_tier='B',
-  base_score=65, reliability_score=68, category='AI技术', is_official=false, is_blocked=false
-WHERE url='https://www.marktechpost.com/feed/';
+-- Microsoft Research Blog [MED]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'MarkTechPost','https://www.marktechpost.com/feed/','rss','B',65,68,'AI技术',false,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://www.marktechpost.com/feed/');
+VALUES ('Microsoft Research Blog', 'https://www.microsoft.com/en-us/research/feed/', 'rss', 'A', 82, 85, '研究报告', true, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_official = EXCLUDED.is_official, is_blocked = false;
 
--- ── Vercel Blog [HIGH] ───────────────────────────────────────────────────────
-UPDATE sources SET name='Vercel Blog', platform='rss', source_tier='B',
-  base_score=70, reliability_score=75, category='产品发布', is_official=true, is_blocked=false
-WHERE url='https://vercel.com/blog/rss.xml';
+-- GitHub Blog [HIGH]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'Vercel Blog','https://vercel.com/blog/rss.xml','rss','B',70,75,'产品发布',true,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://vercel.com/blog/rss.xml');
+VALUES ('GitHub Blog', 'https://github.blog/feed/', 'rss', 'A', 80, 85, '开源项目', true, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_official = EXCLUDED.is_official, is_blocked = false;
 
--- ── Cloudflare Blog [HIGH] ───────────────────────────────────────────────────
-UPDATE sources SET name='Cloudflare Blog', platform='rss', source_tier='B',
-  base_score=70, reliability_score=75, category='行业趋势', is_official=true, is_blocked=false
-WHERE url='https://blog.cloudflare.com/rss/';
+-- Mistral AI Blog [MED]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'Cloudflare Blog','https://blog.cloudflare.com/rss/','rss','B',70,75,'行业趋势',true,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://blog.cloudflare.com/rss/');
+VALUES ('Mistral AI Blog', 'https://mistral.ai/news/rss.xml', 'rss', 'A', 85, 87, 'AI技术', true, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_official = EXCLUDED.is_official, is_blocked = false;
 
--- ── Supabase Blog [HIGH] ─────────────────────────────────────────────────────
-UPDATE sources SET name='Supabase Blog', platform='rss', source_tier='B',
-  base_score=68, reliability_score=72, category='产品发布', is_official=true, is_blocked=false
-WHERE url='https://supabase.com/blog/rss.xml';
+-- ────────────────────────────────────────────────────────────
+--  B TIER — Quality media and developer blogs
+-- ────────────────────────────────────────────────────────────
+
+-- The Verge AI [HIGH]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'Supabase Blog','https://supabase.com/blog/rss.xml','rss','B',68,72,'产品发布',true,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://supabase.com/blog/rss.xml');
+VALUES ('The Verge AI', 'https://www.theverge.com/rss/ai-artificial-intelligence/index.xml', 'rss', 'B', 72, 75, 'AI技术', false, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_blocked = false;
 
--- ── Towards Data Science [HIGH] ──────────────────────────────────────────────
-UPDATE sources SET name='Towards Data Science', platform='rss', source_tier='B',
-  base_score=68, reliability_score=70, category='研究报告', is_official=false, is_blocked=false
-WHERE url='https://towardsdatascience.com/feed';
+-- TechCrunch AI [HIGH]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'Towards Data Science','https://towardsdatascience.com/feed','rss','B',68,70,'研究报告',false,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://towardsdatascience.com/feed');
+VALUES ('TechCrunch AI', 'https://techcrunch.com/category/artificial-intelligence/feed/', 'rss', 'B', 70, 72, 'AI技术', false, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_blocked = false;
 
--- ── Google Research Blog [MEDIUM] ────────────────────────────────────────────
-UPDATE sources SET name='Google Research Blog', platform='rss', source_tier='A',
-  base_score=85, reliability_score=88, category='研究报告', is_official=true, is_blocked=false
-WHERE url='https://blog.research.google/feeds/posts/default';
+-- VentureBeat AI [HIGH]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'Google Research Blog','https://blog.research.google/feeds/posts/default','rss','A',85,88,'研究报告',true,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://blog.research.google/feeds/posts/default');
+VALUES ('VentureBeat AI', 'https://venturebeat.com/ai/feed/', 'rss', 'B', 74, 76, '行业趋势', false, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_blocked = false;
 
--- ── Microsoft Research Blog [MEDIUM] ─────────────────────────────────────────
-UPDATE sources SET name='Microsoft Research Blog', platform='rss', source_tier='A',
-  base_score=82, reliability_score=85, category='研究报告', is_official=true, is_blocked=false
-WHERE url='https://www.microsoft.com/en-us/research/feed/';
+-- The Decoder [HIGH]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'Microsoft Research Blog','https://www.microsoft.com/en-us/research/feed/','rss','A',82,85,'研究报告',true,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://www.microsoft.com/en-us/research/feed/');
+VALUES ('The Decoder', 'https://the-decoder.com/feed/', 'rss', 'B', 72, 75, 'AI技术', false, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_blocked = false;
 
--- ── OpenAI Blog [MEDIUM — URL may need verification] ─────────────────────────
-UPDATE sources SET name='OpenAI Blog', platform='rss', source_tier='S',
-  base_score=95, reliability_score=95, category='AI技术', is_official=true, is_blocked=false
-WHERE url='https://openai.com/blog/rss.xml';
+-- Ars Technica AI [HIGH]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'OpenAI Blog','https://openai.com/blog/rss.xml','rss','S',95,95,'AI技术',true,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://openai.com/blog/rss.xml');
+VALUES ('Ars Technica AI', 'https://feeds.arstechnica.com/arstechnica/technology-lab', 'rss', 'B', 73, 78, 'AI技术', false, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_blocked = false;
 
--- ── Anthropic News [LOW — RSS format unconfirmed] ────────────────────────────
-UPDATE sources SET name='Anthropic News', platform='rss', source_tier='S',
-  base_score=95, reliability_score=95, category='AI技术', is_official=true, is_blocked=false
-WHERE url='https://www.anthropic.com/rss.xml';
+-- MarkTechPost [HIGH]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'Anthropic News','https://www.anthropic.com/rss.xml','rss','S',95,95,'AI技术',true,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://www.anthropic.com/rss.xml');
+VALUES ('MarkTechPost', 'https://www.marktechpost.com/feed/', 'rss', 'B', 65, 68, 'AI技术', false, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_blocked = false;
 
--- ── LangChain Blog [MEDIUM] ──────────────────────────────────────────────────
-UPDATE sources SET name='LangChain Blog', platform='rss', source_tier='B',
-  base_score=72, reliability_score=74, category='AI技术', is_official=true, is_blocked=false
-WHERE url='https://blog.langchain.dev/rss/';
+-- Towards Data Science [HIGH]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'LangChain Blog','https://blog.langchain.dev/rss/','rss','B',72,74,'AI技术',true,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://blog.langchain.dev/rss/');
+VALUES ('Towards Data Science', 'https://towardsdatascience.com/feed', 'rss', 'B', 68, 70, '研究报告', false, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_blocked = false;
 
--- ── Mistral AI Blog [MEDIUM] ─────────────────────────────────────────────────
-UPDATE sources SET name='Mistral AI Blog', platform='rss', source_tier='A',
-  base_score=85, reliability_score=87, category='AI技术', is_official=true, is_blocked=false
-WHERE url='https://mistral.ai/news/rss.xml';
+-- Vercel Blog [HIGH]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'Mistral AI Blog','https://mistral.ai/news/rss.xml','rss','A',85,87,'AI技术',true,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://mistral.ai/news/rss.xml');
+VALUES ('Vercel Blog', 'https://vercel.com/blog/rss.xml', 'rss', 'B', 70, 75, '产品发布', true, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_official = EXCLUDED.is_official, is_blocked = false;
 
--- ── Cursor Blog [MEDIUM] ─────────────────────────────────────────────────────
-UPDATE sources SET name='Cursor Blog', platform='rss', source_tier='B',
-  base_score=72, reliability_score=75, category='产品发布', is_official=true, is_blocked=false
-WHERE url='https://cursor.sh/blog/rss.xml';
+-- Cloudflare Blog [HIGH]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'Cursor Blog','https://cursor.sh/blog/rss.xml','rss','B',72,75,'产品发布',true,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://cursor.sh/blog/rss.xml');
+VALUES ('Cloudflare Blog', 'https://blog.cloudflare.com/rss/', 'rss', 'B', 70, 75, '行业趋势', true, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_official = EXCLUDED.is_official, is_blocked = false;
 
--- ── InfoQ AI [HIGH] ──────────────────────────────────────────────────────────
-UPDATE sources SET name='InfoQ AI', platform='rss', source_tier='B',
-  base_score=70, reliability_score=72, category='AI技术', is_official=false, is_blocked=false
-WHERE url='https://feed.infoq.com/';
+-- Supabase Blog [HIGH]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'InfoQ AI','https://feed.infoq.com/','rss','B',70,72,'AI技术',false,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://feed.infoq.com/');
+VALUES ('Supabase Blog', 'https://supabase.com/blog/rss.xml', 'rss', 'B', 68, 72, '产品发布', true, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_official = EXCLUDED.is_official, is_blocked = false;
 
--- ── AI Business [HIGH] ───────────────────────────────────────────────────────
-UPDATE sources SET name='AI Business', platform='rss', source_tier='B',
-  base_score=67, reliability_score=70, category='商业动态', is_official=false, is_blocked=false
-WHERE url='https://aibusiness.com/rss.xml';
+-- LangChain Blog [MED]
 INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
-SELECT 'AI Business','https://aibusiness.com/rss.xml','rss','B',67,70,'商业动态',false,false,'real'
-WHERE NOT EXISTS (SELECT 1 FROM sources WHERE url='https://aibusiness.com/rss.xml');
+VALUES ('LangChain Blog', 'https://blog.langchain.dev/rss/', 'rss', 'B', 72, 74, 'AI技术', true, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_official = EXCLUDED.is_official, is_blocked = false;
 
--- ── Verify result ─────────────────────────────────────────────────────────────
--- Run this to check inserted sources:
+-- InfoQ [HIGH]
+INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
+VALUES ('InfoQ', 'https://feed.infoq.com/', 'rss', 'B', 70, 72, 'AI技术', false, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_blocked = false;
+
+-- Cursor Blog [MED]
+INSERT INTO sources (name, url, platform, source_tier, base_score, reliability_score, category, is_official, is_blocked, data_origin)
+VALUES ('Cursor Blog', 'https://cursor.sh/blog/rss.xml', 'rss', 'B', 72, 75, '产品发布', true, false, 'real')
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_official = EXCLUDED.is_official, is_blocked = false;
+
+-- ────────────────────────────────────────────────────────────
+--  USER CURATED — manually designated by user
+--  is_user_curated = TRUE, source_badge_variant = 'user_curated'
+-- ────────────────────────────────────────────────────────────
+
+-- AIHOT 精选 [HIGH — user-designated curated source]
+INSERT INTO sources (
+  name, url, platform, source_tier, base_score, reliability_score, category,
+  is_official, is_blocked, data_origin,
+  is_user_curated, user_source_label, user_source_note, user_source_priority, source_badge_variant
+)
+VALUES (
+  'AIHOT 精选', 'https://aihot.virxact.com/feed.xml', 'rss', 'B', 72, 75, 'AI技术',
+  false, false, 'real',
+  true, '外部精选源', '高质量 AI 信息精选聚合，信噪比较高', 15, 'user_curated'
+)
+ON CONFLICT (url) DO UPDATE SET
+  name = EXCLUDED.name, source_tier = EXCLUDED.source_tier,
+  base_score = EXCLUDED.base_score, is_blocked = false,
+  is_user_curated = EXCLUDED.is_user_curated,
+  user_source_label = EXCLUDED.user_source_label,
+  user_source_note = EXCLUDED.user_source_note,
+  user_source_priority = EXCLUDED.user_source_priority,
+  source_badge_variant = EXCLUDED.source_badge_variant;
+
+-- ────────────────────────────────────────────────────────────
+--  VERIFY: Run this SELECT after execution to check results
+-- ────────────────────────────────────────────────────────────
 --
---   SELECT id, name, url, source_tier, is_official, is_blocked, data_origin
+--   SELECT id, name, source_tier, is_official, is_user_curated, is_blocked, data_origin
 --   FROM sources
 --   WHERE platform = 'rss'
 --   ORDER BY source_tier, name;
