@@ -168,6 +168,34 @@ export async function listRecommendationRuns(limit = 20): Promise<Recommendation
 }
 
 /**
+ * Fetch the most recent run with status='running' that started after cutoffIso.
+ * Used by the pipeline running lock to detect concurrent execution.
+ * Returns null when table missing, Supabase unconfigured, or no active run found.
+ */
+export async function getRecentRunningRun(cutoffIso: string): Promise<RecommendationRun | null> {
+  if (!isServerSupabaseConfigured || !supabaseServer) return null
+  try {
+    const { data, error } = await db()
+      .from('recommendation_runs')
+      .select('*')
+      .eq('status', 'running')
+      .gte('started_at', cutoffIso)
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (error) {
+      if (isMissingTable(error)) return null
+      console.warn('[db/recommendation-runs] getRecentRunningRun:', error.message)
+      return null
+    }
+    return (data as RecommendationRun | null) ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Fetch the single most-recent run, or null if none exists.
  * Used by the Dashboard to show last-run status.
  */

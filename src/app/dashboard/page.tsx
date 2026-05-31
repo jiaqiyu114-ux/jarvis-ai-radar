@@ -14,6 +14,11 @@ import { getLatestDailyRecommendationSnapshot } from "@/lib/data/daily-recommend
 import { getLatestRecommendationSnapshot, type RecommendationSnapshotView } from "@/lib/db/recommendation-snapshots"
 import { getLatestRecommendationRun, type RecommendationRun } from "@/lib/db/recommendation-runs"
 import { getSourceCoverageStats, type SourceCoverageStats } from "@/lib/ingest/source-selector"
+import {
+  getRecommendationFreshness,
+  formatSnapshotAge,
+  type RecommendationFreshness,
+} from "@/lib/recommendations/recommendation-freshness"
 import { cn } from "@/lib/utils"
 import type { RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import type { DailyRecommendationSnapshotItem } from "@/lib/data/daily-recommendation-snapshot"
@@ -162,81 +167,95 @@ function formatTime(value: string | null | undefined): string {
   })
 }
 
-const RUN_STATUS_COLOR: Record<string, string> = {
-  success:         'text-success',
-  partial_success: 'text-warning',
-  running:         'text-sky-500 dark:text-sky-400',
-  failed:          'text-danger',
-}
-const RUN_STATUS_LABEL: Record<string, string> = {
-  success:         '正常',
-  partial_success: '部分成功',
-  running:         '运行中',
-  failed:          '失败',
+// (RUN_STATUS_* constants retained for potential future use or legacy paths)
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _RUN_STATUS_COLOR: Record<string, string> = {
+  success: 'text-success', partial_success: 'text-warning',
+  running: 'text-sky-500', failed: 'text-danger',
 }
 
-function RunStatusStrip({ run, engineSnapshot, coverage }: { run: RecommendationRun | null; engineSnapshot: RecommendationSnapshotView | null; coverage: SourceCoverageStats | null }) {
-  // Always render: even with no data, the strip shows the refresh button.
-  const hasData = engineSnapshot !== null || run !== null
+const SEVERITY_COLOR: Record<string, string> = {
+  ok:      'text-success',
+  warning: 'text-warning',
+  stale:   'text-danger/70',
+  missing: 'text-muted-foreground/50',
+}
 
-  const status      = engineSnapshot?.status ?? run?.status ?? 'unknown'
-  const statusColor = hasData ? (RUN_STATUS_COLOR[status] ?? 'text-muted-foreground') : 'text-muted-foreground/50'
-  const statusLabel = hasData ? (RUN_STATUS_LABEL[status] ?? status) : '暂无记录'
-  const durationMs  = run?.duration_ms ?? null
-  const durationSec = durationMs ? (durationMs / 1000).toFixed(1) : null
-  const ts          = engineSnapshot?.generated_at ?? run?.started_at ?? null
-  const captured    = engineSnapshot?.captured_total   ?? run?.captured_total   ?? 0
-  const mustRead    = engineSnapshot?.must_read_count  ?? run?.must_read_count  ?? 0
-  const highValue   = engineSnapshot?.high_value_count ?? run?.high_value_count ?? 0
-  const observe     = engineSnapshot?.observe_count    ?? run?.observe_count    ?? 0
+function RunStatusStrip({ run, engineSnapshot, coverage, freshness }: {
+  run:           RecommendationRun | null
+  engineSnapshot: RecommendationSnapshotView | null
+  coverage:      SourceCoverageStats | null
+  freshness:     RecommendationFreshness | null
+}) {
+  // Always render — even with no data, the strip shows the refresh button.
+  const severityColor = freshness
+    ? (SEVERITY_COLOR[freshness.severity] ?? 'text-muted-foreground')
+    : 'text-muted-foreground/50'
+
+  const runStatus = run?.status ?? null
+  const captured  = engineSnapshot?.captured_total   ?? run?.captured_total   ?? 0
+  const mustRead  = engineSnapshot?.must_read_count  ?? run?.must_read_count  ?? 0
+  const highValue = engineSnapshot?.high_value_count ?? run?.high_value_count ?? 0
+  const observe   = engineSnapshot?.observe_count    ?? run?.observe_count    ?? 0
 
   return (
     <div className="mb-3 flex items-center gap-2 flex-wrap px-1 text-[11px] text-muted-foreground/70">
       <span className="text-muted-foreground/40 text-[10px] uppercase tracking-wider">推荐引擎</span>
-      <span className={cn("font-medium", statusColor)}>{statusLabel}</span>
-      {hasData && (
+
+      {/* Freshness indicator — primary status */}
+      {freshness ? (
+        <span className={cn("font-medium", severityColor)}>
+          {freshness.severity === 'ok'      && '自动刷新就绪'}
+          {freshness.severity === 'warning' && '建议尽快刷新'}
+          {freshness.severity === 'stale'   && '快照已过期'}
+          {freshness.severity === 'missing' && '暂无快照'}
+        </span>
+      ) : (
+        <span className="text-muted-foreground/50">状态检测中</span>
+      )}
+
+      {/* Snapshot age */}
+      {freshness && freshness.ageMinutes !== null && (
         <>
           <span className="text-muted-foreground/30">·</span>
-          {ts && <span>最近运行: {timeAgo(ts)}</span>}
-          {durationSec && <span>耗时 {durationSec}s</span>}
+          <span className={cn(severityColor, 'opacity-80')}>
+            {formatSnapshotAge(freshness.ageMinutes)}
+          </span>
+        </>
+      )}
+
+      {/* Counts */}
+      {(mustRead > 0 || highValue > 0 || observe > 0) && (
+        <>
           <span className="text-muted-foreground/30">·</span>
-          <span>捕捉 <span className="tabular-nums text-foreground/70">{captured}</span></span>
           {mustRead  > 0 && <span className="text-success">MR <span className="tabular-nums">{mustRead}</span></span>}
           {highValue > 0 && <span className="text-primary">HV <span className="tabular-nums">{highValue}</span></span>}
           {observe   > 0 && <span className="text-sky-600 dark:text-sky-400">OB <span className="tabular-nums">{observe}</span></span>}
-          {hasData && status !== 'success' && (
-            <span className="text-warning/80">· 上次运行不完整，当前仍展示可用结果</span>
-          )}
+          {captured  > 0 && <span className="text-muted-foreground/50 tabular-nums">/{captured}</span>}
         </>
       )}
-      {/* Coverage info — lightweight one-liner */}
+
+      {/* Coverage */}
       {coverage && (
         <>
           <span className="text-muted-foreground/30">·</span>
           <span className="text-muted-foreground/60">
-            RSS 覆盖{' '}
+            RSS{' '}
             <span className="tabular-nums text-foreground/60">{coverage.fetchedLast24h}</span>
             {'/'}{coverage.totalActiveRss}
           </span>
           {coverage.neverFetchedSources > 0 && (
-            <span className="text-warning/70">
-              · {coverage.neverFetchedSources} 个未抓
-            </span>
-          )}
-          {coverage.needsRefresh && coverage.neverFetchedSources === 0 && (
-            <span className="text-muted-foreground/50">
-              · 待轮转 {coverage.totalActiveRss - coverage.fetchedLast24h}
-            </span>
+            <span className="text-warning/70">· {coverage.neverFetchedSources} 未抓</span>
           )}
         </>
       )}
-      {!coverage && (
-        <>
-          <span className="text-muted-foreground/30">·</span>
-          <span className="text-muted-foreground/40 text-[10px]">覆盖状态待检测</span>
-        </>
+
+      {/* Run failure note */}
+      {runStatus && runStatus !== 'success' && runStatus !== 'running' && (
+        <span className="text-warning/70">· 上次运行不完整，旧快照仍可用</span>
       )}
-      {/* Refresh button always visible */}
+
+      {/* Refresh button — always visible, low visual weight */}
       <span className="ml-auto">
         <RefreshRecommendationsButton />
       </span>
@@ -272,6 +291,13 @@ export default async function DashboardPage() {
       (c.confidence > 20 || c.itemCount >= 2 || c.sourceCount >= 2)
     )
     .slice(0, 5)
+
+  // Freshness classification (pure computation, no I/O)
+  const freshness = getRecommendationFreshness({
+    latestSnapshot: engineSnapshot ? { generated_at: engineSnapshot.generated_at } : null,
+    latestRun,
+    coverage,
+  })
 
   // ── Determine data source ────────────────────────────────────────────────────
   const hasEngineSnapshot = engineSnapshot !== null
@@ -414,7 +440,7 @@ export default async function DashboardPage() {
         </header>
 
         {/* ── Run status strip + refresh button ── */}
-        <RunStatusStrip run={latestRun} engineSnapshot={engineSnapshot} coverage={coverage} />
+        <RunStatusStrip run={latestRun} engineSnapshot={engineSnapshot} coverage={coverage} freshness={freshness} />
 
         {/* Snapshot table not-ready / no-snapshot notice */}
         {!hasEngineSnapshot && !latestRun && (

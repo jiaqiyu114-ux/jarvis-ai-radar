@@ -2,17 +2,17 @@
 #  JARVIS - Run Recommendation Pipeline (Single Execution)
 #
 #  Triggers one complete pipeline run:
-#    1. RSS ingest (up to 8 sources, 55 s deadline)
-#    2. Recommendation snapshot generation (72 h window)
+#    1. RSS ingest (up to MaxSources sources, IngestTimeoutMs deadline)
+#    2. Recommendation snapshot generation (WindowHours window)
 #
 #  Usage:
 #    powershell -ExecutionPolicy Bypass -File scripts\run-recommendation-pipeline.ps1
-#    powershell -ExecutionPolicy Bypass -File scripts\run-recommendation-pipeline.ps1 -Base "http://localhost:3001"
-#    powershell -ExecutionPolicy Bypass -File scripts\run-recommendation-pipeline.ps1 -MaxSources 6
+#    powershell -ExecutionPolicy Bypass -File scripts\run-recommendation-pipeline.ps1 -MaxSources 4
+#    powershell -ExecutionPolicy Bypass -File scripts\run-recommendation-pipeline.ps1 -Mode scheduled -Secret "mysecret"
 #
 #  Future automation:
 #    Windows Task Scheduler:
-#      Action: powershell -ExecutionPolicy Bypass -File "C:\path\to\jarvis\scripts\run-recommendation-pipeline.ps1"
+#      Action: powershell -ExecutionPolicy Bypass -File "C:\path\jarvis\scripts\run-recommendation-pipeline.ps1" -Mode scheduled -Secret "mysecret"
 #      Trigger: Daily / Every 6 hours
 #
 #  This script runs ONCE. It does not loop.
@@ -24,7 +24,8 @@ param(
   [int]   $IngestTimeoutMs  = 55000,
   [int]   $WindowHours      = 72,
   [int]   $RefreshLimit     = 50,
-  [string]$Mode             = "manual"
+  [string]$Mode             = "manual",
+  [string]$Secret           = ""
 )
 
 Write-Host ""
@@ -37,6 +38,24 @@ Write-Host "  Mode        : $Mode"
 Write-Host "  Started     : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Host ""
 
+# Check freshness before running
+$statusUrl = $Base + "/api/pipeline/recommendations"
+Write-Host "Checking pipeline status..." -ForegroundColor Gray
+try {
+  $status = Invoke-RestMethod -Method Get -Uri $statusUrl -TimeoutSec 15 -ErrorAction Stop
+  if ($status.freshness) {
+    $sev = $status.freshness.severity
+    $sevColor = switch ($sev) { "ok" { "Green" } "warning" { "Yellow" } "stale" { "Red" } default { "Gray" } }
+    Write-Host "  Freshness   : [$sev] $($status.freshness.reason)" -ForegroundColor $sevColor
+  }
+  if ($status.coverage) {
+    Write-Host "  Coverage    : $($status.coverage.fetchedLast24h)/$($status.coverage.totalActiveRss) fetched last 24h" -ForegroundColor Gray
+  }
+} catch {
+  Write-Host "  (status check failed: $_)" -ForegroundColor DarkGray
+}
+Write-Host ""
+
 # Build URL by concatenation — avoids PowerShell parsing & as call operator
 $url = $Base + "/api/pipeline/recommendations" +
   "?ingest=true" +
@@ -47,17 +66,34 @@ $url = $Base + "/api/pipeline/recommendations" +
   "&refreshLimit=$RefreshLimit" +
   "&mode=$Mode"
 
-Write-Host "Calling: POST /api/pipeline/recommendations" -ForegroundColor Yellow
+Write-Host "Calling: POST /api/pipeline/recommendations (mode=$Mode)" -ForegroundColor Yellow
 Write-Host "  (this may take up to $([math]::Round(($IngestTimeoutMs / 1000) + 15)) seconds)" -ForegroundColor Gray
 Write-Host ""
 
+$headers = @{}
+if ($Mode -eq "scheduled" -and $Secret -ne "") {
+  $headers["Authorization"] = "Bearer $Secret"
+  Write-Host "  Auth: Bearer token set" -ForegroundColor Gray
+}
+
 try {
   $startTime = Get-Date
-  $result = Invoke-RestMethod -Method Post -Uri $url -TimeoutSec 120 -ErrorAction Stop
+  $result = Invoke-RestMethod -Method Post -Uri $url -Headers $headers -TimeoutSec 120 -ErrorAction Stop
   $elapsed = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 1)
 
+  # ── Handle already_running ────────────────────────────────────────────────
+  if ($result.status -eq "already_running") {
+    Write-Host "--- Already Running ---" -ForegroundColor Yellow
+    Write-Host "  Pipeline is already running (started $($result.run.ageMinutes)m ago)." -ForegroundColor Yellow
+    Write-Host "  Wait for it to finish, then run again." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Done (already_running)" -ForegroundColor Yellow
+    exit 0
+  }
+
   Write-Host "--- Result ---" -ForegroundColor Cyan
-  Write-Host "  status     : $($result.status)" -ForegroundColor $(if ($result.ok) { "Green" } else { "Red" })
+  $statusColor = if ($result.ok) { "Green" } elseif ($result.status -eq "partial_success") { "Yellow" } else { "Red" }
+  Write-Host "  status     : $($result.status)" -ForegroundColor $statusColor
   Write-Host "  durationMs : $($result.durationMs)"
   Write-Host "  mode       : $($result.mode)"
   Write-Host ""
@@ -67,30 +103,22 @@ try {
     Write-Host "  ok         : $($result.ingest.ok)"
     Write-Host "  runStatus  : $($result.ingest.runStatus)"
     if ($result.ingest.sources) {
-      Write-Host "  sources    : $($result.ingest.sources.successful)ok / $($result.ingest.sources.failed)fail / $($result.ingest.sources.timedOut)timeout / $($result.ingest.sources.skipped)skipped"
+      Write-Host "  sources    : $($result.ingest.sources.successful)ok / $($result.ingest.sources.failed)fail / $($result.ingest.sources.timedOut)timeout"
     }
     if ($result.ingest.items) {
       Write-Host "  items      : +$($result.ingest.items.insertedItems) new / ~$($result.ingest.items.reusedItems) reused"
     }
     if ($result.ingest.sourceSelection) {
       $sel = $result.ingest.sourceSelection
-      Write-Host "  selected   : $($sel.selectedCount) / deferred: $($sel.deferredCount)" -ForegroundColor Cyan
+      Write-Host "  selected   : $($sel.selectedCount) sources / $($sel.deferredCount) deferred" -ForegroundColor Cyan
       if ($sel.selectedSources -and $sel.selectedSources.Count -gt 0) {
-        Write-Host "  selectedSources:" -ForegroundColor Cyan
-        foreach ($src in $sel.selectedSources) {
-          Write-Host "    + [$($src.tier)] $($src.name) ($($src.reason.Split(':')[0]))" -ForegroundColor Cyan
-        }
-      }
-      if ($sel.deferredSample -and $sel.deferredSample.Count -gt 0) {
-        Write-Host "  deferredSample (top $($sel.deferredSample.Count)):" -ForegroundColor DarkGray
-        foreach ($src in $sel.deferredSample | Select-Object -First 3) {
-          Write-Host "    - [$($src.tier)] $($src.name)" -ForegroundColor DarkGray
+        foreach ($src in $sel.selectedSources | Select-Object -First 5) {
+          Write-Host "    + [$($src.tier)] $($src.name)" -ForegroundColor Cyan
         }
       }
     }
     if ($result.ingest.failedSources -and $result.ingest.failedSources.Count -gt 0) {
-      Write-Host "  failedSources:" -ForegroundColor Red
-      foreach ($fs in $result.ingest.failedSources) {
+      foreach ($fs in $result.ingest.failedSources | Select-Object -First 3) {
         Write-Host "    x $($fs.name): $($fs.reason)" -ForegroundColor Red
       }
     }
@@ -105,28 +133,22 @@ try {
       Write-Host "  must_read  : $($result.refresh.stats.mustReadCount)"
       Write-Host "  high_value : $($result.refresh.stats.highValueCount)"
       Write-Host "  observe    : $($result.refresh.stats.observeCount)"
-      Write-Host "  captured   : $($result.refresh.stats.capturedTotal)"
     }
     if ($result.refresh.snapshot) {
       Write-Host "  snapshot   : $($result.refresh.snapshot.id)" -ForegroundColor Green
-    } else {
-      Write-Host "  snapshot   : (not created)" -ForegroundColor Yellow
-    }
-    if ($result.refresh.run) {
-      Write-Host "  run.id     : $($result.refresh.run.id)"
     }
     Write-Host ""
   }
 
   if ($result.hints -and $result.hints.Count -gt 0) {
     Write-Host "--- Hints ---" -ForegroundColor Gray
-    foreach ($hint in $result.hints) {
+    foreach ($hint in $result.hints | Select-Object -First 5) {
       Write-Host "  $hint" -ForegroundColor Gray
     }
     Write-Host ""
   }
 
-  Write-Host "Finished in ${elapsed}s" -ForegroundColor $(if ($result.ok) { "Green" } else { "Red" })
+  Write-Host "Finished in ${elapsed}s" -ForegroundColor $statusColor
 
 } catch {
   Write-Host "FAILED: $_" -ForegroundColor Red

@@ -6,9 +6,9 @@
  * Runs RSS ingest + recommendation refresh in a single call.
  *
  * This is the canonical trigger for:
- *   - Manual on-demand refresh from the Dashboard "刷新推荐" button
- *   - Future Vercel Cron / Windows Task Scheduler automation
- *   - CI / health checks
+ *   - Manual on-demand refresh from the Dashboard "手动重跑" button (mode=manual)
+ *   - Future Vercel Cron / Windows Task Scheduler automation (mode=scheduled)
+ *   - Server-side auto-trigger when snapshot is stale (mode=auto)
  *
  * --- NOT a long-running background job ---
  * This route is a synchronous HTTP handler with a hard deadline guarantee.
@@ -18,6 +18,11 @@
  *   - Background queue (BullMQ / Supabase pg_cron)
  * But for the current scale (< 25 sources), this inline approach is correct.
  *
+ * Running lock:
+ *   If a recommendation_runs row with status='running' was started < 10 min ago,
+ *   the request returns { status: 'already_running' } immediately without starting
+ *   a second pipeline. Stale running rows (> 10 min) are recovered to 'failed'.
+ *
  * POST params (query string):
  *   ingest            bool   default true   — run RSS ingest first
  *   refresh           bool   default true   — run recommendation refresh after
@@ -25,8 +30,9 @@
  *   ingestTimeoutMs   int    default 55000  — hard deadline for ingest phase
  *   refreshWindowHours int   default 72     — recommendation lookback window
  *   refreshLimit      int    default 50     — max items from recommendation engine
- *   mode              str    default manual — 'manual' | 'scheduled'
+ *   mode              str    default manual — 'manual' | 'scheduled' | 'auto'
  *   force             bool   default false  — include failing sources
+ *   secret            str    optional       — for scheduled mode auth
  */
 
 import { type NextRequest, NextResponse } from 'next/server'
@@ -39,9 +45,13 @@ import {
 import { getSourceCoverageStats } from '@/lib/ingest/source-selector'
 import { getRecommendations } from '@/lib/recommendations/recommendation-engine'
 import {
+  getRecommendationFreshness,
+} from '@/lib/recommendations/recommendation-freshness'
+import {
   insertRecommendationRun,
   updateRecommendationRun,
   getLatestRecommendationRun,
+  getRecentRunningRun,
 } from '@/lib/db/recommendation-runs'
 import {
   createRecommendationSnapshot,
@@ -56,6 +66,8 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n))
 }
 
+type PipelineMode = 'manual' | 'scheduled' | 'auto'
+
 type PipelineParams = {
   ingest:              boolean
   refresh:             boolean
@@ -63,18 +75,22 @@ type PipelineParams = {
   ingestTimeoutMs:     number
   refreshWindowHours:  number
   refreshLimit:        number
-  mode:                'manual' | 'scheduled'
+  mode:                PipelineMode
   force:               boolean
 }
 
 function parseParams(req: NextRequest): PipelineParams {
   const sp = req.nextUrl.searchParams
 
-  const rawIngestMs     = Number(sp.get('ingestTimeoutMs'))
-  const rawMaxSources   = Number(sp.get('maxSources'))
-  const rawWindowHours  = Number(sp.get('refreshWindowHours'))
-  const rawLimit        = Number(sp.get('refreshLimit'))
-  const rawMode         = sp.get('mode') ?? 'manual'
+  const rawIngestMs    = Number(sp.get('ingestTimeoutMs'))
+  const rawMaxSources  = Number(sp.get('maxSources'))
+  const rawWindowHours = Number(sp.get('refreshWindowHours'))
+  const rawLimit       = Number(sp.get('refreshLimit'))
+  const rawMode        = sp.get('mode') ?? 'manual'
+
+  const mode: PipelineMode =
+    rawMode === 'scheduled' ? 'scheduled' :
+    rawMode === 'auto'      ? 'auto'      : 'manual'
 
   return {
     ingest:             sp.get('ingest')  !== 'false',
@@ -83,32 +99,45 @@ function parseParams(req: NextRequest): PipelineParams {
     ingestTimeoutMs:    clamp(Number.isFinite(rawIngestMs)    && rawIngestMs    > 0 ? rawIngestMs    : 55_000, 10_000, 80_000),
     refreshWindowHours: clamp(Number.isFinite(rawWindowHours) && rawWindowHours > 0 ? rawWindowHours : 72,  1, 168),
     refreshLimit:       clamp(Number.isFinite(rawLimit)       && rawLimit        > 0 ? rawLimit       : 50, 1, 100),
-    mode:               (rawMode === 'scheduled' ? 'scheduled' : 'manual') as 'manual' | 'scheduled',
+    mode,
     force:              sp.get('force') === 'true',
   }
 }
 
+// ── Auth helper ───────────────────────────────────────────────────────────────
+
+function checkAuth(req: NextRequest, params: PipelineParams): boolean {
+  const pipelineSecret = process.env.PIPELINE_SECRET
+  if (!pipelineSecret) return true              // no secret configured → allow all
+  if (params.mode === 'manual') return true      // manual mode never requires auth
+
+  // scheduled / auto: require secret
+  const authHeader  = req.headers.get('authorization') ?? ''
+  const querySecret = req.nextUrl.searchParams.get('secret') ?? ''
+  const provided    = authHeader.replace('Bearer ', '').trim() || querySecret.trim()
+  return provided === pipelineSecret
+}
+
 // ── Overall status logic ──────────────────────────────────────────────────────
 
-type PipelineStatus = 'success' | 'partial_success' | 'failed'
+type PipelineStatus = 'success' | 'partial_success' | 'failed' | 'already_running'
 
 function computeStatus(
-  ingestEnabled: boolean,
-  ingestOk:      boolean | null,    // null = skipped
+  ingestEnabled:  boolean,
+  ingestOk:       boolean | null,
   refreshEnabled: boolean,
-  refreshOk:      boolean | null,   // null = skipped
-): PipelineStatus {
-  const both_failed    = (ingestEnabled && ingestOk === false) && (refreshEnabled && refreshOk === false)
-  const any_ok         = (!ingestEnabled || ingestOk !== false) || (!refreshEnabled || refreshOk !== false)
-  const all_ok         = (!ingestEnabled || ingestOk === true)  && (!refreshEnabled || refreshOk === true)
-
-  if (both_failed)  return 'failed'
-  if (all_ok)       return 'success'
-  if (any_ok)       return 'partial_success'
-  return 'failed'
+  refreshOk:      boolean | null,
+): Exclude<PipelineStatus, 'already_running'> {
+  const both_failed = (ingestEnabled && ingestOk === false) && (refreshEnabled && refreshOk === false)
+  const all_ok      = (!ingestEnabled || ingestOk === true)  && (!refreshEnabled || refreshOk === true)
+  if (both_failed) return 'failed'
+  if (all_ok)      return 'success'
+  return 'partial_success'
 }
 
 // ── POST handler ──────────────────────────────────────────────────────────────
+
+const RUNNING_LOCK_MINUTES = 10
 
 export async function POST(req: NextRequest) {
   if (!isServerSupabaseConfigured) {
@@ -119,48 +148,72 @@ export async function POST(req: NextRequest) {
     }, { status: 400 })
   }
 
-  const params     = parseParams(req)
-  const startMs    = Date.now()
-  const startedAt  = new Date().toISOString()
-  const hints:     string[] = []
+  const params    = parseParams(req)
+  const startMs   = Date.now()
+  const startedAt = new Date().toISOString()
+  const hints:    string[] = []
 
-  // ── Optional PIPELINE_SECRET auth for scheduled mode ─────────────────────────
-  // Set PIPELINE_SECRET in env to require auth for scheduled runs.
-  // Local dev (no PIPELINE_SECRET set) always allows requests.
-  const pipelineSecret = process.env.PIPELINE_SECRET
-  if (params.mode === 'scheduled' && pipelineSecret) {
-    const authHeader = req.headers.get('authorization') ?? ''
-    const querySecret = req.nextUrl.searchParams.get('secret') ?? ''
-    const provided    = authHeader.replace('Bearer ', '').trim() || querySecret.trim()
-    if (provided !== pipelineSecret) {
-      return NextResponse.json({ ok: false, error: 'Unauthorized — set Authorization: Bearer <PIPELINE_SECRET>' }, { status: 401 })
-    }
+  // ── Auth check ────────────────────────────────────────────────────────────
+  if (!checkAuth(req, params)) {
+    return NextResponse.json({
+      ok:    false,
+      error: 'Unauthorized — provide Authorization: Bearer <PIPELINE_SECRET> for scheduled/auto mode',
+    }, { status: 401 })
   }
-  if (!pipelineSecret) {
-    hints.push('PIPELINE_SECRET not set. Before enabling scheduled cron, set this env var to protect the endpoint.')
+  if (!process.env.PIPELINE_SECRET) {
+    hints.push('PIPELINE_SECRET not set. Set this env var before enabling automated cron to protect the endpoint.')
+  }
+
+  // ── Running lock ──────────────────────────────────────────────────────────
+  // Prevent concurrent pipeline runs. Stale runs (> 10 min) are recovered.
+  const lockCutoff  = new Date(Date.now() - RUNNING_LOCK_MINUTES * 60_000).toISOString()
+  const runningRun  = await getRecentRunningRun(lockCutoff).catch(() => null)
+
+  if (runningRun) {
+    const runAgeMs  = Date.now() - new Date(runningRun.started_at).getTime()
+    const runAgeMin = Math.round(runAgeMs / 60_000)
+
+    if (runAgeMin < RUNNING_LOCK_MINUTES) {
+      // Active running run — do not start another
+      console.log(`[pipeline] already_running run=${runningRun.id} age=${runAgeMin}m`)
+      return NextResponse.json({
+        ok:      true,
+        status:  'already_running' as const,
+        message: `Recommendation pipeline is already running (started ${runAgeMin}m ago). Wait for it to finish.`,
+        mode:    params.mode,
+        run:     { id: runningRun.id, startedAt: runningRun.started_at, ageMinutes: runAgeMin },
+      })
+    } else {
+      // Stale running run — recover it and proceed
+      console.log(`[pipeline] recovering stale running run=${runningRun.id} age=${runAgeMin}m`)
+      await updateRecommendationRun(runningRun.id, {
+        status:        'failed',
+        error_message: `stale running run recovered after ${runAgeMin}m (new pipeline start)`,
+        finished_at:   new Date().toISOString(),
+      }).catch(() => {})
+    }
   }
 
   console.log(
     `[pipeline] start mode=${params.mode} ingest=${params.ingest} refresh=${params.refresh} ` +
-    `maxSources=${params.maxSources} ingestTimeoutMs=${params.ingestTimeoutMs}`
+    `maxSources=${params.maxSources} ingestTimeoutMs=${params.ingestTimeoutMs}`,
   )
 
-  // ── Phase 1: RSS Ingest ───────────────────────────────────────────────────────
+  // ── Phase 1: RSS Ingest ───────────────────────────────────────────────────
 
   let ingestResult: Record<string, unknown> | null = null
-  let ingestOk: boolean | null = null
+  let ingestOk:     boolean | null = null
 
   if (params.ingest) {
     const ingestStart    = Date.now()
     const ingestDeadline = ingestStart + params.ingestTimeoutMs
     const acc            = createAcc()
 
-    // Use Promise.race for the hard deadline guarantee (same pattern as /api/ingest/rss POST)
     const ingestWork = runDeadlineAwareIngest(acc, {
       maxSources: params.maxSources,
       deadline:   ingestDeadline,
       force:      params.force,
-    }).catch(() => { /* runDeadlineAwareIngest never throws, but safety net */ })
+    }).catch(() => {})
 
     await Promise.race([
       ingestWork,
@@ -173,40 +226,41 @@ export async function POST(req: NextRequest) {
     }
 
     const ingestDurationMs = Date.now() - ingestStart
-    const raw = buildIngestResponse(acc, ingestDurationMs, params.ingestTimeoutMs)
-    ingestOk = (raw.ok as boolean) ?? false
+    const raw  = buildIngestResponse(acc, ingestDurationMs, params.ingestTimeoutMs)
+    ingestOk   = (raw.ok as boolean) ?? false
 
     ingestResult = {
-      enabled:     true,
-      ok:          ingestOk,
-      runStatus:   raw.runStatus,
-      durationMs:  ingestDurationMs,
-      sources:     raw.sources,
-      items:       raw.items,
+      enabled:       true,
+      ok:            ingestOk,
+      runStatus:     raw.runStatus,
+      durationMs:    ingestDurationMs,
+      sources:       raw.sources,
+      items:         raw.items,
       failedSources: raw.failedSources,
-      hints:       raw.hints,
+      hints:         raw.hints,
+      sourceSelection: raw.sourceSelection ?? null,
     }
 
     if (acc.sources.successful === 0) {
       hints.push('Ingest: no sources succeeded. Check /api/recommendations/health for details.')
-    } else if (ingestOk) {
+    } else {
       hints.push(`Ingest: ${acc.sources.successful} source(s) OK, ${acc.items.insertedItems} new item(s).`)
     }
 
     console.log(
       `[pipeline] ingest done — status=${raw.runStatus} sources=${acc.sources.successful}ok ` +
-      `items=+${acc.items.insertedItems}/~${acc.items.reusedItems} duration=${ingestDurationMs}ms`
+      `items=+${acc.items.insertedItems}/~${acc.items.reusedItems} duration=${ingestDurationMs}ms`,
     )
   } else {
     ingestResult = { enabled: false }
-    ingestOk = null
+    ingestOk     = null
     hints.push('Ingest skipped (ingest=false).')
   }
 
-  // ── Phase 2: Recommendation Refresh ──────────────────────────────────────────
+  // ── Phase 2: Recommendation Refresh ──────────────────────────────────────
 
   let refreshResult: Record<string, unknown> | null = null
-  let refreshOk: boolean | null = null
+  let refreshOk:     boolean | null = null
 
   if (params.refresh) {
     const refreshStart = Date.now()
@@ -220,9 +274,9 @@ export async function POST(req: NextRequest) {
     })
 
     try {
-      const result = await getRecommendations({
-        windowHours:   params.refreshWindowHours,
-        limit:         params.refreshLimit,
+      const result     = await getRecommendations({
+        windowHours:    params.refreshWindowHours,
+        limit:          params.refreshLimit,
         includeArchive: true,
       })
       const durationMs = Date.now() - refreshStart
@@ -245,29 +299,29 @@ export async function POST(req: NextRequest) {
       const snapshotItems = result.items.filter(i => i.recommendationTier !== 'archive')
       const snapshotId    = await createRecommendationSnapshot(
         {
-          run_id:                   runId ?? undefined,
-          status:                   runStatus,
-          window_hours:             params.refreshWindowHours,
-          limit_count:              params.refreshLimit,
-          captured_total:           result.stats.capturedTotal,
+          run_id:                    runId ?? undefined,
+          status:                    runStatus,
+          window_hours:              params.refreshWindowHours,
+          limit_count:               params.refreshLimit,
+          captured_total:            result.stats.capturedTotal,
           recommendation_candidates: result.stats.recommendationCandidates,
-          must_read_count:          result.stats.mustReadCount,
-          high_value_count:         result.stats.highValueCount,
-          observe_count:            result.stats.observeCount,
-          archive_count:            result.stats.archiveCount,
-          generated_at:             new Date().toISOString(),
+          must_read_count:           result.stats.mustReadCount,
+          high_value_count:          result.stats.highValueCount,
+          observe_count:             result.stats.observeCount,
+          archive_count:             result.stats.archiveCount,
+          generated_at:              new Date().toISOString(),
         },
         snapshotItems,
       )
 
-      refreshOk = true
+      refreshOk     = true
       refreshResult = {
-        enabled:    true,
-        ok:         true,
+        enabled:   true,
+        ok:        true,
         runStatus,
         durationMs,
-        run:        runId      ? { id: runId, status: runStatus, startedAt: refreshAt, durationMs } : null,
-        snapshot:   snapshotId ? {
+        run:       runId      ? { id: runId, status: runStatus, startedAt: refreshAt, durationMs } : null,
+        snapshot:  snapshotId ? {
           id:                       snapshotId,
           runId,
           status:                   runStatus,
@@ -278,16 +332,16 @@ export async function POST(req: NextRequest) {
           highValueCount:           result.stats.highValueCount,
           observeCount:             result.stats.observeCount,
         } : null,
-        stats:      result.stats,
+        stats: result.stats,
       }
 
       hints.push(
         `Refresh: MR=${result.stats.mustReadCount} HV=${result.stats.highValueCount} ` +
-        `OB=${result.stats.observeCount} captured=${result.stats.capturedTotal}`
+        `OB=${result.stats.observeCount} captured=${result.stats.capturedTotal}`,
       )
       console.log(
         `[pipeline] refresh done — status=${runStatus} MR=${result.stats.mustReadCount} ` +
-        `HV=${result.stats.highValueCount} snapshot=${snapshotId ?? 'null'} duration=${durationMs}ms`
+        `HV=${result.stats.highValueCount} snapshot=${snapshotId ?? 'null'} duration=${durationMs}ms`,
       )
 
     } catch (err) {
@@ -304,7 +358,7 @@ export async function POST(req: NextRequest) {
         })
       }
 
-      refreshOk = false
+      refreshOk     = false
       refreshResult = {
         enabled:   true,
         ok:        false,
@@ -319,37 +373,34 @@ export async function POST(req: NextRequest) {
     }
   } else {
     refreshResult = { enabled: false }
-    refreshOk = null
+    refreshOk     = null
     hints.push('Refresh skipped (refresh=false).')
   }
 
-  // ── Build response ────────────────────────────────────────────────────────────
+  // ── Build response ────────────────────────────────────────────────────────
 
   const totalDurationMs = Date.now() - startMs
-  const status = computeStatus(params.ingest, ingestOk, params.refresh, refreshOk)
+  const status          = computeStatus(params.ingest, ingestOk, params.refresh, refreshOk)
 
-  console.log(
-    `[pipeline] finish status=${status} mode=${params.mode} totalMs=${totalDurationMs}`
-  )
+  console.log(`[pipeline] finish status=${status} mode=${params.mode} totalMs=${totalDurationMs}`)
 
   return NextResponse.json({
-    ok:          status !== 'failed',
+    ok:         status !== 'failed',
     status,
-    mode:        params.mode,
+    mode:       params.mode,
     startedAt,
-    finishedAt:  new Date().toISOString(),
-    durationMs:  totalDurationMs,
-    ingest:      ingestResult,
-    refresh:     refreshResult,
+    finishedAt: new Date().toISOString(),
+    durationMs: totalDurationMs,
+    ingest:     ingestResult,
+    refresh:    refreshResult,
     hints,
   })
 }
 
-// ── GET handler — pipeline health / status ────────────────────────────────────
+// ── GET handler — pipeline status, freshness, coverage, automation ────────────
 
 export async function GET() {
-  const now      = new Date()
-  const h24start = new Date(now.getTime() - 24 * 3_600_000).toISOString()
+  const now = new Date()
 
   const [latestRun, latestSnapshot, coverage] = await Promise.all([
     getLatestRecommendationRun().catch(() => null),
@@ -357,40 +408,53 @@ export async function GET() {
     getSourceCoverageStats().catch(() => null),
   ])
 
-  // Snapshot age
-  const snapshotAgeMs = latestSnapshot
+  // Freshness
+  const freshness = getRecommendationFreshness({
+    latestSnapshot: latestSnapshot ? { generated_at: latestSnapshot.generated_at } : null,
+    latestRun,
+    coverage,
+    now,
+  })
+
+  // Snapshot summary
+  const snapshotAgeMs    = latestSnapshot
     ? now.getTime() - new Date(latestSnapshot.generated_at).getTime()
     : null
-  const snapshotIsStale  = snapshotAgeMs !== null && snapshotAgeMs > 24 * 3_600_000
   const snapshotAgeHours = snapshotAgeMs !== null ? Math.round(snapshotAgeMs / 3_600_000) : null
 
-  // Recommendation advice
-  const shouldRefresh =
-    !latestSnapshot ||
-    snapshotIsStale ||
-    (latestRun?.status === 'failed')
+  // Automation readiness
+  const pipelineSecret = process.env.PIPELINE_SECRET
+  const automation = {
+    scheduledReady:    true,
+    secretConfigured:  !!pipelineSecret,
+    suggestedCronPath: '/api/pipeline/recommendations?mode=scheduled&maxSources=12&ingest=true&refresh=true',
+    hint: pipelineSecret
+      ? 'PIPELINE_SECRET is set. Use Authorization: Bearer <secret> for scheduled calls.'
+      : 'Set PIPELINE_SECRET env var before enabling automated cron.',
+  }
 
   const hints: string[] = []
   if (!latestSnapshot) {
     hints.push('No snapshot found. Run POST /api/pipeline/recommendations to generate one.')
-  } else if (snapshotIsStale) {
-    hints.push(`Snapshot is ${snapshotAgeHours}h old (> 24h). Consider refreshing.`)
+  } else if (freshness.isStale) {
+    hints.push(`Snapshot is stale (${snapshotAgeHours}h old). Consider scheduling automated refresh.`)
   }
   if (latestRun?.status === 'failed') {
     hints.push('Last run failed. Check logs and retry.')
   }
 
   return NextResponse.json({
-    ok:           true,
-    checkedAt:    now.toISOString(),
-    shouldRefresh,
-    coverage: coverage ?? null,
+    ok:        true,
+    checkedAt: now.toISOString(),
+    freshness,
+    coverage:  coverage ?? null,
+    automation,
     snapshot: latestSnapshot ? {
       id:            latestSnapshot.id,
       status:        latestSnapshot.status,
       generatedAt:   latestSnapshot.generated_at,
       ageHours:      snapshotAgeHours,
-      isStale:       snapshotIsStale,
+      isStale:       freshness.isStale,
       mustReadCount: latestSnapshot.must_read_count,
       highValueCount: latestSnapshot.high_value_count,
       observeCount:  latestSnapshot.observe_count,
@@ -402,7 +466,6 @@ export async function GET() {
       startedAt:  latestRun.started_at,
       durationMs: latestRun.duration_ms,
     } : null,
-    lastIngestWindow: h24start,
     hints,
   })
 }

@@ -2,8 +2,8 @@
 #  JARVIS - Recommendation Pipeline Verification Script
 #  Usage:
 #    powershell -ExecutionPolicy Bypass -File scripts\verify-recommendations.ps1
-#    powershell -ExecutionPolicy Bypass -File scripts\verify-recommendations.ps1 -SkipPipeline
-#    powershell -ExecutionPolicy Bypass -File scripts\verify-recommendations.ps1 -SkipRefresh -Base "http://localhost:3001"
+#    powershell -ExecutionPolicy Bypass -File scripts\verify-recommendations.ps1 -SkipPipeline -SkipRefresh
+#    powershell -ExecutionPolicy Bypass -File scripts\verify-recommendations.ps1 -Base "http://localhost:3001"
 # ============================================================
 
 param(
@@ -29,7 +29,7 @@ Write-Host ""
 # ── 1. Health ──────────────────────────────────────────────
 
 Write-Host $sep
-Write-Host "[1/6] Health Check" -ForegroundColor Yellow
+Write-Host "[1/7] Health Check" -ForegroundColor Yellow
 $healthUrl = $Base + "/api/recommendations/health"
 try {
   $h = Invoke-RestMethod -Method Get -Uri $healthUrl -TimeoutSec 15 -ErrorAction Stop
@@ -38,9 +38,6 @@ try {
     Print-Info "activeRss    : $($h.sources.activeRss)"
     Print-Info "items last24h: $($h.items.last24h)"
     Print-Info "items last72h: $($h.items.last72h)"
-    if ($h.recommendations) {
-      Print-Info "candidates   : $($h.recommendations.recommendationCandidates)"
-    }
     if ($h.emptyReason) { Print-Warn "emptyReason: $($h.emptyReason)" }
   } else {
     Print-Fail "health returned ok=false: $($h.error)"
@@ -49,16 +46,52 @@ try {
   Print-Fail "health request failed: $_"
 }
 
-# ── 2. Pipeline (ingest + refresh) ─────────────────────────
+# ── 2. Pipeline GET (freshness + automation) ───────────────
+
+Write-Host ""
+Write-Host $sep
+Write-Host "[2/7] Pipeline Status (GET /api/pipeline/recommendations)" -ForegroundColor Yellow
+$pipelineStatusUrl = $Base + "/api/pipeline/recommendations"
+try {
+  $ps = Invoke-RestMethod -Method Get -Uri $pipelineStatusUrl -TimeoutSec 15 -ErrorAction Stop
+  if ($ps.ok) {
+    Print-Ok "pipeline status: ok"
+    if ($ps.freshness) {
+      $sev = $ps.freshness.severity
+      $sevColor = switch ($sev) { "ok" { "Green" } "warning" { "Yellow" } "stale" { "Red" } "missing" { "DarkGray" } default { "Gray" } }
+      Write-Host "  freshness.severity : $sev" -ForegroundColor $sevColor
+      Print-Info "freshness.reason   : $($ps.freshness.reason)"
+      Print-Info "freshness.shouldAutoRefresh: $($ps.freshness.shouldAutoRefresh)"
+      if (-not $ps.freshness.severity) { Print-Fail "freshness.severity is missing" }
+    } else {
+      Print-Fail "freshness field missing from GET /api/pipeline/recommendations"
+    }
+    if ($ps.automation) {
+      if ($ps.automation.scheduledReady) {
+        Print-Ok "automation.scheduledReady = true"
+      } else {
+        Print-Warn "automation.scheduledReady = false"
+      }
+      Print-Info "automation.secretConfigured: $($ps.automation.secretConfigured)"
+    } else {
+      Print-Fail "automation field missing"
+    }
+  } else {
+    Print-Fail "pipeline status returned ok=false"
+  }
+} catch {
+  Print-Fail "pipeline status request failed: $_"
+}
+
+# ── 3. Pipeline POST (ingest + refresh) ────────────────────
 
 Write-Host ""
 Write-Host $sep
 if ($SkipPipeline) {
-  Write-Host "[2/6] Pipeline -- SKIPPED (omit -SkipPipeline to enable)" -ForegroundColor DarkGray
+  Write-Host "[3/7] Pipeline POST -- SKIPPED (omit -SkipPipeline to enable)" -ForegroundColor DarkGray
 } else {
-  Write-Host "[2/6] Trigger Pipeline (POST /api/pipeline/recommendations)" -ForegroundColor Yellow
+  Write-Host "[3/7] Trigger Pipeline (POST /api/pipeline/recommendations)" -ForegroundColor Yellow
 
-  # Build URL by concatenation so & is never parsed as a PS operator
   $pipelineUrl = $Base + "/api/pipeline/recommendations" +
     "?ingest=true" +
     "&refresh=true" +
@@ -68,21 +101,23 @@ if ($SkipPipeline) {
 
   try {
     $p = Invoke-RestMethod -Method Post -Uri $pipelineUrl -TimeoutSec 90 -ErrorAction Stop
-    if ($p.ok) {
+
+    if ($p.status -eq "already_running") {
+      Print-Warn "pipeline: already_running (existing run in progress, not an error)"
+      Print-Info "run started: $($p.run.startedAt) ($($p.run.ageMinutes)m ago)"
+    } elseif ($p.ok) {
       Print-Ok "pipeline: $($p.status)"
       Print-Info "durationMs : $($p.durationMs)"
       if ($p.ingest -and $p.ingest.enabled) {
         Print-Info "ingest ok  : $($p.ingest.ok) | sources=$($p.ingest.sources.successful)ok/$($p.ingest.sources.failed)fail"
-        Print-Info "items      : +$($p.ingest.items.insertedItems) new / ~$($p.ingest.items.reusedItems) reused"
+        Print-Info "items      : +$($p.ingest.items.insertedItems) / ~$($p.ingest.items.reusedItems)"
       }
       if ($p.refresh -and $p.refresh.enabled) {
         Print-Info "refresh ok : $($p.refresh.ok) | status=$($p.refresh.runStatus)"
         if ($p.refresh.stats) {
           Print-Info "MR=$($p.refresh.stats.mustReadCount)  HV=$($p.refresh.stats.highValueCount)  OB=$($p.refresh.stats.observeCount)"
         }
-        if ($p.refresh.snapshot) {
-          Print-Info "snapshotId : $($p.refresh.snapshot.id)"
-        }
+        if ($p.refresh.snapshot) { Print-Info "snapshotId : $($p.refresh.snapshot.id)" }
       }
     } else {
       Print-Fail "pipeline returned ok=false: $($p.error) status=$($p.status)"
@@ -92,30 +127,25 @@ if ($SkipPipeline) {
   }
 }
 
-# ── 3. Recommendations ─────────────────────────────────────
+# ── 4. Recommendations ─────────────────────────────────────
 
 Write-Host ""
 Write-Host $sep
-Write-Host '[3/6] Query Recommendations (GET ?windowHours=72&limit=30)' -ForegroundColor Yellow
+Write-Host '[4/7] Query Recommendations (GET ?windowHours=72&limit=30)' -ForegroundColor Yellow
 
 $recUrl = $Base + '/api/recommendations?windowHours=72&limit=30'
 try {
   $rec = Invoke-RestMethod -Method Get -Uri $recUrl -TimeoutSec 15 -ErrorAction Stop
   if ($rec.ok) {
     if ($rec.source -eq "snapshot") {
-      Print-Ok "recommendations ok  source=$($rec.source)"
+      Print-Ok "recommendations source=snapshot"
     } else {
-      Print-Warn "recommendations ok  source=$($rec.source) (not snapshot)"
+      Print-Warn "recommendations source=$($rec.source) (not snapshot — run pipeline to generate one)"
     }
-    Print-Info "capturedTotal: $($rec.stats.capturedTotal)"
     Print-Info "candidates   : $($rec.stats.recommendationCandidates)"
     Print-Info "must read    : $($rec.stats.mustReadCount)"
     Print-Info "high value   : $($rec.stats.highValueCount)"
-    Print-Info "observe      : $($rec.stats.observeCount)"
     Print-Info "items count  : $($rec.items.Count)"
-    if ($rec.source -ne "snapshot") {
-      Print-Warn "Not using snapshot. Run pipeline to generate one."
-    }
   } else {
     Print-Fail "recommendations returned ok=false: $($rec.error)"
   }
@@ -123,20 +153,19 @@ try {
   Print-Fail "recommendations request failed: $_"
 }
 
-# ── 4. Snapshots ───────────────────────────────────────────
+# ── 5. Snapshots ───────────────────────────────────────────
 
 Write-Host ""
 Write-Host $sep
-Write-Host '[4/6] List Snapshots (GET /api/recommendations/snapshots?limit=10)' -ForegroundColor Yellow
+Write-Host '[5/7] List Snapshots (GET /api/recommendations/snapshots?limit=10)' -ForegroundColor Yellow
 
 $snapsUrl = $Base + '/api/recommendations/snapshots?limit=10'
 try {
   $snaps = Invoke-RestMethod -Method Get -Uri $snapsUrl -TimeoutSec 15 -ErrorAction Stop
-  Print-Ok "snapshot count: $($snaps.count)"
-  if ($snaps.snapshots.Count -gt 0) {
+  if ($snaps.count -gt 0) {
+    Print-Ok "snapshot count: $($snaps.count)"
     $latest = $snaps.snapshots[0]
-    Print-Info "latest status     : $($latest.status)"
-    Print-Info "latest generatedAt: $($latest.generatedAt)"
+    Print-Info "latest: $($latest.status) at $($latest.generatedAt)"
     Print-Info "MR=$($latest.mustReadCount)  HV=$($latest.highValueCount)  OB=$($latest.observeCount)"
   } else {
     Print-Warn "No snapshots found. Run pipeline to generate one."
@@ -145,48 +174,40 @@ try {
   Print-Fail "snapshots request failed: $_"
 }
 
-# ── 5. Runs ────────────────────────────────────────────────
+# ── 6. Runs ────────────────────────────────────────────────
 
 Write-Host ""
 Write-Host $sep
-Write-Host '[5/6] List Runs (GET /api/recommendations/runs?limit=10)' -ForegroundColor Yellow
+Write-Host '[6/7] List Runs (GET /api/recommendations/runs?limit=10)' -ForegroundColor Yellow
 
 $runsUrl = $Base + '/api/recommendations/runs?limit=10'
 try {
   $runs = Invoke-RestMethod -Method Get -Uri $runsUrl -TimeoutSec 15 -ErrorAction Stop
-  Print-Ok "runs count: $($runs.count)"
-  if ($runs.runs.Count -gt 0) {
+  if ($runs.count -gt 0) {
+    Print-Ok "runs count: $($runs.count)"
     $lr = $runs.runs[0]
-    Print-Info "latest status    : $($lr.status)"
-    Print-Info "latest durationMs: $($lr.durationMs)"
-    Print-Info "latest startedAt : $($lr.startedAt)"
+    Print-Info "latest: $($lr.status) duration=$($lr.durationMs)ms"
   } else {
-    Print-Warn "No runs found. Runs are created by POST /api/recommendations/refresh or POST /api/pipeline/recommendations."
+    Print-Warn "No runs found. Runs are created by POST /api/pipeline/recommendations."
   }
 } catch {
   Print-Fail "runs request failed: $_"
 }
 
-# ── 6. Direct Refresh (optional) ──────────────────────────
+# ── 7. Direct Refresh (optional) ──────────────────────────
 
 Write-Host ""
 Write-Host $sep
 if ($SkipRefresh) {
-  Write-Host '[6/6] Direct Refresh -- SKIPPED (omit -SkipRefresh to enable)' -ForegroundColor DarkGray
+  Write-Host '[7/7] Direct Refresh -- SKIPPED (omit -SkipRefresh to enable)' -ForegroundColor DarkGray
 } else {
-  Write-Host "[6/6] Direct Refresh (POST /api/recommendations/refresh)" -ForegroundColor Yellow
+  Write-Host "[7/7] Direct Refresh (POST /api/recommendations/refresh)" -ForegroundColor Yellow
   $refreshUrl = $Base + "/api/recommendations/refresh"
   try {
     $r = Invoke-RestMethod -Method Post -Uri $refreshUrl -TimeoutSec 30 -ErrorAction Stop
     if ($r.ok) {
-      Print-Ok "refresh: $($r.runStatus)"
-      Print-Info "durationMs : $($r.durationMs)"
-      if ($r.snapshot) {
-        Print-Info "snapshotId : $($r.snapshot.id)"
-      }
-      if ($r.stats) {
-        Print-Info "MR=$($r.stats.mustReadCount)  HV=$($r.stats.highValueCount)  OB=$($r.stats.observeCount)"
-      }
+      Print-Ok "refresh: $($r.runStatus) durationMs=$($r.durationMs)"
+      if ($r.snapshot) { Print-Info "snapshotId : $($r.snapshot.id)" }
     } else {
       Print-Fail "refresh returned ok=false: $($r.error)"
     }
@@ -195,55 +216,47 @@ if ($SkipRefresh) {
   }
 }
 
-# ── Summary ────────────────────────────────────────────────
-
-# ── Rotation Spot-Check ────────────────────────────────────────────────────────
+# ── Rotation Spot-Check ────────────────────────────────────
 
 Write-Host ""
 Write-Host $sep
-Write-Host "[Bonus] Source Rotation Spot-Check" -ForegroundColor Yellow
-Write-Host "Running two pipeline calls with maxSources=4 and comparing selected sources..."
+Write-Host "[Bonus] Source Rotation Spot-Check (2x maxSources=4)" -ForegroundColor Yellow
 
 $sel1 = @()
 $sel2 = @()
-
 $rotUrl = $Base + "/api/pipeline/recommendations?ingest=true&refresh=false&maxSources=4&ingestTimeoutMs=55000"
 
 try {
   $r1 = Invoke-RestMethod -Method Post -Uri $rotUrl -TimeoutSec 90 -ErrorAction Stop
-  if ($r1.ingest -and $r1.ingest.sourceSelection -and $r1.ingest.sourceSelection.selectedSources) {
+  if ($r1.status -eq "already_running") {
+    Print-Warn "Run 1: already_running (pipeline busy)"
+  } elseif ($r1.ingest -and $r1.ingest.sourceSelection -and $r1.ingest.sourceSelection.selectedSources) {
     $sel1 = $r1.ingest.sourceSelection.selectedSources | ForEach-Object { $_.name }
-    Print-Info "Run 1 selected: $($sel1 -join ', ')"
+    Print-Info "Run 1: $($sel1 -join ', ')"
   }
-} catch {
-  Print-Warn "Rotation run 1 failed: $_"
-}
+} catch { Print-Warn "Rotation run 1 failed: $_" }
 
 Start-Sleep -Seconds 2
 
 try {
   $r2 = Invoke-RestMethod -Method Post -Uri $rotUrl -TimeoutSec 90 -ErrorAction Stop
-  if ($r2.ingest -and $r2.ingest.sourceSelection -and $r2.ingest.sourceSelection.selectedSources) {
+  if ($r2.status -eq "already_running") {
+    Print-Warn "Run 2: already_running (pipeline busy)"
+  } elseif ($r2.ingest -and $r2.ingest.sourceSelection -and $r2.ingest.sourceSelection.selectedSources) {
     $sel2 = $r2.ingest.sourceSelection.selectedSources | ForEach-Object { $_.name }
-    Print-Info "Run 2 selected: $($sel2 -join ', ')"
+    Print-Info "Run 2: $($sel2 -join ', ')"
   }
-} catch {
-  Print-Warn "Rotation run 2 failed: $_"
-}
+} catch { Print-Warn "Rotation run 2 failed: $_" }
 
 if ($sel1.Count -gt 0 -and $sel2.Count -gt 0) {
-  $identical = ($sel1 -join ',') -eq ($sel2 -join ',')
-  if ($identical) {
-    Print-Warn "Both runs selected identical sources. This is OK if all other sources are fresh/cooling-down."
-    Write-Host "  Note: run 'POST /api/pipeline/recommendations?maxSources=12' to see more rotation." -ForegroundColor Gray
+  if (($sel1 -join ',') -eq ($sel2 -join ',')) {
+    Print-Warn "Both runs selected identical sources (may be OK if others are fresh/cooling)"
   } else {
-    Print-Ok "Source rotation working — runs selected different source sets"
+    Print-Ok "Source rotation active — runs selected different source sets"
   }
-} else {
-  Print-Warn "Could not compare rotation (sourceSelection not returned or ingest skipped)"
 }
 
-# ── Final Summary ──────────────────────────────────────────────────────────────
+# ── Summary ────────────────────────────────────────────────
 
 Write-Host ""
 Write-Host "==========================================="
