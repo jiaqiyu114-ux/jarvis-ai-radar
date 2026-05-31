@@ -1,11 +1,14 @@
 # ============================================================
 #  JARVIS - Recommendation Pipeline Verification Script
-#  Usage: powershell -ExecutionPolicy Bypass -File scripts\verify-recommendations.ps1
-#  Or:    pnpm verify:recommendations  (if configured in package.json)
+#  Usage:
+#    powershell -ExecutionPolicy Bypass -File scripts\verify-recommendations.ps1
+#    powershell -ExecutionPolicy Bypass -File scripts\verify-recommendations.ps1 -SkipPipeline
+#    powershell -ExecutionPolicy Bypass -File scripts\verify-recommendations.ps1 -SkipRefresh -Base "http://localhost:3001"
 # ============================================================
 
 param(
-  [string]$Base = "http://localhost:3000",
+  [string]$Base         = "http://localhost:3000",
+  [switch]$SkipPipeline,
   [switch]$SkipRefresh
 )
 
@@ -26,10 +29,8 @@ Write-Host ""
 # ── 1. Health ──────────────────────────────────────────────
 
 Write-Host $sep
-Write-Host "[1/5] Health Check" -ForegroundColor Yellow
-
-# URL has no query-string ampersand, so double-quoted string is fine here.
-$healthUrl = "$Base/api/recommendations/health"
+Write-Host "[1/6] Health Check" -ForegroundColor Yellow
+$healthUrl = $Base + "/api/recommendations/health"
 try {
   $h = Invoke-RestMethod -Method Get -Uri $healthUrl -TimeoutSec 15 -ErrorAction Stop
   if ($h.ok) {
@@ -48,43 +49,55 @@ try {
   Print-Fail "health request failed: $_"
 }
 
-# ── 2. Refresh ─────────────────────────────────────────────
+# ── 2. Pipeline (ingest + refresh) ─────────────────────────
 
 Write-Host ""
 Write-Host $sep
-if ($SkipRefresh) {
-  Write-Host '[2/5] Refresh -- SKIPPED (omit -SkipRefresh to enable)' -ForegroundColor DarkGray
+if ($SkipPipeline) {
+  Write-Host "[2/6] Pipeline -- SKIPPED (omit -SkipPipeline to enable)" -ForegroundColor DarkGray
 } else {
-  Write-Host "[2/5] Trigger Refresh (POST /api/recommendations/refresh)" -ForegroundColor Yellow
-  $refreshUrl = "$Base/api/recommendations/refresh"
+  Write-Host "[2/6] Trigger Pipeline (POST /api/pipeline/recommendations)" -ForegroundColor Yellow
+
+  # Build URL by concatenation so & is never parsed as a PS operator
+  $pipelineUrl = $Base + "/api/pipeline/recommendations" +
+    "?ingest=true" +
+    "&refresh=true" +
+    "&maxSources=8" +
+    "&ingestTimeoutMs=55000" +
+    "&mode=manual"
+
   try {
-    $r = Invoke-RestMethod -Method Post -Uri $refreshUrl -TimeoutSec 30 -ErrorAction Stop
-    if ($r.ok) {
-      Print-Ok "refresh: $($r.runStatus)"
-      Print-Info "durationMs  : $($r.durationMs)"
-      Print-Info "snapshotId  : $($r.snapshot.id)"
-      Print-Info "MR=$($r.stats.mustReadCount)  HV=$($r.stats.highValueCount)  OB=$($r.stats.observeCount)"
+    $p = Invoke-RestMethod -Method Post -Uri $pipelineUrl -TimeoutSec 90 -ErrorAction Stop
+    if ($p.ok) {
+      Print-Ok "pipeline: $($p.status)"
+      Print-Info "durationMs : $($p.durationMs)"
+      if ($p.ingest -and $p.ingest.enabled) {
+        Print-Info "ingest ok  : $($p.ingest.ok) | sources=$($p.ingest.sources.successful)ok/$($p.ingest.sources.failed)fail"
+        Print-Info "items      : +$($p.ingest.items.insertedItems) new / ~$($p.ingest.items.reusedItems) reused"
+      }
+      if ($p.refresh -and $p.refresh.enabled) {
+        Print-Info "refresh ok : $($p.refresh.ok) | status=$($p.refresh.runStatus)"
+        if ($p.refresh.stats) {
+          Print-Info "MR=$($p.refresh.stats.mustReadCount)  HV=$($p.refresh.stats.highValueCount)  OB=$($p.refresh.stats.observeCount)"
+        }
+        if ($p.refresh.snapshot) {
+          Print-Info "snapshotId : $($p.refresh.snapshot.id)"
+        }
+      }
     } else {
-      Print-Fail "refresh returned ok=false: $($r.error)"
+      Print-Fail "pipeline returned ok=false: $($p.error) status=$($p.status)"
     }
   } catch {
-    Print-Fail "refresh request failed: $_"
+    Print-Fail "pipeline request failed: $_"
   }
 }
 
 # ── 3. Recommendations ─────────────────────────────────────
-#
-# IMPORTANT: URLs with query-string '&' must be built via string concatenation,
-# not inline double-quoted strings.  PowerShell 5.1 can parse '&' as the call
-# operator when the token appears in certain argument-mode contexts, even inside
-# a double-quoted string.  Using $Base + '/path?a=1&b=2' avoids this entirely.
 
 Write-Host ""
 Write-Host $sep
-# Single-quoted string: no variable expansion needed, & is always literal.
-Write-Host '[3/5] Query Recommendations (GET ?windowHours=72&limit=30)' -ForegroundColor Yellow
+Write-Host '[3/6] Query Recommendations (GET ?windowHours=72&limit=30)' -ForegroundColor Yellow
 
-# Build URL by concatenation so & is never seen by the PowerShell parser mid-string.
 $recUrl = $Base + '/api/recommendations?windowHours=72&limit=30'
 try {
   $rec = Invoke-RestMethod -Method Get -Uri $recUrl -TimeoutSec 15 -ErrorAction Stop
@@ -101,7 +114,7 @@ try {
     Print-Info "observe      : $($rec.stats.observeCount)"
     Print-Info "items count  : $($rec.items.Count)"
     if ($rec.source -ne "snapshot") {
-      Print-Warn "Not using snapshot. Run refresh to generate one."
+      Print-Warn "Not using snapshot. Run pipeline to generate one."
     }
   } else {
     Print-Fail "recommendations returned ok=false: $($rec.error)"
@@ -114,7 +127,7 @@ try {
 
 Write-Host ""
 Write-Host $sep
-Write-Host '[4/5] List Snapshots (GET /api/recommendations/snapshots?limit=10)' -ForegroundColor Yellow
+Write-Host '[4/6] List Snapshots (GET /api/recommendations/snapshots?limit=10)' -ForegroundColor Yellow
 
 $snapsUrl = $Base + '/api/recommendations/snapshots?limit=10'
 try {
@@ -126,7 +139,7 @@ try {
     Print-Info "latest generatedAt: $($latest.generatedAt)"
     Print-Info "MR=$($latest.mustReadCount)  HV=$($latest.highValueCount)  OB=$($latest.observeCount)"
   } else {
-    Print-Warn "No snapshots found. Run refresh to generate one."
+    Print-Warn "No snapshots found. Run pipeline to generate one."
   }
 } catch {
   Print-Fail "snapshots request failed: $_"
@@ -136,7 +149,7 @@ try {
 
 Write-Host ""
 Write-Host $sep
-Write-Host '[5/5] List Runs (GET /api/recommendations/runs?limit=10)' -ForegroundColor Yellow
+Write-Host '[5/6] List Runs (GET /api/recommendations/runs?limit=10)' -ForegroundColor Yellow
 
 $runsUrl = $Base + '/api/recommendations/runs?limit=10'
 try {
@@ -148,10 +161,38 @@ try {
     Print-Info "latest durationMs: $($lr.durationMs)"
     Print-Info "latest startedAt : $($lr.startedAt)"
   } else {
-    Print-Warn "No runs found. Runs are created by POST /api/recommendations/refresh."
+    Print-Warn "No runs found. Runs are created by POST /api/recommendations/refresh or POST /api/pipeline/recommendations."
   }
 } catch {
   Print-Fail "runs request failed: $_"
+}
+
+# ── 6. Direct Refresh (optional) ──────────────────────────
+
+Write-Host ""
+Write-Host $sep
+if ($SkipRefresh) {
+  Write-Host '[6/6] Direct Refresh -- SKIPPED (omit -SkipRefresh to enable)' -ForegroundColor DarkGray
+} else {
+  Write-Host "[6/6] Direct Refresh (POST /api/recommendations/refresh)" -ForegroundColor Yellow
+  $refreshUrl = $Base + "/api/recommendations/refresh"
+  try {
+    $r = Invoke-RestMethod -Method Post -Uri $refreshUrl -TimeoutSec 30 -ErrorAction Stop
+    if ($r.ok) {
+      Print-Ok "refresh: $($r.runStatus)"
+      Print-Info "durationMs : $($r.durationMs)"
+      if ($r.snapshot) {
+        Print-Info "snapshotId : $($r.snapshot.id)"
+      }
+      if ($r.stats) {
+        Print-Info "MR=$($r.stats.mustReadCount)  HV=$($r.stats.highValueCount)  OB=$($r.stats.observeCount)"
+      }
+    } else {
+      Print-Fail "refresh returned ok=false: $($r.error)"
+    }
+  } catch {
+    Print-Fail "refresh request failed: $_"
+  }
 }
 
 # ── Summary ────────────────────────────────────────────────
