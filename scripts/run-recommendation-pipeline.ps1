@@ -72,10 +72,26 @@ try {
     if ($result.ingest.items) {
       Write-Host "  items      : +$($result.ingest.items.insertedItems) new / ~$($result.ingest.items.reusedItems) reused"
     }
+    if ($result.ingest.sourceSelection) {
+      $sel = $result.ingest.sourceSelection
+      Write-Host "  selected   : $($sel.selectedCount) / deferred: $($sel.deferredCount)" -ForegroundColor Cyan
+      if ($sel.selectedSources -and $sel.selectedSources.Count -gt 0) {
+        Write-Host "  selectedSources:" -ForegroundColor Cyan
+        foreach ($src in $sel.selectedSources) {
+          Write-Host "    + [$($src.tier)] $($src.name) ($($src.reason.Split(':')[0]))" -ForegroundColor Cyan
+        }
+      }
+      if ($sel.deferredSample -and $sel.deferredSample.Count -gt 0) {
+        Write-Host "  deferredSample (top $($sel.deferredSample.Count)):" -ForegroundColor DarkGray
+        foreach ($src in $sel.deferredSample | Select-Object -First 3) {
+          Write-Host "    - [$($src.tier)] $($src.name)" -ForegroundColor DarkGray
+        }
+      }
+    }
     if ($result.ingest.failedSources -and $result.ingest.failedSources.Count -gt 0) {
       Write-Host "  failedSources:" -ForegroundColor Red
       foreach ($fs in $result.ingest.failedSources) {
-        Write-Host "    - $($fs.name): $($fs.reason)" -ForegroundColor Red
+        Write-Host "    x $($fs.name): $($fs.reason)" -ForegroundColor Red
       }
     }
     Write-Host ""

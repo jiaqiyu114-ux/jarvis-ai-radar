@@ -36,6 +36,7 @@ import {
   runDeadlineAwareIngest,
   buildIngestResponse,
 } from '@/lib/ingest/ingest-runner'
+import { getSourceCoverageStats } from '@/lib/ingest/source-selector'
 import { getRecommendations } from '@/lib/recommendations/recommendation-engine'
 import {
   insertRecommendationRun,
@@ -122,6 +123,22 @@ export async function POST(req: NextRequest) {
   const startMs    = Date.now()
   const startedAt  = new Date().toISOString()
   const hints:     string[] = []
+
+  // ── Optional PIPELINE_SECRET auth for scheduled mode ─────────────────────────
+  // Set PIPELINE_SECRET in env to require auth for scheduled runs.
+  // Local dev (no PIPELINE_SECRET set) always allows requests.
+  const pipelineSecret = process.env.PIPELINE_SECRET
+  if (params.mode === 'scheduled' && pipelineSecret) {
+    const authHeader = req.headers.get('authorization') ?? ''
+    const querySecret = req.nextUrl.searchParams.get('secret') ?? ''
+    const provided    = authHeader.replace('Bearer ', '').trim() || querySecret.trim()
+    if (provided !== pipelineSecret) {
+      return NextResponse.json({ ok: false, error: 'Unauthorized — set Authorization: Bearer <PIPELINE_SECRET>' }, { status: 401 })
+    }
+  }
+  if (!pipelineSecret) {
+    hints.push('PIPELINE_SECRET not set. Before enabling scheduled cron, set this env var to protect the endpoint.')
+  }
 
   console.log(
     `[pipeline] start mode=${params.mode} ingest=${params.ingest} refresh=${params.refresh} ` +
@@ -334,9 +351,10 @@ export async function GET() {
   const now      = new Date()
   const h24start = new Date(now.getTime() - 24 * 3_600_000).toISOString()
 
-  const [latestRun, latestSnapshot] = await Promise.all([
+  const [latestRun, latestSnapshot, coverage] = await Promise.all([
     getLatestRecommendationRun().catch(() => null),
     getLatestRecommendationSnapshot().catch(() => null),
+    getSourceCoverageStats().catch(() => null),
   ])
 
   // Snapshot age
@@ -366,6 +384,7 @@ export async function GET() {
     ok:           true,
     checkedAt:    now.toISOString(),
     shouldRefresh,
+    coverage: coverage ?? null,
     snapshot: latestSnapshot ? {
       id:            latestSnapshot.id,
       status:        latestSnapshot.status,

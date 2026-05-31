@@ -13,6 +13,7 @@ import { listEventClusters, type EventClusterListItem } from "@/lib/db/event-clu
 import { getLatestDailyRecommendationSnapshot } from "@/lib/data/daily-recommendation-snapshot"
 import { getLatestRecommendationSnapshot, type RecommendationSnapshotView } from "@/lib/db/recommendation-snapshots"
 import { getLatestRecommendationRun, type RecommendationRun } from "@/lib/db/recommendation-runs"
+import { getSourceCoverageStats, type SourceCoverageStats } from "@/lib/ingest/source-selector"
 import { cn } from "@/lib/utils"
 import type { RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import type { DailyRecommendationSnapshotItem } from "@/lib/data/daily-recommendation-snapshot"
@@ -174,7 +175,7 @@ const RUN_STATUS_LABEL: Record<string, string> = {
   failed:          '失败',
 }
 
-function RunStatusStrip({ run, engineSnapshot }: { run: RecommendationRun | null; engineSnapshot: RecommendationSnapshotView | null }) {
+function RunStatusStrip({ run, engineSnapshot, coverage }: { run: RecommendationRun | null; engineSnapshot: RecommendationSnapshotView | null; coverage: SourceCoverageStats | null }) {
   // Always render: even with no data, the strip shows the refresh button.
   const hasData = engineSnapshot !== null || run !== null
 
@@ -208,6 +209,33 @@ function RunStatusStrip({ run, engineSnapshot }: { run: RecommendationRun | null
           )}
         </>
       )}
+      {/* Coverage info — lightweight one-liner */}
+      {coverage && (
+        <>
+          <span className="text-muted-foreground/30">·</span>
+          <span className="text-muted-foreground/60">
+            RSS 覆盖{' '}
+            <span className="tabular-nums text-foreground/60">{coverage.fetchedLast24h}</span>
+            {'/'}{coverage.totalActiveRss}
+          </span>
+          {coverage.neverFetchedSources > 0 && (
+            <span className="text-warning/70">
+              · {coverage.neverFetchedSources} 个未抓
+            </span>
+          )}
+          {coverage.needsRefresh && coverage.neverFetchedSources === 0 && (
+            <span className="text-muted-foreground/50">
+              · 待轮转 {coverage.totalActiveRss - coverage.fetchedLast24h}
+            </span>
+          )}
+        </>
+      )}
+      {!coverage && (
+        <>
+          <span className="text-muted-foreground/30">·</span>
+          <span className="text-muted-foreground/40 text-[10px]">覆盖状态待检测</span>
+        </>
+      )}
       {/* Refresh button always visible */}
       <span className="ml-auto">
         <RefreshRecommendationsButton />
@@ -229,12 +257,13 @@ function QualityPill({ label, value, color }: { label: string; value: number; co
 
 export default async function DashboardPage() {
   // ── Data fetching (priority: engine snapshot > legacy snapshot) ──────────────
-  const [engineSnapshot, legacySnapshot, latestRun, eventClustersResult] =
+  const [engineSnapshot, legacySnapshot, latestRun, eventClustersResult, coverage] =
     await Promise.all([
       getLatestRecommendationSnapshot().catch(() => null),
       getLatestDailyRecommendationSnapshot().catch(() => ({ hasSnapshot: false, isTodaySnapshot: false, run: null, items: [], grouped: { must_read: [], high_value: [], observe: [] }, date: '' })),
       getLatestRecommendationRun().catch(() => null),
       listEventClusters({ limit: 20, includeItems: false }).catch(() => ({ clusters: [] })),
+      getSourceCoverageStats().catch(() => null),
     ])
 
   const eventClusters = eventClustersResult.clusters
@@ -385,7 +414,7 @@ export default async function DashboardPage() {
         </header>
 
         {/* ── Run status strip + refresh button ── */}
-        <RunStatusStrip run={latestRun} engineSnapshot={engineSnapshot} />
+        <RunStatusStrip run={latestRun} engineSnapshot={engineSnapshot} coverage={coverage} />
 
         {/* Snapshot table not-ready / no-snapshot notice */}
         {!hasEngineSnapshot && !latestRun && (

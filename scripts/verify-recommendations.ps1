@@ -197,6 +197,54 @@ if ($SkipRefresh) {
 
 # ── Summary ────────────────────────────────────────────────
 
+# ── Rotation Spot-Check ────────────────────────────────────────────────────────
+
+Write-Host ""
+Write-Host $sep
+Write-Host "[Bonus] Source Rotation Spot-Check" -ForegroundColor Yellow
+Write-Host "Running two pipeline calls with maxSources=4 and comparing selected sources..."
+
+$sel1 = @()
+$sel2 = @()
+
+$rotUrl = $Base + "/api/pipeline/recommendations?ingest=true&refresh=false&maxSources=4&ingestTimeoutMs=55000"
+
+try {
+  $r1 = Invoke-RestMethod -Method Post -Uri $rotUrl -TimeoutSec 90 -ErrorAction Stop
+  if ($r1.ingest -and $r1.ingest.sourceSelection -and $r1.ingest.sourceSelection.selectedSources) {
+    $sel1 = $r1.ingest.sourceSelection.selectedSources | ForEach-Object { $_.name }
+    Print-Info "Run 1 selected: $($sel1 -join ', ')"
+  }
+} catch {
+  Print-Warn "Rotation run 1 failed: $_"
+}
+
+Start-Sleep -Seconds 2
+
+try {
+  $r2 = Invoke-RestMethod -Method Post -Uri $rotUrl -TimeoutSec 90 -ErrorAction Stop
+  if ($r2.ingest -and $r2.ingest.sourceSelection -and $r2.ingest.sourceSelection.selectedSources) {
+    $sel2 = $r2.ingest.sourceSelection.selectedSources | ForEach-Object { $_.name }
+    Print-Info "Run 2 selected: $($sel2 -join ', ')"
+  }
+} catch {
+  Print-Warn "Rotation run 2 failed: $_"
+}
+
+if ($sel1.Count -gt 0 -and $sel2.Count -gt 0) {
+  $identical = ($sel1 -join ',') -eq ($sel2 -join ',')
+  if ($identical) {
+    Print-Warn "Both runs selected identical sources. This is OK if all other sources are fresh/cooling-down."
+    Write-Host "  Note: run 'POST /api/pipeline/recommendations?maxSources=12' to see more rotation." -ForegroundColor Gray
+  } else {
+    Print-Ok "Source rotation working — runs selected different source sets"
+  }
+} else {
+  Print-Warn "Could not compare rotation (sourceSelection not returned or ingest skipped)"
+}
+
+# ── Final Summary ──────────────────────────────────────────────────────────────
+
 Write-Host ""
 Write-Host "==========================================="
 if ($ok) {

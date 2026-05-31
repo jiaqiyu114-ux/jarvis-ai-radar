@@ -18,7 +18,6 @@
  */
 
 import {
-  listRssSourcesWithDiag,
   updateSourceFetchSuccess,
   updateSourceFetchFailure,
   insertFetchLog,
@@ -34,8 +33,13 @@ import { calculateFinalScore, type ScoreDimensions } from '@/lib/scoring/final-s
 import { cleanText }               from '@/lib/text/clean-text'
 import { dedupeByCanonicalUrl }    from '@/lib/ingest/ingest-service'
 import { isServerSupabaseConfigured } from '@/lib/supabase/server'
-import type { DbSource, DbItemInsert } from '@/types/database'
-import type { NormalizedIngestItem }               from '@/types/provider'
+import {
+  selectSourcesForIngest,
+  type SourceSelectionResult,
+  type SelectedFeed,
+} from '@/lib/ingest/source-selector'
+import type { DbItemInsert } from '@/types/database'
+import type { NormalizedIngestItem } from '@/types/provider'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -95,6 +99,8 @@ export type IngestAcc = {
   }
   failedSources: FailedSourceInfo[]
   hints: string[]
+  // Source rotation diagnostics (set after source selection)
+  sourceSelection: SourceSelectionResult | null
 }
 
 export function createAcc(): IngestAcc {
@@ -105,6 +111,7 @@ export function createAcc(): IngestAcc {
     stages: { loadSourcesMs: 0, fetchMs: 0, writeMs: 0 },
     failedSources: [],
     hints: [],
+    sourceSelection: null,
   }
 }
 
@@ -114,6 +121,7 @@ export type IngestRunOpts = {
   maxSources:  number    // how many sources to attempt this run
   deadline:    number    // epoch ms — stop all new work after this
   force:       boolean   // if true, include failing sources and allow maxSources up to 18
+  now?:        Date      // clock override (for testing / source-selector staleness)
 }
 
 // ── Helper: deadline check ────────────────────────────────────────────────────
@@ -126,85 +134,49 @@ function isDeadlineClose(deadline: number, thresholdMs = 3_000): boolean {
   return remainingMs(deadline) < thresholdMs
 }
 
-// ── Stage 1: source selection ─────────────────────────────────────────────────
+// ── Stage 1: source selection (delegates to source-selector) ─────────────────
 
-type FeedSpec = {
-  name:      string
-  feedUrl:   string
-  sourceId:  string
-  tier:      string
-  category:  string
-}
+// Re-export SelectedFeed as FeedSpec alias for backward compat within this file
+type FeedSpec = SelectedFeed
 
-const TIER_ORDER: Record<string, number> = { S: 0, A: 1, B: 2, C: 3, D: 4 }
+async function stageSelectSources(opts: IngestRunOpts, acc: IngestAcc): Promise<FeedSpec[]> {
+  const selection = await selectSourcesForIngest({
+    maxSources: opts.maxSources,
+    force:      opts.force,
+    now:        opts.now,
+  })
 
-async function selectSources(opts: IngestRunOpts, acc: IngestAcc): Promise<FeedSpec[]> {
-  const dbResult = await listRssSourcesWithDiag()
-  const all      = dbResult.sources
+  // Populate acc counters from selection stats
+  acc.sources.total    = selection.stats.totalActive
+  acc.sources.selected = selection.stats.selectedCount
+  acc.sources.skipped  = selection.stats.deferredCount
 
-  acc.sources.total = all.length
+  // Store full selection for response diagnostics
+  acc.sourceSelection = selection
 
-  if (all.length === 0) {
-    acc.hints.push('No active RSS sources found in DB. Add sources via /sources page or run source-maintenance-v2.sql.')
+  if (selection.selected.length === 0) {
+    acc.hints.push('No active RSS sources found in DB or all are cooling down. Add sources via /sources page.')
     return []
   }
 
-  // Filter: skip consistently failing sources unless force=true
-  const eligible = opts.force
-    ? all
-    : all.filter((s: DbSource) => s.health_status !== 'failing' || s.is_user_curated)
-
-  if (eligible.length < all.length) {
-    const skippedCount = all.length - eligible.length
-    acc.hints.push(`${skippedCount} failing source(s) skipped. Use force=true to include them.`)
-  }
-
-  // Sort: user_curated first → tier S/A/B → healthy/degraded/unknown before failing
-  const HEALTH_ORDER: Record<string, number> = {
-    healthy:  0,
-    degraded: 1,
-    unknown:  2,
-    failing:  3,
-    blocked:  4,
-  }
-
-  const sorted = [...eligible].sort((a: DbSource, b: DbSource) => {
-    // 1. User-curated always first
-    if (a.is_user_curated && !b.is_user_curated) return -1
-    if (!a.is_user_curated && b.is_user_curated) return 1
-    // 2. Source tier
-    const tA = TIER_ORDER[a.source_tier] ?? 5
-    const tB = TIER_ORDER[b.source_tier] ?? 5
-    if (tA !== tB) return tA - tB
-    // 3. Health status
-    const hA = HEALTH_ORDER[a.health_status ?? 'unknown'] ?? 2
-    const hB = HEALTH_ORDER[b.health_status ?? 'unknown'] ?? 2
-    return hA - hB
-  })
-
-  const selected = sorted.slice(0, opts.maxSources)
-  acc.sources.selected = selected.length
-  acc.sources.skipped  = all.length - selected.length
-
-  if (acc.sources.skipped > 0) {
+  if (selection.stats.deferredCount > 0) {
     acc.hints.push(
-      `${acc.sources.skipped} source(s) not selected this run (maxSources=${opts.maxSources}). ` +
-      `Increase maxSources or run again to reach remaining sources.`
+      `${selection.stats.deferredCount} source(s) deferred this run ` +
+      `(maxSources=${opts.maxSources}, rotation based on staleness & cooldown). ` +
+      `Run again to cover remaining sources.`
     )
+  }
+  if (selection.stats.skippedCoolingDown > 0) {
+    acc.hints.push(`${selection.stats.skippedCoolingDown} source(s) in failure cooldown — skipped.`)
   }
 
   console.log(
-    `[rss ingest] selected ${selected.length}/${all.length} sources` +
-    (selected.length < all.length ? ` (${acc.sources.skipped} deferred)` : ''),
+    `[rss ingest] selected ${selection.selected.length}/${selection.stats.totalActive} sources ` +
+    `(deferred=${selection.stats.deferredCount} coolingDown=${selection.stats.skippedCoolingDown} ` +
+    `neverFetched=${selection.stats.selectedNeverFetched} stale=${selection.stats.selectedStale24h})`,
   )
 
-  return selected.map((s: DbSource) => ({
-    name:     s.name,
-    feedUrl:  s.url,
-    sourceId: s.id,
-    tier:     s.source_tier,
-    category: s.category,
-  }))
+  return selection.selected
 }
 
 // ── Stage 2: fetch feeds (batched parallel, fire-and-forget health) ───────────
@@ -288,9 +260,9 @@ async function fetchOneFeed(
     else      acc.sources.failed++
 
     // Fire-and-forget health update — never blocks the fetch batch
-    if (feed.sourceId) {
-      updateSourceFetchFailure(feed.sourceId, shortMsg, { latencyMs, httpStatus, errorStage: 'fetch' }).catch(() => {})
-      insertFetchLog({ sourceId: feed.sourceId, sourceName: feed.name, feedUrl: feed.feedUrl, success: false, latencyMs, httpStatus, errorStage: 'fetch', errorMessage: shortMsg }).catch(() => {})
+    if (feed.id) {
+      updateSourceFetchFailure(feed.id, shortMsg, { latencyMs, httpStatus, errorStage: 'fetch' }).catch(() => {})
+      insertFetchLog({ sourceId: feed.id, sourceName: feed.name, feedUrl: feed.feedUrl, success: false, latencyMs, httpStatus, errorStage: 'fetch', errorMessage: shortMsg }).catch(() => {})
     }
     return []
   }
@@ -307,8 +279,8 @@ async function fetchOneFeed(
     acc.failedSources.push({ name: feed.name, url: feed.feedUrl, stage: 'parse', reason: msg.slice(0, 200), durationMs: latencyMs })
     acc.sources.failed++
 
-    if (feed.sourceId) {
-      updateSourceFetchFailure(feed.sourceId, msg.slice(0, 200), { latencyMs, httpStatus, errorStage: 'parse' }).catch(() => {})
+    if (feed.id) {
+      updateSourceFetchFailure(feed.id, msg.slice(0, 200), { latencyMs, httpStatus, errorStage: 'parse' }).catch(() => {})
     }
     return []
   }
@@ -320,9 +292,9 @@ async function fetchOneFeed(
   acc.sources.processed++
 
   // Fire-and-forget health update
-  if (feed.sourceId) {
-    updateSourceFetchSuccess(feed.sourceId, latencyMs, httpStatus).catch(() => {})
-    insertFetchLog({ sourceId: feed.sourceId, sourceName: feed.name, feedUrl: feed.feedUrl, success: true, latencyMs, httpStatus, itemsFound: parsed.length }).catch(() => {})
+  if (feed.id) {
+    updateSourceFetchSuccess(feed.id, latencyMs, httpStatus).catch(() => {})
+    insertFetchLog({ sourceId: feed.id, sourceName: feed.name, feedUrl: feed.feedUrl, success: true, latencyMs, httpStatus, itemsFound: parsed.length }).catch(() => {})
   }
 
   // Normalise + cap per-source items
@@ -517,7 +489,7 @@ export async function runDeadlineAwareIngest(
   try {
     // ── Stage 1: source selection ───────────────────────────────────────────
     const loadStart = Date.now()
-    const feeds = await selectSources(opts, acc)
+    const feeds = await stageSelectSources(opts, acc)
     acc.stages.loadSourcesMs = Date.now() - loadStart
 
     if (feeds.length === 0) {
@@ -659,5 +631,19 @@ export function buildIngestResponse(
     },
     failedSources: acc.failedSources,
     hints:         acc.hints,
+    // Source rotation diagnostics
+    sourceSelection: acc.sourceSelection ? {
+      selectedCount:   acc.sourceSelection.stats.selectedCount,
+      deferredCount:   acc.sourceSelection.stats.deferredCount,
+      selectedSources: acc.sourceSelection.selected.map(s => ({
+        id:          s.id,
+        name:        s.name,
+        tier:        s.tier,
+        healthStatus: s.healthStatus,
+        reason:      s.reason,
+      })),
+      deferredSample: acc.sourceSelection.deferredSample,
+      stats:          acc.sourceSelection.stats,
+    } : null,
   }
 }
