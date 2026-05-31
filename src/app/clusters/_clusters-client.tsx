@@ -22,6 +22,10 @@ type GenerateResponse = {
     itemsScanned: number
     clustersGenerated: number
     itemsLinked: number
+    singleObservations?: number
+    multiItemClusters?: number
+    multiSourceClusters?: number
+    highConfidenceClusters?: number
   }
   candidateClusters?: EventClusterListItem[]
 }
@@ -361,6 +365,9 @@ export default function ClustersClient({
                 </p>
                 <p>
                   扫描 {lastResult.stats?.itemsScanned ?? 0} 条 · 生成 {lastResult.stats?.clustersGenerated ?? 0} 个事件簇 · 关联 {lastResult.stats?.itemsLinked ?? 0} 条
+                </p>
+                <p className="text-[10px] opacity-80">
+                  多源: {lastResult.stats?.multiSourceClusters ?? 0} · 多条: {lastResult.stats?.multiItemClusters ?? 0} · 单条观察: {lastResult.stats?.singleObservations ?? 0} · 高置信({'>'}50): {lastResult.stats?.highConfidenceClusters ?? 0}
                 </p>
               </div>
             ) : (

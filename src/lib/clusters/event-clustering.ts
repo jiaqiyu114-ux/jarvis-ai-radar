@@ -1,5 +1,6 @@
-import { createHash } from 'crypto'
+﻿import { createHash } from 'crypto'
 import type { DbEventClusterRole, DbEventClusterStatus, DbSourceTier } from '@/types/database'
+import { fixMojibake } from '@/lib/text/clean-text'
 
 const STOP_WORDS = new Set([
   'the', 'a', 'an', 'to', 'for', 'with', 'new', 'launches', 'launch', 'releases', 'release',
@@ -12,47 +13,67 @@ const STOP_WORDS = new Set([
 const TRACKING_QUERY_KEYS = new Set([
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
   'fbclid', 'gclid', 'mc_cid', 'mc_eid', 'igshid', 'ref', 'ref_src', 'source',
+  'spm', 'from', 'share_from', 'share_source',
 ])
 
 const ENTITY_PATTERNS: Array<{ token: string; pattern: RegExp }> = [
-  // AI labs / major tech companies
-  { token: 'openai',     pattern: /\bopenai\b/i },
-  { token: 'anthropic',  pattern: /\banthropic\b/i },
-  { token: 'claude',     pattern: /\bclaude\b/i },
-  { token: 'opus',       pattern: /\bopus\b/i },
-  { token: 'gemini',     pattern: /\bgemini\b/i },
-  { token: 'google',     pattern: /\bgoogle\b/i },
-  { token: 'meta',       pattern: /\bmeta\b/i },
-  { token: 'apple',      pattern: /\bapple\b/i },
-  { token: 'microsoft',  pattern: /\bmicrosoft\b/i },
-  { token: 'perplexity', pattern: /\bperplexity\b/i },
-  { token: 'aws',        pattern: /\baws\b|amazon web services/i },
-  { token: 'cloudflare', pattern: /\bcloudflare\b/i },
-  { token: 'nvidia',     pattern: /\bnvidia\b/i },
-  { token: 'amd',        pattern: /\bamd\b/i },
-  { token: 'intel',      pattern: /\bintel\b/i },
-  { token: 'tesla',      pattern: /\btesla\b/i },
-  { token: 'xai',        pattern: /\bxai\b|\bx\.ai\b/i },
-  { token: 'grok',       pattern: /\bgrok\b/i },
-  { token: 'mistral',    pattern: /\bmistral\b/i },
-  { token: 'deepseek',   pattern: /\bdeepseek\b/i },
-  { token: 'huggingface',pattern: /hugging\s*face/i },
-  { token: 'salesforce', pattern: /\bsalesforce\b/i },
-  { token: 'oracle',     pattern: /\boracle\b/i },
-  // AI-focused startups / products
-  { token: 'replit',     pattern: /\breplit\b/i },
-  { token: 'cursor',     pattern: /\bcursor\b/i },
-  { token: 'windsurf',   pattern: /\bwindsurf\b/i },
-  { token: 'stackai',    pattern: /\bstackai\b|stack\s+ai/i },
-  { token: 'sesame',     pattern: /\bsesame\b/i },
-  { token: 'asana',      pattern: /\basana\b/i },
-  { token: 'visa',       pattern: /\bvisa\b/i },
-  { token: 'github',     pattern: /\bgithub\b/i },
-  { token: 'openrouter', pattern: /\bopenrouter\b/i },
-  { token: 'aihot',      pattern: /\baihot\b/i },
-  // Generic model/agent patterns
-  { token: 'agent',      pattern: /\bai\s+agent(s)?\b/i },
-  { token: 'model',      pattern: /\b(gpt[\w-]*|claude[\w-]*|gemini[\w-]*|llama[\w-]*|qwen[\w-]*|deepseek[\w-]*)\b/i },
+  // ── AI labs (consolidated: product name → lab token so cross-mentions cluster) ──
+  // anthropic + claude together → if either appears, we get 'anthropic' token
+  { token: 'anthropic',   pattern: /\b(anthropic|claude)\b/i },
+  // openai + chatgpt together
+  { token: 'openai',      pattern: /\b(openai|chatgpt)\b/i },
+  // google + gemini + deepmind together
+  { token: 'google',      pattern: /\b(google|gemini|deepmind)\b/i },
+  // meta + llama together
+  { token: 'meta',        pattern: /\b(meta|llama)\b/i },
+  // xai + grok together
+  { token: 'xai',         pattern: /\b(xai|x\.ai|grok)\b/i },
+  // ── Specific model families ─────────────────────────────────────────────────
+  { token: 'opus',         pattern: /\bopus[\w.-]*/i },
+  { token: 'sonnet',       pattern: /\bsonnet[\w.-]*/i },
+  { token: 'haiku',        pattern: /\bhaiku[\w.-]*/i },
+  { token: 'o1o3o4',       pattern: /\bo[134][\w-]*/i },
+  { token: 'gpt4',         pattern: /\bgpt[\w-]+/i },
+  { token: 'llama_model',  pattern: /\bllama[\w.-]*/i },
+  { token: 'qwen',         pattern: /\b(qwen|通义千问|通义)\b/i },
+  { token: 'deepseek',     pattern: /\bdeepseek\b/i },
+  { token: 'mistral',      pattern: /\bmistral\b/i },
+  // ── Major tech companies ────────────────────────────────────────────────────
+  { token: 'microsoft',    pattern: /\b(microsoft|copilot)\b/i },
+  { token: 'apple',        pattern: /\bapple\b/i },
+  { token: 'amazon',       pattern: /\b(amazon|aws|amazon web services)\b/i },
+  { token: 'nvidia',       pattern: /\bnvidia\b/i },
+  { token: 'amd',          pattern: /\bamd\b/i },
+  { token: 'intel',        pattern: /\bintel\b/i },
+  { token: 'tesla',        pattern: /\btesla\b/i },
+  { token: 'softbank',     pattern: /\bsoftbank\b/i },
+  { token: 'oracle',       pattern: /\boracle\b/i },
+  { token: 'salesforce',   pattern: /\bsalesforce\b/i },
+  { token: 'cloudflare',   pattern: /\bcloudflare\b/i },
+  // ── Chinese AI companies ────────────────────────────────────────────────────
+  { token: 'alibaba',      pattern: /\b(alibaba|阿里巴巴|阿里|alicloud|aliyun)\b/i },
+  { token: 'tencent',      pattern: /\b(tencent|腾讯)\b/i },
+  { token: 'baidu',        pattern: /\b(baidu|百度)\b/i },
+  { token: 'bytedance',    pattern: /\b(bytedance|字节跳动|字节)\b/i },
+  { token: 'moonshot',     pattern: /\b(moonshot|kimi|月之暗面)\b/i },
+  { token: 'zhipu',        pattern: /\b(zhipu|智谱|chatglm)\b/i },
+  { token: 'manus',        pattern: /\bmanus\b/i },
+  { token: 'minimax',      pattern: /\bminimax\b/i },
+  { token: 'stepfun',      pattern: /\b(stepfun|阶跃星辰)\b/i },
+  // ── AI developer tools / platforms ─────────────────────────────────────────
+  { token: 'huggingface',  pattern: /hugging\s*face/i },
+  { token: 'perplexity',   pattern: /\bperplexity\b/i },
+  { token: 'replit',       pattern: /\breplit\b/i },
+  { token: 'cursor',       pattern: /\bcursor\b/i },
+  { token: 'windsurf',     pattern: /\bwindsurf\b/i },
+  { token: 'github',       pattern: /\bgithub\b/i },
+  { token: 'openrouter',   pattern: /\bopenrouter\b/i },
+  { token: 'stackai',      pattern: /\b(stackai|stack\s+ai)\b/i },
+  { token: 'asana',        pattern: /\basana\b/i },
+  { token: 'visa',         pattern: /\bvisa\b/i },
+  // ── Generic model/agent keyword (weaker signal — only an anchor) ────────────
+  { token: 'model',        pattern: /\b(gpt[\w-]+|claude[\w-]+|gemini[\w-]+|llama[\w-]+|qwen[\w-]+|deepseek[\w-]+|opus[\w-]+|sonnet[\w-]+)\b/i },
+  { token: 'agent',        pattern: /\bai\s+agent(s)?\b/i },
 ]
 
 const TIER_WEIGHT: Record<string, number> = {
@@ -130,33 +151,35 @@ type WorkingCluster = {
 }
 
 function decodeHtmlEntities(input: string): string {
-  return input
-    // Named entities
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&apos;/gi, "'")
-    .replace(/&#39;/gi, "'")
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&mdash;/gi, '—')
-    .replace(/&ndash;/gi, '–')
-    .replace(/&rsquo;/gi, '’')
-    .replace(/&lsquo;/gi, '‘')
-    .replace(/&rdquo;/gi, '”')
-    .replace(/&ldquo;/gi, '“')
-    // Decimal numeric entities &#NNN;
-    .replace(/&#(\d{1,6});/g, (_, code) => {
-      const n = parseInt(code, 10)
-      try { return String.fromCodePoint(n) } catch { return '' }
-    })
-    // Hex numeric entities &#xHHHH;
-    .replace(/&#x([0-9a-fA-F]{1,6});/g, (_, hex) => {
-      const n = parseInt(hex, 16)
-      try { return String.fromCodePoint(n) } catch { return '' }
-    })
+  // Fix mojibake first (UTF-8 bytes misread as Windows-1252)
+  const text = fixMojibake(input)
+  // Named entities — unicode escapes keep source encoding unambiguous
+  const named = text
+    .replace(/&amp;/gi,    '&')
+    .replace(/&lt;/gi,     '<')
+    .replace(/&gt;/gi,     '>')
+    .replace(/&quot;/gi,   '"')
+    .replace(/&apos;/gi,   '’')
+    .replace(/&#39;/gi,    '’')
+    .replace(/&nbsp;/gi,   ' ')
+    .replace(/&mdash;/gi,  '—')
+    .replace(/&ndash;/gi,  '–')
+    .replace(/&hellip;/gi, '…')
+    .replace(/&rsquo;/gi,  '’')
+    .replace(/&lsquo;/gi,  '‘')
+    .replace(/&rdquo;/gi,  '”')
+    .replace(/&ldquo;/gi,  '“')
+  // Decimal numeric entities &#NNN;
+  const decimal = named.replace(/&#(\d{1,6});/g, (_, code) => {
+    const n = parseInt(code, 10)
+    try { return String.fromCodePoint(n) } catch { return '' }
+  })
+  // Hex numeric entities &#xHHHH;
+  return decimal.replace(/&#x([0-9a-fA-F]{1,6});/g, (_, hex) => {
+    const n = parseInt(hex, 16)
+    try { return String.fromCodePoint(n) } catch { return '' }
+  })
 }
-
 function normalizeSpaces(input: string): string {
   return input.replace(/\s+/g, ' ').trim()
 }

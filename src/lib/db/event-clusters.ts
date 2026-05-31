@@ -134,6 +134,16 @@ export type GenerateEventClustersOptions = {
   force?: boolean
 }
 
+export type GenerateEventClustersStats = {
+  itemsScanned: number
+  clustersGenerated: number
+  itemsLinked: number
+  singleObservations: number
+  multiItemClusters: number
+  multiSourceClusters: number
+  highConfidenceClusters: number
+}
+
 export type GenerateEventClustersResult = {
   ok: boolean
   dryRun: boolean
@@ -142,11 +152,7 @@ export type GenerateEventClustersResult = {
   windowStart: string
   windowEnd: string
   candidateClusters: EventClusterListItem[]
-  stats: {
-    itemsScanned: number
-    clustersGenerated: number
-    itemsLinked: number
-  }
+  stats: GenerateEventClustersStats
 }
 
 type PostgrestErrorLike = { code?: string | null; message?: string | null } | null | undefined
@@ -457,6 +463,21 @@ async function upsertClusterAndItems(
   }
 }
 
+function computeDraftStats(
+  itemsScanned: number,
+  drafts: EventClusterDraft[],
+): GenerateEventClustersStats {
+  return {
+    itemsScanned,
+    clustersGenerated:    drafts.length,
+    itemsLinked:          drafts.reduce((sum, d) => sum + d.items.length, 0),
+    singleObservations:   drafts.filter(d => d.itemCount <= 1).length,
+    multiItemClusters:    drafts.filter(d => d.itemCount >= 2).length,
+    multiSourceClusters:  drafts.filter(d => d.sourceCount >= 2).length,
+    highConfidenceClusters: drafts.filter(d => d.confidence > 50).length,
+  }
+}
+
 export async function generateEventClusters(
   options: GenerateEventClustersOptions = {},
 ): Promise<GenerateEventClustersResult> {
@@ -469,7 +490,7 @@ export async function generateEventClusters(
       windowStart: new Date(Date.now() - (options.windowHours ?? DEFAULT_WINDOW_HOURS) * 3600000).toISOString(),
       windowEnd: new Date().toISOString(),
       candidateClusters: [],
-      stats: { itemsScanned: 0, clustersGenerated: 0, itemsLinked: 0 },
+      stats: { itemsScanned: 0, clustersGenerated: 0, itemsLinked: 0, singleObservations: 0, multiItemClusters: 0, multiSourceClusters: 0, highConfidenceClusters: 0 },
     }
   }
 
@@ -489,6 +510,8 @@ export async function generateEventClusters(
     maxClusterSpanHours: windowHours,
   })
 
+  const draftStats = computeDraftStats(candidates.length, drafts)
+
   if (dryRun) {
     return {
       ok: true,
@@ -498,11 +521,7 @@ export async function generateEventClusters(
       windowStart: windowStartIso,
       windowEnd: windowEndIso,
       candidateClusters: drafts.map(mapDraftToListItem),
-      stats: {
-        itemsScanned: candidates.length,
-        clustersGenerated: drafts.length,
-        itemsLinked: drafts.reduce((sum, draft) => sum + draft.items.length, 0),
-      },
+      stats: draftStats,
     }
   }
 
@@ -525,11 +544,7 @@ export async function generateEventClusters(
     windowStart: windowStartIso,
     windowEnd: windowEndIso,
     candidateClusters,
-    stats: {
-      itemsScanned: candidates.length,
-      clustersGenerated: drafts.length,
-      itemsLinked,
-    },
+    stats: { ...draftStats, itemsLinked },
   }
 }
 

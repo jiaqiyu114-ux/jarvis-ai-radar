@@ -21,6 +21,7 @@ import { upsertItemMention }          from '@/lib/db/item-mentions'
 import { calculateProviderSignal }    from '@/lib/scoring/provider-signal'
 import { calculateFinalScore }        from '@/lib/scoring/final-score'
 import { detectLanguage }             from '@/lib/ingest/normalize'
+import { cleanText }                  from '@/lib/text/clean-text'
 import { isServerSupabaseConfigured } from '@/lib/supabase/server'
 import type { NormalizedIngestItem, ProviderConfig } from '@/types/provider'
 import type { DataOrigin, DbItemInsert } from '@/types/database'
@@ -89,17 +90,20 @@ function buildInsertPayload(
   // NOTE: data_origin is only included when non-default ('demo', 'seed', etc.)
   //       so installs that haven't run data-hygiene-real-feed-v1.sql don't break.
   //       Real items rely on the SQL column DEFAULT 'real'.
+  const cleanTitle   = cleanText(item.title)
+  const cleanSummary = cleanText(item.summary)
+
   return {
-    title:                   item.title,
+    title:                   cleanTitle || item.title,
     url:                     item.url,
     canonical_url:           item.canonicalUrl || undefined,
-    summary:                 item.summary ?? '',
+    summary:                 cleanSummary,
     source_id:               sourceId ?? undefined,
     published_at:            item.publishedAt ?? new Date().toISOString(),
     category:                item.category ?? '其他',
     tags:                    item.tags ?? [],
     entities:                item.entities ?? [],
-    language:                detectLanguage(item.title, item.summary ?? ''),
+    language:                detectLanguage(cleanTitle || item.title, cleanSummary),
     provider_signal:         providerSignal,
     raw_payload:             item.rawPayload,
     status:                  'new',
