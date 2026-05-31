@@ -1,12 +1,69 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { ExternalLink, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { TIER_LABELS, TIER_COLORS } from "@/lib/recommendations/recommendation-engine"
 import type { RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import type { RecommendationDeepDive } from "@/lib/recommendations/deep-dive"
+
+// ── Image filtering ───────────────────────────────────────────────────────────
+
+// Keywords that indicate site decoration rather than article content images
+const IMAGE_BLOCKLIST = [
+  'logo', 'icon', 'favicon', 'avatar', 'sprite',
+  'placeholder', 'default-image', 'banner-ad', '/ad/', '/ads/',
+  'tracking', '1x1', 'spacer', 'blank', 'noimage', 'no-image',
+  'header-image', 'site-logo', 'brand',
+]
+
+function isImageUsable(url: string): boolean {
+  if (!url || !url.startsWith('http')) return false
+  if (url.startsWith('data:')) return false
+  const low = url.toLowerCase()
+  return !IMAGE_BLOCKLIST.some(kw => low.includes(kw))
+}
+
+function stripQuery(url: string): string {
+  try { return new URL(url).origin + new URL(url).pathname }
+  catch { return url }
+}
+
+/**
+ * Pick a single best image for Signal Card.
+ * Prioritises coverImageUrl, falls back to mediaUrls as candidates.
+ * Filters out site decorations (logo, icon, favicon, ad, tracking pixels).
+ * Returns null when no suitable image is found.
+ */
+function pickSignalImage(
+  coverImageUrl: string | null | undefined,
+  mediaUrls: string[] | null | undefined,
+): string | null {
+  const seen = new Set<string>()
+
+  function tryUrl(u: string | null | undefined): string | null {
+    if (!u) return null
+    const url = u.trim()
+    if (!isImageUsable(url)) return null
+    const key = stripQuery(url)
+    if (seen.has(key)) return null
+    seen.add(key)
+    return url
+  }
+
+  // Priority 1: explicit cover image
+  const cover = tryUrl(coverImageUrl)
+  if (cover) return cover
+
+  // Priority 2: first usable media URL
+  for (const u of mediaUrls ?? []) {
+    const result = tryUrl(u)
+    if (result) return result
+  }
+
+  return null
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -47,12 +104,6 @@ function deepDiveBadge(dd: RecommendationDeepDive | undefined): { text: string; 
   return { text: "待深度处理", cls: "text-muted-foreground border-border bg-muted/40" }
 }
 
-/**
- * Compose flowing narrative paragraphs from deepDive fields.
- * Leads with significance (whyItMatters) so the first sentence is always
- * a judgment statement, not a news-recap opener like "据 XX 报道…".
- * Pre-registers oneSentence so it is never repeated in the body.
- */
 function composeSignalNarrative(
   dd: RecommendationDeepDive | undefined,
   item: RecommendedItem,
@@ -64,8 +115,6 @@ function composeSignalNarrative(
   const MIN = 25
   const seen = new Set<string>()
 
-  // Pre-register oneSentence so it doesn't appear again in the body
-  // (it is already shown in the header as signal title or dek)
   const os = (dd.oneSentence ?? "").trim()
   if (os.length >= MIN) seen.add(os.slice(0, 60))
 
@@ -81,7 +130,6 @@ function composeSignalNarrative(
   const parts: string[] = []
   const p = (t: string | null | undefined) => { const v = add(t); if (v) parts.push(v) }
 
-  // Judgment-first order: significance → facts → context → personal angle → caveats
   p(dd.whyItMatters)
   p(dd.whatHappened)
   p(dd.context)
@@ -110,6 +158,26 @@ function Badge({ children, className }: { children: React.ReactNode; className?:
     )}>
       {children}
     </span>
+  )
+}
+
+/** Single signal image with error-state hide — no broken image or empty space. */
+function SignalImage({ url }: { url: string }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return null
+  return (
+    <div className="w-full overflow-hidden rounded-lg bg-muted/20" style={{ height: "220px" }}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt=""
+        className="w-full h-full object-cover"
+        loading="lazy"
+        decoding="async"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+      />
+    </div>
   )
 }
 
@@ -165,11 +233,9 @@ function EvidenceNote({
   sumLen: number | undefined
   fcLen: number | undefined
 }) {
-  // Build a single natural-language evidence paragraph
   const parts: string[] = []
   if (sourceNotes) parts.push(sourceNotes)
 
-  // Inline content-quality note (replaces the removed top banner)
   const qualityNote = (() => {
     if (!displayCS || displayCS === "full_article") return ""
     if (displayCS === "rss_summary") return `当前内容来自 RSS 摘要（约 ${sumLen ?? "?"}字），尚缺完整原文，以上推断需保守解读。`
@@ -179,7 +245,6 @@ function EvidenceNote({
   })()
   if (qualityNote) parts.push(qualityNote)
 
-  // Evidence gaps — inline sentence
   if (evidenceGaps.length > 0) {
     parts.push(`待补充：${evidenceGaps.join("；")}`)
   }
@@ -246,7 +311,7 @@ function AuditDrawer({
               <span>Final <span className="font-semibold">{item.finalScore}</span></span>
               <span>Signal <span className="font-semibold">{item.signalScore}</span></span>
               <span>Rec <span className="font-semibold">{item.recommendationScore}</span></span>
-              {item.evScore != null   && <span>Evidence <span className="font-semibold">{item.evScore}</span></span>}
+              {item.evScore != null    && <span>Evidence <span className="font-semibold">{item.evScore}</span></span>}
               {item.truthScore != null && <span>Truth <span className="font-semibold">{item.truthScore}</span></span>}
             </div>
           </div>
@@ -321,7 +386,6 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
   const fcLen = diag?.inputFullContentLength
   const sumLen = diag?.inputSummaryLength
 
-  // Safety-corrected contentStatus
   const displayCS = contentStatus === "full_article" && (fcLen ?? 0) < 500 ? "rss_summary" : contentStatus
 
   const ddBadge = deepDiveBadge(dd)
@@ -329,39 +393,45 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
   const isFallback = dd?.status === "fallback" || dd?.model === "deterministic-v1"
   const isLlmGenerated = !!dd && dd.status === "generated" && dd.model !== "deterministic-v1"
 
-  // ── Signal title derivation ────────────────────────────────────────────────
-  // If LLM-generated, promote oneSentence to the main heading (judgment-first).
-  // item.title becomes the factual reference subtitle below.
-  // If deterministic/missing, item.title stays as main heading;
-  // recommendationReason appears as the dek framing.
-  const rawOneSentence = (dd?.oneSentence ?? "").trim()
-  const useJudgmentTitle = (
-    isLlmGenerated &&
-    rawOneSentence.length > 20 &&
-    rawOneSentence !== item.title &&
-    !rawOneSentence.startsWith("该条目")
+  // Signal title derivation (memoized — item ref is stable during modal lifetime)
+  const { signalTitle, originalTitleRef, signalDek, systemNoteReason } = useMemo(() => {
+    const rawOneSentence = (dd?.oneSentence ?? "").trim()
+    const useJudgment = (
+      isLlmGenerated &&
+      rawOneSentence.length > 20 &&
+      rawOneSentence !== item.title &&
+      !rawOneSentence.startsWith("该条目")
+    )
+    return {
+      signalTitle:      useJudgment ? rawOneSentence : item.title,
+      originalTitleRef: useJudgment ? item.title : null,
+      signalDek:        useJudgment ? "" : (item.recommendationReason || ""),
+      systemNoteReason: useJudgment ? item.recommendationReason : "",
+    }
+  }, [dd, isLlmGenerated, item])
+
+  // Narrative and follow-ups (memoized)
+  const narrative  = useMemo(() => composeSignalNarrative(dd, item), [dd, item])
+  const followUps  = useMemo(() => buildFollowUps(item), [item])
+  const evidenceGaps = useMemo(() => dd?.evidenceGaps?.filter(Boolean) ?? [], [dd])
+  const sourceNotes  = useMemo(() => dd?.sourceNotes || dd?.sourceReadingGuide || "", [dd])
+
+  // Single best signal image (memoized, filtered)
+  const signalImage = useMemo(
+    () => pickSignalImage(item.coverImageUrl, item.mediaUrls),
+    [item.coverImageUrl, item.mediaUrls],
   )
-  const signalTitle    = useJudgmentTitle ? rawOneSentence : item.title
-  const originalTitleRef = useJudgmentTitle ? item.title : null
-  // Dek only shown when item.title is main (to add judgment framing below it)
-  const signalDek = useJudgmentTitle ? "" : (item.recommendationReason || "")
-
-  // SystemNote shows recommendationReason only when it's not already in the header dek
-  const systemNoteReason = useJudgmentTitle ? item.recommendationReason : ""
-
-  const narrative = composeSignalNarrative(dd, item)
-  const evidenceGaps = dd?.evidenceGaps?.filter(Boolean) ?? []
-  const followUps = buildFollowUps(item)
-  const sourceNotes = dd?.sourceNotes || dd?.sourceReadingGuide || ""
 
   const age = formatAge(item.publishedAt)
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+        {/* Overlay: plain semi-transparent, no backdrop-blur (GPU-intensive) */}
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/45 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
 
-        <DialogPrimitive.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-24px)] max-w-[960px] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border/80 bg-background shadow-2xl focus:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
+        {/* Content: lighter shadow, no zoom animation */}
+        <DialogPrimitive.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-24px)] max-w-[960px] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border/80 bg-background shadow-xl focus:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0">
           <DialogPrimitive.Title className="sr-only">{item.title}</DialogPrimitive.Title>
 
           {/* Close button */}
@@ -378,8 +448,6 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
 
             {/* ── SIGNAL HEADER ─────────────────────────────────────────── */}
             <header className="border-b border-border px-6 pb-5 pt-5 shrink-0">
-
-              {/* Source meta + 查看原文 */}
               <div className="flex items-center justify-between gap-3 pr-8">
                 <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground min-w-0 flex-wrap">
                   <span className="font-medium text-foreground/70 truncate max-w-[200px]">{item.source}</span>
@@ -404,26 +472,22 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
                 </a>
               </div>
 
-              {/* Main heading — signal title (judgment) or news headline */}
               <h2 className="mt-3 text-xl font-bold leading-snug text-foreground pr-8">
                 {signalTitle}
               </h2>
 
-              {/* Original news title (shown only when judgment is main heading) */}
               {originalTitleRef && (
                 <p className="mt-1.5 text-[12px] leading-snug text-muted-foreground/55 pr-8">
                   原文标题：{originalTitleRef}
                 </p>
               )}
 
-              {/* Dek — system judgment framing (shown when item.title is main) */}
               {signalDek && (
                 <p className="mt-2 text-[13px] leading-relaxed text-foreground/65 pr-8">
                   {signalDek}
                 </p>
               )}
 
-              {/* Badges */}
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Badge className={TIER_COLORS[item.recommendationTier]}>
                   {TIER_LABELS[item.recommendationTier]}
@@ -442,45 +506,8 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
             <div className="flex-1 overflow-y-auto">
               <div className="px-6 py-7 space-y-8">
 
-                {/* SIGNAL STAGE — images (only when available) */}
-                {(() => {
-                  const cover = item.coverImageUrl
-                  const media = (item.mediaUrls ?? []).filter(Boolean)
-                  const images = cover
-                    ? [cover, ...media.filter(u => u !== cover)].slice(0, 4)
-                    : media.slice(0, 4)
-                  if (images.length === 0) return null
-                  return (
-                    <div className={images.length === 1
-                      ? "w-full overflow-hidden rounded-lg"
-                      : "grid grid-cols-2 gap-1.5 rounded-lg overflow-hidden"
-                    }>
-                      {images.map((url, i) => (
-                        <div
-                          key={i}
-                          className={cn(
-                            "overflow-hidden bg-muted/30",
-                            images.length === 1 ? "rounded-lg" : "rounded",
-                            images.length === 1 ? "h-52 sm:h-64" : "h-32",
-                          )}
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={url}
-                            alt=""
-                            className="w-full h-full object-cover"
-                            onError={e => {
-                              const el = e.currentTarget as HTMLElement
-                              el.style.display = 'none'
-                              const parent = el.parentElement
-                              if (parent) parent.style.display = 'none'
-                            }}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  )
-                })()}
+                {/* SIGNAL STAGE — single filtered image, lazy loaded */}
+                {signalImage && <SignalImage url={signalImage} />}
 
                 {/* SIGNAL INTERPRETATION — flowing narrative, no section labels */}
                 {narrative.length > 0 ? (
@@ -490,7 +517,6 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
                         key={i}
                         className={cn(
                           "text-[15px] leading-[1.85]",
-                          // Last paragraph (uncertainty/caveats) slightly muted
                           i === narrative.length - 1
                             ? "text-foreground/65"
                             : "text-foreground/88",
@@ -515,7 +541,7 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
                   provider={dd?.provider}
                 />
 
-                {/* EVIDENCE NOTE — natural language, no big bullet report */}
+                {/* EVIDENCE NOTE */}
                 <EvidenceNote
                   sourceNotes={sourceNotes || undefined}
                   evidenceGaps={evidenceGaps}
@@ -530,8 +556,6 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
 
               </div>
             </div>
-
-            {/* No sticky footer — 查看原文 is in the header */}
 
           </div>
         </DialogPrimitive.Content>
