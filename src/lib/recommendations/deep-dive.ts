@@ -16,6 +16,18 @@ export type FinalDeepDiveMode = 'llm' | 'deterministic'
 export type DeepDiveContentStatus = 'full_article' | 'rss_summary' | 'title_only' | 'unknown'
 export type DeepDiveQualityLevel = 'high' | 'medium' | 'low'
 
+export type DeepDiveInputDiagnostics = {
+  inputTitleLength: number
+  inputSummaryLength: number
+  inputFullContentLength: number
+  contentSource: 'rss_summary' | 'fetched_article' | 'unknown'
+  hasFullContent: boolean
+  generationStatus: RecommendationDeepDiveStatus
+  fallbackReason: string | null
+  qualityWarnings: string[]
+  qualityFailures: string[]
+}
+
 export type RecommendationDeepDive = {
   status: RecommendationDeepDiveStatus
   generatedAt: string
@@ -49,6 +61,7 @@ export type RecommendationDeepDive = {
   deepDiveModel: string
   inputQuality?: RecommendationDeepDiveInputQuality
   fallbackReason?: string | null
+  inputDiagnostics?: DeepDiveInputDiagnostics
 }
 
 export type RecommendationDeepDiveInput = {
@@ -128,6 +141,11 @@ const BANNED_VAGUE_PHRASES = [
   '适合今日重点阅读',
   '具有一定价值',
   '值得关注',
+  '有重要意义',
+  '可能带来影响',
+  '需要持续观察',
+  '具有里程碑意义',
+  '将产生深远影响',
 ]
 const GARBLED_SNIPPETS = ['锟', '�', '鈧', '鑺', '脙']
 const RETRY_REASON_PREFIX = 'first_attempt_quality_issue'
@@ -200,6 +218,34 @@ function looksGarbled(text: string): boolean {
 function normalizeFallbackReason(reason: string | null | undefined): string | null {
   const value = safeText(reason, '', 220)
   return value || null
+}
+
+function computeInputDiagnostics(
+  input: RecommendationDeepDiveInput,
+  status: RecommendationDeepDiveStatus,
+  model: string,
+  provider: string,
+  fallbackReason: string | null = null,
+  qualityWarnings: string[] = [],
+  qualityFailures: string[] = [],
+): DeepDiveInputDiagnostics {
+  const titleLen = safeText(input.title, '').length
+  const summaryLen = safeText(input.summary, '').length
+  const fullContentLen = safeText(input.fullContent, '').length
+  const hasFC = Boolean(input.hasFullContent) || fullContentLen >= 400
+  const contentSrc: DeepDiveInputDiagnostics['contentSource'] =
+    hasFC ? 'fetched_article' : summaryLen > 0 ? 'rss_summary' : 'unknown'
+  return {
+    inputTitleLength: titleLen,
+    inputSummaryLength: summaryLen,
+    inputFullContentLength: fullContentLen,
+    contentSource: contentSrc,
+    hasFullContent: hasFC,
+    generationStatus: status,
+    fallbackReason,
+    qualityWarnings,
+    qualityFailures,
+  }
 }
 
 function splitFollowUp(value: unknown): string[] {
@@ -547,14 +593,23 @@ function validateLlmPayload(payload: Record<string, unknown>): {
 
 function buildLlmSystemPrompt(): string {
   return [
-    '你是一个给个人 AI 信息雷达写“站内深度解读卡片”的信息分析员。你的任务不是复述新闻，而是帮助用户判断：这条信息到底是什么，为什么重要，是否值得今天花时间读，后面应该追踪什么。',
+    '你是一个给个人 AI 信息雷达写”站内深度解读卡片”的信息分析员。你的任务不是复述新闻，而是帮助用户判断：这条信息到底是什么，为什么重要，是否值得今天花时间读，后面应该追踪什么。',
     '写作要求：',
     '- 使用简体中文。',
     '- 语气像冷静的信息分析师，不要营销腔，不要 AI 模板腔。',
     '- 只基于输入材料分析，不要编造事实、数据、人物观点、公司行动或市场反应。',
-    '- 如果材料不足，必须明确说材料不足。',
-    '- 区分“已发生事实”和“基于材料的推断”。',
-    '- 避免空话：综合评分较高、证据信号充分、适合重点阅读、具有一定价值、值得关注。',
+    '- 严格区分”事实”和”推断”：事实指来源文本明确记载的信息；推断指基于已有信息的合理延伸，须加”可能””或许””推测”等限定词。不允许将推断写成事实。',
+    '- 如果 fullContent 为 null 或 inferredContentStatus 为 rss_summary/title_only（即当前只有 RSS 摘要或标题），必须：',
+    '  1. 在 whatHappened 开头或 oneSentence 中明确注明”当前只有摘要”或”仅基于有限信息”。',
+    '  2. 绝不能写得像读过完整原文一样。',
+    '  3. uncertainty 必须说明内容来源有限，建议查看原文。',
+    '  4. evidenceGaps 必须包含”当前缺少完整原文，无法做完整论据分析”这条。',
+    '  5. contentStatus 必须返回 “rss_summary”（不能返回 “full_article”）。',
+    '  6. quality.evidenceSufficiency 必须为 “low” 或 “medium”（不能为 “high”）。',
+    '- 如果是单一来源（isSingleSource=true），必须在 uncertainty 中提醒”当前偏单一来源，需等待更多来源交叉验证”。',
+    '- 每段必须尽量贴合具体标题、来源名称、公司、产品、行业变化、时间，不要泛泛而论。',
+    '- userValue 应偏向：AI 产品观察、技术趋势、自媒体选题、投资/商业判断线索、个人信息系统建设。',
+    '- 避免空话：综合评分较高、证据信号充分、适合重点阅读、具有一定价值、值得关注、有重要意义、将产生深远影响。',
     '- 不要写成新闻稿、投资建议或学术论文。',
     '- 输出必须是合法 JSON。不要 Markdown、不要代码块、不要额外解释。',
     'JSON Schema:',
@@ -609,16 +664,35 @@ function buildLlmUserPrompt(input: RecommendationDeepDiveInput, retryHint?: stri
     inferredContentStatus: contentStatus,
   }
 
+  const summaryLen = safeText(input.summary, '').length
+  const fullContentLen = safeText(input.fullContent, '').length
+
   const instruction = [
-    '请基于以下结构化输入，输出一份“站内深度解读卡片” JSON。',
+    '请基于以下结构化输入，输出一份”站内深度解读卡片” JSON。',
     '要求：',
     '- oneSentence 不超过 60 个中文字符。',
-    '- whatHappened/whyItMatters/userValue 要具体，不要空话。',
-    '- followUp 给 2-4 条可执行追踪信号。',
-    '- evidenceGaps 至少 1 条。',
-    '- 若无全文，请明确“目前只能基于标题/摘要判断”。',
+    '- whatHappened/whyItMatters/userValue 要具体，不要空话，必须贴合标题中的具体主体、动作和时间。',
+    '- followUp 给 2-4 条可执行追踪信号（具体到动作：核查XX、对比XX、追踪XX）。',
+    '- evidenceGaps 至少 1 条，说明缺少什么证据才能做出更强结论。',
     '- 目标篇幅建议 700-1200 中文字。',
   ]
+
+  if (contentStatus === 'rss_summary' || contentStatus === 'title_only') {
+    const dataDesc = contentStatus === 'title_only'
+      ? `仅有标题（无摘要，fullContent=null）`
+      : `RSS 摘要约 ${summaryLen} 字（fullContent=${fullContentLen === 0 ? 'null' : `${fullContentLen}字`}）`
+    instruction.push('')
+    instruction.push(`⚠️ 内容质量警告：当前输入只有 ${dataDesc}，没有完整原文。`)
+    instruction.push('⚠️ 必须在 whatHappened 开头或 oneSentence 中明确注明”当前只有摘要”或”仅基于有限信息”。')
+    instruction.push('⚠️ 不能写得像读过完整原文一样。sourceNotes 必须写明”内容来自 RSS 摘要，非完整原文”。')
+    instruction.push('⚠️ evidenceGaps 必须包含”缺少完整原文，无法做完整论据分析”。')
+    instruction.push('⚠️ contentStatus 必须返回 “rss_summary”（不能返回 “full_article”）。')
+    instruction.push('⚠️ quality.evidenceSufficiency 不能为 “high”。')
+  }
+
+  if (Boolean(input.isSingleSource) || sourceStatus === 'single_source') {
+    instruction.push('⚠️ 这是单一来源信息，必须在 uncertainty 中说明需要等待更多来源交叉验证。')
+  }
 
   if (retryHint) {
     instruction.push(`补充要求：上一次输出问题是 ${retryHint}，这次请提高具体性并确保字段完整。`)
@@ -644,11 +718,19 @@ function parseLlmDeepDivePayload(
     ? payload.quality as Record<string, unknown>
     : {}
 
+  // If model incorrectly claimed full_article when we only had a summary, override it
+  const expectedContentStatus = inferContentStatus(input)
+  const rawModelContentStatus = normalizeContentStatus(payload.contentStatus, fallback.contentStatus)
+  const resolvedContentStatus: DeepDiveContentStatus =
+    (rawModelContentStatus === 'full_article' && expectedContentStatus !== 'full_article')
+      ? expectedContentStatus
+      : rawModelContentStatus
+
   const parsed: ParsedDeepDivePayload = {
     status: 'generated',
     model: safeText(model, 'llm', 80) || 'llm',
     provider: safeText(provider, 'unknown', 40) || 'unknown',
-    contentStatus: normalizeContentStatus(payload.contentStatus, fallback.contentStatus),
+    contentStatus: resolvedContentStatus,
     oneSentence: normalizeLlmField(payload.oneSentence, fallback.oneSentence, 180),
     whatHappened: normalizeLlmField(payload.whatHappened, fallback.whatHappened, 2600),
     context: normalizeLlmField(payload.context, fallback.context, 2200),
@@ -664,6 +746,8 @@ function parseLlmDeepDivePayload(
       needsHumanReview: asBool(rawQuality.needsHumanReview, false),
     },
   }
+
+  const inputDiagnostics = computeInputDiagnostics(input, 'generated', model, provider)
 
   return buildDeepDive({
     status: 'generated',
@@ -691,6 +775,7 @@ function parseLlmDeepDivePayload(
     quality: parsed.quality,
     inputQuality: inferInputQuality(input),
     fallbackReason: null,
+    inputDiagnostics,
   })
 }
 
@@ -764,6 +849,7 @@ export function generateDeterministicDeepDive(
   const inputQuality = options.inputQuality ?? inferInputQuality(input)
   const fallbackReason = normalizeFallbackReason(options.fallbackReason)
   const content = buildDeterministicContent(input)
+  const inputDiagnostics = computeInputDiagnostics(input, status, model, provider, fallbackReason)
 
   return buildDeepDive({
     status,
@@ -791,6 +877,7 @@ export function generateDeterministicDeepDive(
     quality: content.quality,
     inputQuality,
     fallbackReason,
+    inputDiagnostics,
   })
 }
 
@@ -800,6 +887,7 @@ export function generateSkippedDeepDive(
 ): RecommendationDeepDive {
   const generatedAt = (options.now ?? new Date()).toISOString()
   const oneSentence = '该条目未进入最终推荐名单，本轮不生成站内深度解读。'
+  const inputDiagnostics = computeInputDiagnostics(input, 'skipped', 'skipped', 'none')
 
   return buildDeepDive({
     status: 'skipped',
@@ -831,6 +919,7 @@ export function generateSkippedDeepDive(
     },
     inputQuality: inferInputQuality(input),
     fallbackReason: null,
+    inputDiagnostics,
   })
 }
 

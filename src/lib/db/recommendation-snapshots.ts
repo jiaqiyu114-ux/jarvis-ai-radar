@@ -13,6 +13,7 @@ import {
   ensureDeterministicDeepDive,
   shouldGenerateDeepDiveForTier,
   type RecommendationDeepDive,
+  type DeepDiveInputDiagnostics,
 } from '@/lib/recommendations/deep-dive'
 import type {
   RecommendedItem,
@@ -157,6 +158,8 @@ function encodeDeepDivePayload(deepDive: RecommendationDeepDive): string {
     sourceNotes: deepDive.sourceNotes,
     evidenceGaps: deepDive.evidenceGaps,
     quality: deepDive.quality,
+    fallbackReason: deepDive.fallbackReason ?? null,
+    inputDiagnostics: deepDive.inputDiagnostics ?? null,
   }
   return `${DEEP_DIVE_JSON_PREFIX}${JSON.stringify(payload)}`
 }
@@ -262,6 +265,15 @@ function buildDeepDiveFromRow(row: any, item: RecommendedItem): RecommendationDe
     sanitizeDisplayText(row.source_reading_guide, generated.sourceNotes),
   )
 
+  const decodedFallbackReason = typeof decoded?.fallbackReason === 'string'
+    ? decoded.fallbackReason
+    : (generated.fallbackReason ?? null)
+
+  const decodedInputDiagnostics: DeepDiveInputDiagnostics | undefined =
+    decoded?.inputDiagnostics && typeof decoded.inputDiagnostics === 'object'
+      ? (decoded.inputDiagnostics as DeepDiveInputDiagnostics)
+      : generated.inputDiagnostics
+
   return {
     status: sanitizeDisplayText(row.deep_dive_status, generated.status) as RecommendationDeepDive['status'],
     generatedAt: row.deep_dive_generated_at ?? generated.generatedAt,
@@ -296,7 +308,8 @@ function buildDeepDiveFromRow(row: any, item: RecommendedItem): RecommendationDe
     deepDiveGeneratedAt: row.deep_dive_generated_at ?? generated.deepDiveGeneratedAt,
     deepDiveModel: sanitizeDisplayText(row.deep_dive_model, generated.deepDiveModel),
     inputQuality: generated.inputQuality,
-    fallbackReason: generated.fallbackReason ?? null,
+    fallbackReason: decodedFallbackReason,
+    inputDiagnostics: decodedInputDiagnostics,
   }
 }
 

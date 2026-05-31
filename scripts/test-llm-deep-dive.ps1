@@ -62,6 +62,7 @@ Write-Host "=== Test LLM Deep Dive ===" -ForegroundColor Cyan
 Write-Host "Base: $Base"
 Write-Host "Mode: $Mode"
 Write-Host "enabled=$enabled keySet=$keySet fastModel=$fastModel proModel=$proModel"
+Write-Host "expectGenerated=$expectGenerated"
 Write-Host ""
 
 $url = "$Base/api/recommendations/refresh?deepDive=$Mode"
@@ -77,15 +78,13 @@ if (-not $res.ok) {
 
 Write-Host "runStatus: $($res.runStatus)"
 if ($res.deepDiveStats) {
-  Write-Host "actualDeepDiveModel: $($res.deepDiveStats.model)"
-  Write-Host "actualProvider: $($res.deepDiveStats.provider)"
-}
-if ($res.deepDiveStats) {
   Write-Host ("deepDiveStats: total={0}, generated={1}, fallback={2}, failed={3}, model={4}, provider={5}, mode={6}" -f `
     $res.deepDiveStats.total, $res.deepDiveStats.generated, $res.deepDiveStats.fallback, $res.deepDiveStats.failed, $res.deepDiveStats.model, $res.deepDiveStats.provider, $res.deepDiveStats.mode)
+  Write-Host "actualDeepDiveModel: $($res.deepDiveStats.model)"
+  Write-Host "actualProvider:      $($res.deepDiveStats.provider)"
 
   if ($expectGenerated -and [int]$res.deepDiveStats.generated -le 0) {
-    Write-Host "expected generated > 0, but got $($res.deepDiveStats.generated)" -ForegroundColor Red
+    Write-Host "FAIL: expected generated > 0, but got $($res.deepDiveStats.generated)" -ForegroundColor Red
     exit 1
   }
 }
@@ -94,26 +93,96 @@ $items = @()
 if ($res.items) { $items = @($res.items) }
 $final = @($items | Where-Object { $_.recommendationTier -in @("must_read", "high_value") })
 
-Write-Host "finalItems: $($final.Count)"
-$badShape = $false
-for ($i = 0; $i -lt [Math]::Min($final.Count, 5); $i++) {
-  $it = $final[$i]
-  $model = [string]$it.deepDive.model
-  $provider = [string]$it.deepDive.provider
-  $status = [string]$it.deepDive.status
-  $oneSentenceLen = ([string]$it.deepDive.oneSentence).Length
-  $followUpCount = @($it.deepDive.followUp).Count
-  Write-Host ("  - [{0}] status={1} | model={2} | provider={3} | oneSentenceLen={4} | followUpCount={5}" -f `
-    $i, $status, $model, $provider, $oneSentenceLen, $followUpCount)
+Write-Host "finalItems (must_read/high_value): $($final.Count)"
 
-  if (-not (Test-DeepDiveShape $it.deepDive "final[$i]")) {
+# --- Content status distribution ---
+$contentStatusCounts = @{}
+$titleLengths = @()
+$summaryLengths = @()
+$fullContentLengths = @()
+
+$badShape = $false
+for ($i = 0; $i -lt $final.Count; $i++) {
+  $it = $final[$i]
+  $dd = $it.deepDive
+  $model = [string]$dd.model
+  $provider = [string]$dd.provider
+  $status = [string]$dd.status
+  $contentStatus = if ($dd.PSObject.Properties.Name -contains "contentStatus") { [string]$dd.contentStatus } else { "unknown" }
+  $oneSentenceLen = ([string]$dd.oneSentence).Length
+  $followUpCount = @($dd.followUp).Count
+
+  # Collect contentStatus distribution
+  if (-not $contentStatusCounts.ContainsKey($contentStatus)) { $contentStatusCounts[$contentStatus] = 0 }
+  $contentStatusCounts[$contentStatus]++
+
+  # Collect input diagnostics
+  if ($dd.PSObject.Properties.Name -contains "inputDiagnostics" -and $null -ne $dd.inputDiagnostics) {
+    $diag = $dd.inputDiagnostics
+    if ($diag.PSObject.Properties.Name -contains "inputTitleLength") {
+      $titleLengths += [int]$diag.inputTitleLength
+    }
+    if ($diag.PSObject.Properties.Name -contains "inputSummaryLength") {
+      $summaryLengths += [int]$diag.inputSummaryLength
+    }
+    if ($diag.PSObject.Properties.Name -contains "inputFullContentLength") {
+      $fullContentLengths += [int]$diag.inputFullContentLength
+    }
+    $diagLine = "contentSource={0} summaryLen={1} fullContentLen={2}" -f `
+      $diag.contentSource, $diag.inputSummaryLength, $diag.inputFullContentLength
+  } else {
+    $diagLine = "inputDiagnostics=missing"
+  }
+
+  Write-Host ("  [{0}] status={1} | contentStatus={2} | model={3} | provider={4} | oneSentenceLen={5} | followUpCount={6}" -f `
+    $i, $status, $contentStatus, $model, $provider, $oneSentenceLen, $followUpCount)
+  Write-Host ("       $diagLine")
+
+  if (-not (Test-DeepDiveShape $dd "final[$i]")) {
     $badShape = $true
   }
 }
 
 if ($badShape) {
-  Write-Host "deepDive shape check failed" -ForegroundColor Red
+  Write-Host "deepDive shape check FAILED" -ForegroundColor Red
   exit 1
+}
+
+Write-Host ""
+Write-Host "--- Content Status Distribution ---"
+foreach ($k in $contentStatusCounts.Keys) {
+  Write-Host ("  {0}: {1}" -f $k, $contentStatusCounts[$k])
+}
+
+if ($titleLengths.Count -gt 0) {
+  $avgTitle = [Math]::Round(($titleLengths | Measure-Object -Average).Average, 1)
+  $avgSummary = if ($summaryLengths.Count -gt 0) { [Math]::Round(($summaryLengths | Measure-Object -Average).Average, 1) } else { "N/A" }
+  $avgFullContent = if ($fullContentLengths.Count -gt 0) { [Math]::Round(($fullContentLengths | Measure-Object -Average).Average, 1) } else { "N/A" }
+  Write-Host "--- Average Input Lengths ---"
+  Write-Host "  avg title:       $avgTitle chars"
+  Write-Host "  avg summary:     $avgSummary chars"
+  Write-Host "  avg fullContent: $avgFullContent chars"
+  if ($fullContentLengths.Count -gt 0) {
+    $avgFC = ($fullContentLengths | Measure-Object -Average).Average
+    if ($avgFC -lt 50) {
+      Write-Host "  WARN: average fullContent very short ($avgFC chars) — model likely only saw RSS summary" -ForegroundColor Yellow
+    }
+  }
+} else {
+  Write-Host "  WARN: inputDiagnostics not present on any item — run a fresh snapshot" -ForegroundColor Yellow
+}
+
+# --- Pro model verification ---
+Write-Host ""
+Write-Host "--- Model Verification ---"
+if ($res.deepDiveStats -and -not [string]::IsNullOrWhiteSpace([string]$res.deepDiveStats.model)) {
+  $usedModel = [string]$res.deepDiveStats.model
+  Write-Host "  used model: $usedModel"
+  if ($Mode -eq "llm" -and $usedModel -eq $proModel) {
+    Write-Host "  LLM_PRO_MODEL match: YES" -ForegroundColor Green
+  } elseif ($Mode -eq "llm") {
+    Write-Host "  LLM_PRO_MODEL expected=$proModel actual=$usedModel" -ForegroundColor Yellow
+  }
 }
 
 Write-Host ""

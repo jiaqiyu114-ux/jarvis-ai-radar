@@ -85,6 +85,9 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
 
   const showGeneratedHint = deepDive?.status === "generated" && deepDive.model !== "deterministic-v1"
   const showFallbackHint = deepDive?.status === "fallback" || deepDive?.model === "deterministic-v1"
+  const contentStatus = deepDive?.contentStatus
+  const showSummaryOnlyWarning = contentStatus === "rss_summary" || contentStatus === "title_only"
+  const inputDiag = deepDive?.inputDiagnostics
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -124,6 +127,21 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
 
             <div className="flex-1 overflow-y-auto px-5 py-4">
               <div className="space-y-4">
+                {showSummaryOnlyWarning && (
+                  <section className="rounded-lg border border-amber-400/30 bg-amber-400/8 px-4 py-2.5">
+                    <p className="text-xs leading-relaxed">
+                      <span className="font-semibold text-amber-700 dark:text-amber-400">
+                        {contentStatus === "title_only" ? "仅有标题信息" : "基于 RSS 摘要分析"}
+                      </span>
+                      <span className="text-amber-700/80 dark:text-amber-400/80">
+                        {contentStatus === "title_only"
+                          ? "：深度解读基于极有限内容，结论仅供参考，建议查看原文。"
+                          : `：深度解读基于 RSS 摘要（${inputDiag?.inputSummaryLength ?? "?"}字），非完整原文。结论受限，建议查看原文获取完整上下文。`}
+                      </span>
+                    </p>
+                  </section>
+                )}
+
                 <section className="rounded-lg border border-border bg-card px-4 py-3">
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground">一句话判断</p>
                   <p className="mt-2 text-sm leading-relaxed text-foreground">{oneSentence}</p>
@@ -205,6 +223,15 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
                     <p className="mt-2 text-xs text-muted-foreground">
                       quality flags: {item.qualityFlags.join(" / ")}
                     </p>
+                  )}
+                  {inputDiag && (
+                    <div className="mt-2 border-t border-border pt-2 text-[10px] text-muted-foreground/70 space-y-0.5">
+                      <p>内容来源: {inputDiag.contentSource} · 摘要: {inputDiag.inputSummaryLength}字 · 全文: {inputDiag.inputFullContentLength}字</p>
+                      <p>生成状态: {inputDiag.generationStatus} · 模型: {deepDiveMeta(item)}</p>
+                      {inputDiag.fallbackReason && (
+                        <p>fallback: {inputDiag.fallbackReason}</p>
+                      )}
+                    </div>
                   )}
                 </details>
               </div>
