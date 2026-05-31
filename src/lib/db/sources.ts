@@ -17,7 +17,7 @@ const SOURCE_TRACKING_PARAMS = [
  * Does NOT merge http↔https or strip subdomains — those are intentional differences
  * that could point to different services.
  */
-function normalizeSourceUrl(raw: string): string {
+export function normalizeSourceUrl(raw: string): string {
   const trimmed = raw.trim()
   try {
     const parsed = new URL(trimmed)
