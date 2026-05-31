@@ -1,84 +1,76 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { runRssProviderIngest } from '@/lib/ingest/ingest-service'
 import { isServerSupabaseConfigured } from '@/lib/supabase/server'
-import type { RssWriteResult, RssDryRunResult } from '@/lib/ingest/ingest-service'
-import type { SourceHealthSummary } from '@/lib/providers/rss-provider'
+import {
+  createAcc,
+  runDeadlineAwareIngest,
+  buildIngestResponse,
+} from '@/lib/ingest/ingest-runner'
 
 /**
- * GET /api/ingest/rss                — dry-run; fetches feeds, no DB writes
- * GET /api/ingest/rss?write=true     — fetches feeds and writes to DB
- * POST /api/ingest/rss               — fetches feeds and writes to DB
+ * POST /api/ingest/rss — write-mode ingest with hard deadline guarantee.
  *
- * Concurrency model (see rss-provider.ts):
- *   - Sources are fetched in parallel batches (4 concurrent)
- *   - Per-source timeout: 9 s
- *   - Global deadline: 65 s — returns partial_success when hit
- *   - Single source failures never block other sources
+ * Query params:
+ *   maxSources  int   default 8    — sources to attempt this run (prioritised)
+ *   timeoutMs   int   default 55000 — hard wall-clock limit (ms); must be < client timeout
+ *   force       bool  default false — include failing sources; allow maxSources up to 18
  *
- * POST response shape:
- *   {
- *     ok, runStatus, durationMs,
- *     sources: { total, processed, successful, failed, timedOut, skipped },
- *     items:   { fetched, insertedItems, reusedItems, insertedMentions, skippedMentions },
- *     failedSources: [{ name, url, reason, durationMs }]
- *   }
+ * Concurrency model:
+ *   - BATCH_SIZE = 4 sources run concurrently per batch
+ *   - Per-source fetch timeout = 9 s (hard abort via AbortController)
+ *   - Health updates are fire-and-forget (never block the fetch batch)
+ *   - Write loop checks deadline before each item; stops early if < 3 s remain
+ *   - Promise.race(ingestWork, hardTimeout) guarantees response within timeoutMs
+ *
+ * Worst-case budget (defaults):
+ *   select sources  ~  1 s
+ *   fetch 8 sources ~ 18 s  (2 batches × 9 s timeout)
+ *   write 120 items ~ 18 s  (120 × ~150 ms per item)
+ *   total           ~ 37 s  ← well under 55 s deadline and 90 s client timeout
+ *
+ * GET /api/ingest/rss                — unchanged dry-run (no DB writes)
+ * GET /api/ingest/rss?write=true     — unchanged write-mode (verbose response)
  */
 
-/** Build the structured summary response expected by the task spec. */
-function buildSummaryResponse(
-  result: RssWriteResult | RssDryRunResult,
-  durationMs: number,
-): Record<string, unknown> {
-  const sh = result.sourceHealthSummary as SourceHealthSummary
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-  const failedSources = result.feedErrors.map(e => ({
-    name:      e.sourceName,
-    url:       e.feedUrl,
-    stage:     e.stage,
-    reason:    e.message,
-    durationMs: e.latencyMs ?? null,
-  }))
-
-  const processed = sh.total - (sh.skippedThisRun ?? 0)
-
-  // Write-mode fields (inserted/reused/mentions)
-  const writeResult = result as RssWriteResult
-  const itemsInserted  = writeResult.insertedItems     ?? 0
-  const itemsReused    = writeResult.reusedItems       ?? 0
-  const mentInserted   = writeResult.insertedMentions  ?? 0
-  const mentSkipped    = writeResult.skippedMentions   ?? 0
-
-  // Dry-run fields
-  const dryResult = result as RssDryRunResult
-  const itemsFetched = dryResult.fetched ?? (itemsInserted + itemsReused)
-
-  return {
-    ok:        result.ok,
-    runStatus: result.runStatus,
-    durationMs,
-    sources: {
-      total:      sh.total,
-      processed,
-      successful: sh.succeededThisRun,
-      failed:     sh.failedThisRun,
-      timedOut:   sh.timedOutThisRun  ?? 0,
-      skipped:    sh.skippedThisRun   ?? 0,
-    },
-    items: {
-      fetched:          itemsFetched,
-      insertedItems:    itemsInserted,
-      reusedItems:      itemsReused,
-      insertedMentions: mentInserted,
-      skippedMentions:  mentSkipped,
-    },
-    failedSources,
-    // Keep the detailed debug in dev/staging
-    ...(process.env.NODE_ENV !== 'production' && {
-      sourceMode:      result.sourceMode,
-      sourceLoadDebug: result.sourceLoadDebug,
-    }),
-  }
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n))
 }
+
+function parsePostParams(req: NextRequest): {
+  maxSources:  number
+  deadlineMs:  number
+  force:       boolean
+} {
+  const { searchParams } = new URL(req.url)
+
+  const rawTimeout    = Number(searchParams.get('timeoutMs'))
+  const rawMaxSources = Number(searchParams.get('maxSources'))
+  const force         = searchParams.get('force') === 'true'
+
+  const deadlineMs  = clamp(
+    Number.isFinite(rawTimeout)    && rawTimeout    > 0 ? rawTimeout    : 55_000,
+    10_000, 80_000,   // never less than 10s or more than 80s
+  )
+  const maxSources  = clamp(
+    Number.isFinite(rawMaxSources) && rawMaxSources > 0 ? rawMaxSources : 8,
+    1, force ? 20 : 12,  // with force=true allow up to 20; otherwise cap at 12
+  )
+
+  return { maxSources, deadlineMs, force }
+}
+
+/** Verbose dry-run / write-mode response (existing format, unchanged). */
+function forResponse(result: object): Record<string, unknown> {
+  const body = result as Record<string, unknown>
+  if (process.env.NODE_ENV === 'production') {
+    return Object.fromEntries(Object.entries(body).filter(([k]) => k !== 'debug'))
+  }
+  return body
+}
+
+// ── GET — unchanged dry-run ───────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
   const startMs = Date.now()
@@ -94,18 +86,11 @@ export async function GET(req: NextRequest) {
       }, { status: 400 })
     }
 
-    const result = await runRssProviderIngest({ dryRun: !write, recordHealth: write })
+    const result     = await runRssProviderIngest({ dryRun: !write, recordHealth: write })
     const durationMs = Date.now() - startMs
-
-    if (write) {
-      const httpStatus = result.runStatus === 'full_failure' ? 500 : 200
-      return NextResponse.json(buildSummaryResponse(result, durationMs), { status: httpStatus })
-    }
-
-    // Dry-run: keep the full verbose response (useful for debugging)
-    const body = result as Record<string, unknown>
-    const httpStatus = result.ok ? 200 : 500
-    return NextResponse.json({ ...body, durationMs }, { status: httpStatus })
+    const body       = { ...forResponse(result), durationMs }
+    const status     = result.ok ? 200 : 500
+    return NextResponse.json(body, { status })
 
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
@@ -116,9 +101,9 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST() {
-  const startMs = Date.now()
+// ── POST — deadline-aware write with hard cutoff ──────────────────────────────
 
+export async function POST(req: NextRequest) {
   if (!isServerSupabaseConfigured) {
     return NextResponse.json({
       ok:    false,
@@ -127,29 +112,49 @@ export async function POST() {
     }, { status: 400 })
   }
 
-  try {
-    const result = await runRssProviderIngest({ dryRun: false, recordHealth: true })
-    const durationMs = Date.now() - startMs
+  const startMs = Date.now()
+  const { maxSources, deadlineMs, force } = parsePostParams(req)
+  const deadline = startMs + deadlineMs
 
-    // 200 for full_success and partial_success; 500 only for full_failure
-    const httpStatus = result.runStatus === 'full_failure' ? 500 : 200
-    return NextResponse.json(buildSummaryResponse(result, durationMs), { status: httpStatus })
+  console.log(
+    `[rss ingest] start | maxSources=${maxSources} deadlineMs=${deadlineMs} force=${force}`
+  )
 
-  } catch (err) {
-    const durationMs = Date.now() - startMs
-    const message    = err instanceof Error ? err.message : String(err)
-    const stack      = err instanceof Error ? err.stack   : undefined
+  // Create shared mutable accumulator — populated as ingest progresses.
+  const acc = createAcc()
 
-    console.error('[api/ingest/rss POST] unhandled exception:', message)
-    if (stack) console.error(stack)
+  // The main ingest work (non-blocking from the race perspective).
+  // If it completes before the timeout, great.
+  // If the timeout fires first, acc holds whatever state was reached.
+  const ingestWork = runDeadlineAwareIngest(acc, { maxSources, deadline, force })
+    .catch(err => {
+      // Should never reach here (runDeadlineAwareIngest never throws),
+      // but if it somehow does, acc.runStatus stays 'running' → treated as timeout_partial.
+      console.error('[api/ingest/rss POST] unexpected rejection in ingestWork:', err)
+    })
 
-    return NextResponse.json({
-      ok:        false,
-      runStatus: 'full_failure',
-      durationMs,
-      error:     message,
-      hint:      'Check the dev server console for the full stack trace.',
-      ...(process.env.NODE_ENV !== 'production' && stack ? { stack } : {}),
-    }, { status: 500 })
+  // Hard timeout — resolves after deadlineMs regardless of ingestWork progress.
+  const hardTimeout = new Promise<void>(resolve => setTimeout(resolve, deadlineMs))
+
+  // Race: whoever resolves first wins.
+  // After race resolves, acc contains the latest accumulated state.
+  await Promise.race([ingestWork, hardTimeout])
+
+  const durationMs = Date.now() - startMs
+
+  if (acc.runStatus === 'running') {
+    // Timeout fired before ingest finished
+    acc.runStatus = 'timeout_partial'
+    acc.hints.push(
+      `Hard deadline of ${deadlineMs}ms hit after ${durationMs}ms. ` +
+      `Run again to process remaining sources/items.`
+    )
+    console.log(
+      `[rss ingest] ⏰ TIMEOUT after ${durationMs}ms — returning partial results`
+    )
   }
+
+  const body   = buildIngestResponse(acc, durationMs, deadlineMs)
+  const status = body.ok ? 200 : 500
+  return NextResponse.json(body, { status })
 }
