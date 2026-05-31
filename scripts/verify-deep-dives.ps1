@@ -13,21 +13,24 @@ function Warn([string]$m) { Write-Host "[WARN] $m" -ForegroundColor Yellow }
 function Fail([string]$m) { Write-Host "[FAIL] $m" -ForegroundColor Red; $script:allOk = $false }
 function Info([string]$m) { Write-Host "[INFO] $m" -ForegroundColor Gray }
 
+function Looks-Garbled([string]$text) {
+  if ([string]::IsNullOrWhiteSpace($text)) { return $false }
+  return [regex]::IsMatch($text, "\uFFFD|\u951F")
+}
+
 function Test-DeepDiveObject($obj, [string]$prefix) {
   if ($null -eq $obj) { Fail "$prefix deepDive is null"; return $false }
 
-  $required = @(
-    "summary",
-    "backgroundContext",
+  $requiredText = @(
+    "oneSentence",
+    "whatHappened",
     "whyItMatters",
-    "userInsight",
-    "riskAndUncertainty",
-    "followUpSuggestion",
-    "sourceReadingGuide"
+    "userValue",
+    "uncertainty"
   )
 
   $ok = $true
-  foreach ($k in $required) {
+  foreach ($k in $requiredText) {
     if (-not ($obj.PSObject.Properties.Name -contains $k)) {
       Fail "$prefix missing field: $k"
       $ok = $false
@@ -38,7 +41,28 @@ function Test-DeepDiveObject($obj, [string]$prefix) {
       Fail "$prefix empty field: $k"
       $ok = $false
     }
+    if (Looks-Garbled $v) {
+      Fail "$prefix garbled field: $k"
+      $ok = $false
+    }
   }
+
+  if (-not ($obj.PSObject.Properties.Name -contains "followUp")) {
+    Fail "$prefix missing field: followUp"
+    $ok = $false
+  } else {
+    $followCount = @($obj.followUp).Count
+    if ($followCount -lt 1) {
+      Fail "$prefix followUp empty"
+      $ok = $false
+    }
+  }
+
+  if (-not ($obj.PSObject.Properties.Name -contains "provider")) {
+    Fail "$prefix missing field: provider"
+    $ok = $false
+  }
+
   return $ok
 }
 
@@ -76,6 +100,7 @@ if ($SkipRefresh) {
       Info ("deepDiveStats: total={0} generated={1} fallback={2} failed={3} model={4} provider={5}" -f `
         $refresh.deepDiveStats.total, $refresh.deepDiveStats.generated, $refresh.deepDiveStats.fallback, $refresh.deepDiveStats.failed, $refresh.deepDiveStats.model, $refresh.deepDiveStats.provider)
       Info "actualDeepDiveModel: $($refresh.deepDiveStats.model)"
+      Info "actualProvider: $($refresh.deepDiveStats.provider)"
     } else {
       Warn "refresh response missing deepDiveStats"
     }
@@ -102,6 +127,7 @@ try {
     $llmModelCount = 0
     $fallbackCount = 0
     $fallbackWithReason = 0
+    $observedLlmPath = $false
 
     for ($i = 0; $i -lt $finalItems.Count; $i++) {
       $it = $finalItems[$i]
@@ -110,15 +136,16 @@ try {
       if (-not $okFields) { continue }
 
       $model = [string]$it.deepDive.model
+      $provider = [string]$it.deepDive.provider
       $status = [string]$it.deepDive.status
-      $summary = [string]$it.deepDive.summary
-      $summary80 = if ($summary.Length -gt 80) { $summary.Substring(0, 80) + "..." } else { $summary }
-
-      Write-Host ("  - [{0}] {1} | status={2} | model={3} | summary={4}" -f `
-        $i, ([string]$it.title), $status, $model, $summary80)
+      $oneSentenceLen = ([string]$it.deepDive.oneSentence).Length
+      $followCount = @($it.deepDive.followUp).Count
+      Write-Host ("  - [{0}] status={1} | model={2} | provider={3} | oneSentenceLen={4} | followUpCount={5}" -f `
+        $i, $status, $model, $provider, $oneSentenceLen, $followCount)
 
       if ($model -ne "deterministic-v1" -and $status -eq "generated") {
         $llmModelCount++
+        $observedLlmPath = $true
       }
       if ($status -eq "fallback") {
         $fallbackCount++
@@ -138,13 +165,15 @@ try {
         Ok "LLM path verified (non-deterministic generated items: $llmModelCount)"
       }
     } else {
-      if ($fallbackCount -gt 0 -and $fallbackWithReason -eq $fallbackCount) {
+      if ($fallbackCount -eq 0) {
+        Info "no fallback items in final recommendations."
+      } elseif ($fallbackWithReason -eq $fallbackCount) {
         Ok "fallback path verified with explicit fallbackReason"
       } else {
         Warn "fallbackReason not present on all fallback items (non-blocking)"
       }
-      if ($llmModelCount -gt 0) {
-        Warn "Detected non-deterministic deep dives even though env says fallback expected"
+      if ($observedLlmPath) {
+        Info "runtime used LLM path (service env differs from current shell env)."
       }
     }
   }

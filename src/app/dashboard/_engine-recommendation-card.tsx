@@ -58,7 +58,7 @@ function deepDiveLabel(item: RecommendedItem): string | null {
     return "AI 深度解读"
   }
   if (deepDive.status === "fallback" || deepDive.model === "deterministic-v1") {
-    return "规则兜底解读 / 待 Pro 深度处理"
+    return "规则生成"
   }
   return null
 }
@@ -124,13 +124,13 @@ export function EngineRecommendationCard({ item, enableDetail = false }: EngineR
             )}
           </div>
           <p className="mt-1 text-xs text-foreground/80 leading-relaxed line-clamp-3 text-left">
-            {deepDive.summary}
+            {deepDive.oneSentence || deepDive.summary}
           </p>
           <p className="mt-1 text-[11px] text-foreground/70 leading-relaxed line-clamp-2 text-left">
             {deepDive.whyItMatters}
           </p>
           <p className="mt-1 text-[10px] text-muted-foreground leading-relaxed line-clamp-2 text-left">
-            跟进建议：{deepDive.followUp ?? deepDive.followUpSuggestion}
+            跟进建议：{deepDive.followUp?.[0] ?? deepDive.followUpSuggestion}
           </p>
         </div>
       )}
