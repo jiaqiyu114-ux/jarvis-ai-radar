@@ -24,8 +24,9 @@ import {
 } from '@/lib/db/sources'
 import { upsertProvider }          from '@/lib/db/providers'
 import { findOrCreateSource }      from '@/lib/db/sources'
-import { upsertItemByCanonicalUrl } from '@/lib/db/items'
+import { upsertItemByCanonicalUrl, updateItemArticleContent, markItemContentFetchFailed } from '@/lib/db/items'
 import { upsertItemMention }       from '@/lib/db/item-mentions'
+import { fetchArticleContent, getArticleFetchConfig } from '@/lib/ingest/article-content'
 import { fetchRssFeed, parseRssFeed } from '@/lib/ingest/rss'
 import { canonicalizeUrl, normalizeTitle, detectLanguage } from '@/lib/ingest/normalize'
 import { calculateProviderSignal } from '@/lib/scoring/provider-signal'
@@ -97,6 +98,14 @@ export type IngestAcc = {
     fetchMs:       number
     writeMs:       number
   }
+  articleFetch: {
+    enabled:          boolean
+    attempted:        number
+    succeeded:        number
+    failed:           number
+    skipped:          number
+    totalContentLength: number
+  }
   failedSources: FailedSourceInfo[]
   hints: string[]
   // Source rotation diagnostics (set after source selection)
@@ -109,6 +118,7 @@ export function createAcc(): IngestAcc {
     sources: { total: 0, selected: 0, processed: 0, successful: 0, failed: 0, timedOut: 0, skipped: 0 },
     items: { fetched: 0, cappedAt: 0, insertedItems: 0, reusedItems: 0, insertedMentions: 0, skippedMentions: 0, skippedWrite: 0 },
     stages: { loadSourcesMs: 0, fetchMs: 0, writeMs: 0 },
+    articleFetch: { enabled: false, attempted: 0, succeeded: 0, failed: 0, skipped: 0, totalContentLength: 0 },
     failedSources: [],
     hints: [],
     sourceSelection: null,
@@ -402,6 +412,8 @@ async function writeItems(
   providerDbId: string,
 ): Promise<void> {
   const writeStart = Date.now()
+  const artCfg = getArticleFetchConfig()
+  acc.articleFetch.enabled = artCfg.enabled
 
   // Pre-resolve unique source IDs (one DB call per unique source URL)
   const sourceUrlToId = new Map<string, string | null>()
@@ -448,6 +460,46 @@ async function writeItems(
       const upserted = await upsertItemByCanonicalUrl(row)
       if (upserted.status === 'inserted') acc.items.insertedItems++
       else                                acc.items.reusedItems++
+
+      // ── Article content fetch (best-effort, only for newly inserted items) ──
+      if (artCfg.enabled && upserted.status === 'inserted') {
+        const fetchUrl = item.canonicalUrl || item.url
+        const timeLeft = deadline - Date.now()
+        const canFetch =
+          fetchUrl.startsWith('http') &&
+          acc.articleFetch.attempted < artCfg.maxItemsPerRun &&
+          timeLeft > artCfg.timeoutMs + 8_000  // leave 8s buffer beyond fetch timeout
+        if (canFetch) {
+          acc.articleFetch.attempted++
+          const artResult = await fetchArticleContent(fetchUrl, artCfg)
+          if (artResult.ok && artResult.textContent && artResult.textContent.length >= 100) {
+            acc.articleFetch.succeeded++
+            acc.articleFetch.totalContentLength += artResult.contentLength
+            updateItemArticleContent(upserted.id, {
+              finalUrl:      artResult.finalUrl ?? fetchUrl,
+              title:         artResult.title ?? null,
+              siteName:      artResult.siteName ?? null,
+              author:        artResult.byline ?? null,
+              publishedAt:   artResult.publishedTime ?? null,
+              excerpt:       artResult.excerpt ?? null,
+              cleanText:     artResult.textContent,
+              wordCount:     artResult.wordCount ?? 0,
+              coverImageUrl: artResult.coverImageUrl ?? null,
+              mediaUrls:     artResult.mediaUrls ?? [],
+              contentHash:   `${artResult.contentLength}_${fetchUrl.length}`,
+            }).catch(() => {})
+          } else {
+            acc.articleFetch.failed++
+            markItemContentFetchFailed(
+              upserted.id,
+              artResult.error ?? 'no_text_extracted',
+              fetchUrl,
+            ).catch(() => {})
+          }
+        } else if (fetchUrl.startsWith('http')) {
+          acc.articleFetch.skipped++
+        }
+      }
 
       try {
         const m = await upsertItemMention({ itemId: upserted.id, providerDbId, item })
@@ -628,6 +680,16 @@ export function buildIngestResponse(
       fetchMs:       acc.stages.fetchMs,
       writeMs:       acc.stages.writeMs,
       totalMs:       durationMs,
+    },
+    articleFetch: {
+      enabled:              acc.articleFetch.enabled,
+      attempted:            acc.articleFetch.attempted,
+      succeeded:            acc.articleFetch.succeeded,
+      failed:               acc.articleFetch.failed,
+      skipped:              acc.articleFetch.skipped,
+      averageContentLength: acc.articleFetch.succeeded > 0
+        ? Math.round(acc.articleFetch.totalContentLength / acc.articleFetch.succeeded)
+        : 0,
     },
     failedSources: acc.failedSources,
     hints:         acc.hints,

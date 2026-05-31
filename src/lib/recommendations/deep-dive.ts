@@ -857,8 +857,9 @@ export function buildDeepDiveInputFromRecommendedItem(item: RecommendedItem): Re
     publishedAt: item.publishedAt,
     fetchedAt: item.fetchedAt,
     originalUrl: item.originalUrl,
+    fullContent: item.fullContent ?? null,
     isSingleSource: item.sourceStatus === 'single_source',
-    hasFullContent: (item.wordCount ?? 0) >= 500,
+    hasFullContent: ((item.fullContent?.length ?? 0) >= 500) || ((item.wordCount ?? 0) >= 500),
     wordCount: item.wordCount,
   }
 }

@@ -64,6 +64,15 @@ if (-not $res.ok) {
 }
 
 Write-Host ("runStatus: {0}" -f $res.runStatus)
+
+# ── Article fetch stats (from ingest phase of pipeline, if available) ──────────
+if ($res.PSObject.Properties.Name -contains "ingest" -and $null -ne $res.ingest -and
+    $res.ingest.PSObject.Properties.Name -contains "articleFetch") {
+  $af = $res.ingest.articleFetch
+  Write-Host ("articleFetch: enabled={0} attempted={1} succeeded={2} failed={3} skipped={4} avgLen={5}" -f `
+    $af.enabled, $af.attempted, $af.succeeded, $af.failed, $af.skipped, $af.averageContentLength)
+}
+
 if ($res.deepDiveStats) {
   $ds = $res.deepDiveStats
   Write-Host ("deepDiveStats: total={0}, generated={1}, fallback={2}, failed={3}, model={4}, provider={5}, mode={6}" -f `
@@ -155,6 +164,37 @@ for ($i = 0; $i -lt $final.Count; $i++) {
 if ($badShape) {
   Write-Host "[FAIL] deepDive shape check failed" -ForegroundColor Red
   exit 1
+}
+
+# --- Image / cover stats ---
+$itemsWithCover  = 0
+$itemsWithMedia  = 0
+for ($i = 0; $i -lt $final.Count; $i++) {
+  $it = $final[$i]
+  if (-not [string]::IsNullOrWhiteSpace([string]$it.coverImageUrl)) { $itemsWithCover++ }
+  if ($it.PSObject.Properties.Name -contains "mediaUrls" -and $null -ne $it.mediaUrls -and @($it.mediaUrls).Count -gt 0) { $itemsWithMedia++ }
+}
+Write-Host ("itemsWithCoverImage: {0}/{1}" -f $itemsWithCover, $final.Count)
+Write-Host ("itemsWithMediaUrls:  {0}/{1}" -f $itemsWithMedia, $final.Count)
+
+# --- full_article + fullContent=0 consistency check ---
+$fullArtBadCount = 0
+for ($i = 0; $i -lt $final.Count; $i++) {
+  $it = $final[$i]
+  $cs = if ($it.deepDive.PSObject.Properties.Name -contains "contentStatus") { [string]$it.deepDive.contentStatus } else { "" }
+  $fcLen = 0
+  if ($it.deepDive.PSObject.Properties.Name -contains "inputDiagnostics" -and $null -ne $it.deepDive.inputDiagnostics) {
+    if ($it.deepDive.inputDiagnostics.PSObject.Properties.Name -contains "inputFullContentLength") {
+      $fcLen = [int]$it.deepDive.inputDiagnostics.inputFullContentLength
+    }
+  }
+  if ($cs -eq "full_article" -and $fcLen -lt 500) {
+    $fullArtBadCount++
+    Write-Host ("[WARN] item[{0}] contentStatus=full_article but fcLen={1}" -f $i, $fcLen) -ForegroundColor Yellow
+  }
+}
+if ($fullArtBadCount -eq 0 -and $final.Count -gt 0) {
+  Write-Host "full_article+empty-fcLen check: OK" -ForegroundColor Green
 }
 
 # ── Content Status Distribution ──────────────────────────────────────────────

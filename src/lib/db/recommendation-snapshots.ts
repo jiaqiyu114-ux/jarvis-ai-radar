@@ -145,7 +145,10 @@ function normalizeFollowUp(value: unknown): string[] {
   return []
 }
 
-function encodeDeepDivePayload(deepDive: RecommendationDeepDive): string {
+function encodeDeepDivePayload(
+  deepDive: RecommendationDeepDive,
+  media?: { coverImageUrl?: string | null; mediaUrls?: string[] | null },
+): string {
   const payload = {
     provider: deepDive.provider,
     contentStatus: deepDive.contentStatus,
@@ -160,6 +163,8 @@ function encodeDeepDivePayload(deepDive: RecommendationDeepDive): string {
     quality: deepDive.quality,
     fallbackReason: deepDive.fallbackReason ?? null,
     inputDiagnostics: deepDive.inputDiagnostics ?? null,
+    coverImageUrl: media?.coverImageUrl ?? null,
+    mediaUrls: media?.mediaUrls ?? null,
   }
   return `${DEEP_DIVE_JSON_PREFIX}${JSON.stringify(payload)}`
 }
@@ -210,7 +215,10 @@ function stripDeepDiveColumns<T extends Record<string, unknown>>(row: T): Omit<T
 function itemToRow(item: RecommendedItem, snapshotId: string, rank: number) {
   const deepDive = ensureDeepDive(item)
   const sourceNotes = deepDive ? (safeText(deepDive.sourceNotes || deepDive.sourceReadingGuide) || null) : null
-  const encodedPayload = deepDive ? encodeDeepDivePayload(deepDive) : null
+  const encodedPayload = deepDive ? encodeDeepDivePayload(deepDive, {
+    coverImageUrl: item.coverImageUrl,
+    mediaUrls: item.mediaUrls,
+  }) : null
   return {
     snapshot_id: snapshotId,
     item_id: item.id || null,
@@ -347,6 +355,19 @@ function rowToItem(row: any): RecommendedItem {
     recommendationReason: sanitizeDisplayText(row.recommendation_reason, FALLBACK_REASON),
     riskNote: sanitizeDisplayText(row.risk_note, FALLBACK_RISK),
     nextStep: sanitizeDisplayText(row.next_step, FALLBACK_STEP),
+  }
+
+  // Decode cover image and media URLs from encoded deepDive JSON payload
+  const decodedMedia = decodeDeepDivePayload(row.source_reading_guide)
+  if (decodedMedia) {
+    if (typeof decodedMedia.coverImageUrl === 'string' && decodedMedia.coverImageUrl) {
+      item.coverImageUrl = decodedMedia.coverImageUrl
+    }
+    if (Array.isArray(decodedMedia.mediaUrls)) {
+      item.mediaUrls = (decodedMedia.mediaUrls as unknown[])
+        .filter((u): u is string => typeof u === 'string' && u.length > 0)
+        .slice(0, 8)
+    }
   }
 
   if (shouldGenerateDeepDiveForTier(item.recommendationTier)) {

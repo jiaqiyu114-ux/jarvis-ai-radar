@@ -113,6 +113,19 @@ if ($SkipRefresh) {
   try {
     $refresh = Invoke-RestMethod -Method Post -Uri $refreshUrl -TimeoutSec 180
     if ($refresh.ok) { Write-Ok "refresh ok=true" } else { Write-Fail "refresh ok=false" }
+    # Article fetch stats (from ingest phase)
+    if ($refresh.PSObject.Properties.Name -contains "ingest" -and $null -ne $refresh.ingest -and
+        $refresh.ingest.PSObject.Properties.Name -contains "articleFetch") {
+      $af = $refresh.ingest.articleFetch
+      Write-Info ("articleFetch: enabled={0} attempted={1} succeeded={2} failed={3} skipped={4} avgLen={5}" -f `
+        $af.enabled, $af.attempted, $af.succeeded, $af.failed, $af.skipped, $af.averageContentLength)
+      if ($af.enabled -and [int]$af.attempted -eq 0) {
+        Write-Warn "articleFetch enabled but attempted=0 (check ARTICLE_FETCH_ENABLED env and ingest phase)"
+      }
+      if ($af.enabled -and [int]$af.attempted -gt 0 -and [int]$af.succeeded -eq 0) {
+        Write-Warn ("articleFetch attempted={0} but succeeded=0 (sites may be blocking)" -f $af.attempted)
+      }
+    }
     if ($refresh.deepDiveStats) {
       $ds = $refresh.deepDiveStats
       Write-Info ("deepDiveStats: total={0} generated={1} fallback={2} failed={3} model={4} provider={5}" -f `
@@ -314,6 +327,17 @@ try {
     if ($summaryOnlyN -gt 0) {
       Write-Info ("summary-limited items (rss_summary/title_only/partial/missing): {0}/{1}" -f $summaryOnlyN, $finalItems.Count)
     }
+
+    # Image stats
+    $coverCount = 0
+    $mediaCount = 0
+    for ($i = 0; $i -lt $finalItems.Count; $i++) {
+      $it = $finalItems[$i]
+      if (-not [string]::IsNullOrWhiteSpace([string]$it.coverImageUrl)) { $coverCount++ }
+      if ($it.PSObject.Properties.Name -contains "mediaUrls" -and $null -ne $it.mediaUrls -and @($it.mediaUrls).Count -gt 0) { $mediaCount++ }
+    }
+    Write-Info ("itemsWithCoverImage: {0}/{1}" -f $coverCount, $finalItems.Count)
+    Write-Info ("itemsWithMediaUrls:  {0}/{1}" -f $mediaCount, $finalItems.Count)
 
     # LLM path verification
     if ($expectLlm) {

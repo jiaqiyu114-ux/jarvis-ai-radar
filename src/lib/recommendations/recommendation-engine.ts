@@ -57,6 +57,10 @@ export type RecommendedItem = {
   shouldDeepAnalyze:      boolean
   analysisTier:           string | null
   wordCount:              number | null
+  // Article content (populated when article fetch succeeds)
+  fullContent?:   string | null
+  coverImageUrl?: string | null
+  mediaUrls?:     string[] | null
   // Engine output
   signalScore:          number          // Pure rule-based signal (0-100)
   recommendationScore:  number          // Ranking score (0-100)
@@ -121,7 +125,10 @@ type EngineRow = {
   evidence_level: string | null
   content_word_count: number | null
   content_fetch_status: string | null
-  clickbait_penalty:    number | null
+  clean_text:          string | null
+  cover_image_url:     string | null
+  media_urls:          unknown[] | null
+  clickbait_penalty:   number | null
   marketing_penalty:    number | null
   duplicate_penalty:    number | null
   cognitive_load_penalty: number | null
@@ -139,7 +146,7 @@ const ENGINE_SELECT = [
   'id', 'title', 'summary', 'url', 'source_id', 'category', 'tags',
   'final_score', 'data_origin', 'published_at', 'fetched_at',
   'ev_score', 'truth_score', 'evidence_level',
-  'content_word_count', 'content_fetch_status',
+  'content_word_count', 'content_fetch_status', 'clean_text', 'cover_image_url', 'media_urls',
   'clickbait_penalty', 'marketing_penalty', 'duplicate_penalty', 'cognitive_load_penalty',
   'should_enter_daily_report', 'should_track_event', 'should_deep_analyze', 'should_enter_topic_pool',
   'analysis_tier',
@@ -501,6 +508,9 @@ function mapRow(row: EngineRow): RecommendedItem {
     shouldDeepAnalyze:      b(row.should_deep_analyze),
     analysisTier:           row.analysis_tier,
     wordCount:              row.content_word_count,
+    fullContent:   row.clean_text ? row.clean_text.slice(0, 16_000) : null,
+    coverImageUrl: row.cover_image_url ?? null,
+    mediaUrls:     Array.isArray(row.media_urls) ? (row.media_urls as string[]).slice(0, 8) : null,
     signalScore,
     recommendationScore:  recScore,
     recommendationTier:   tier,
@@ -639,6 +649,9 @@ export function enrichItemWithEngine(
     evidence_level: null,
     content_word_count: item.wordCount ?? null,
     content_fetch_status: null,
+    clean_text: null,
+    cover_image_url: null,
+    media_urls: null,
     clickbait_penalty: item.penalties?.clickbait ?? null,
     marketing_penalty: item.penalties?.marketing ?? null,
     duplicate_penalty: item.penalties?.duplicate ?? null,

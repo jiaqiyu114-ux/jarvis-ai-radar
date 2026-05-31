@@ -442,6 +442,46 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
             <div className="flex-1 overflow-y-auto">
               <div className="px-6 py-7 space-y-8">
 
+                {/* SIGNAL STAGE — images (only when available) */}
+                {(() => {
+                  const cover = item.coverImageUrl
+                  const media = (item.mediaUrls ?? []).filter(Boolean)
+                  const images = cover
+                    ? [cover, ...media.filter(u => u !== cover)].slice(0, 4)
+                    : media.slice(0, 4)
+                  if (images.length === 0) return null
+                  return (
+                    <div className={images.length === 1
+                      ? "w-full overflow-hidden rounded-lg"
+                      : "grid grid-cols-2 gap-1.5 rounded-lg overflow-hidden"
+                    }>
+                      {images.map((url, i) => (
+                        <div
+                          key={i}
+                          className={cn(
+                            "overflow-hidden bg-muted/30",
+                            images.length === 1 ? "rounded-lg" : "rounded",
+                            images.length === 1 ? "h-52 sm:h-64" : "h-32",
+                          )}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={url}
+                            alt=""
+                            className="w-full h-full object-cover"
+                            onError={e => {
+                              const el = e.currentTarget as HTMLElement
+                              el.style.display = 'none'
+                              const parent = el.parentElement
+                              if (parent) parent.style.display = 'none'
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })()}
+
                 {/* SIGNAL INTERPRETATION — flowing narrative, no section labels */}
                 {narrative.length > 0 ? (
                   <div className="space-y-5">
