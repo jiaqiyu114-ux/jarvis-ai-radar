@@ -13,6 +13,7 @@
 import { supabaseServer, isServerSupabaseConfigured } from '@/lib/supabase/server'
 import { detectLowValueNoise } from '@/lib/scoring/noise'
 import { normalizeDisplayText } from '@/lib/text/normalize-display-text'
+import type { RecommendationDeepDive } from '@/lib/recommendations/deep-dive'
 
 // ── Output types ──────────────────────────────────────────────────────────────
 
@@ -66,6 +67,7 @@ export type RecommendedItem = {
   recommendationReason: string          // Human-readable Chinese
   riskNote:             string          // Risk explanation (empty = no notable risk)
   nextStep:             string          // Next action suggestion
+  deepDive?:            RecommendationDeepDive
 }
 
 export type RecommendationEngineOptions = {

@@ -106,6 +106,38 @@ try {
     $itemsCount = 0
     if ($rec.items) { $itemsCount = $rec.items.Count }
     if ($itemsCount -gt 0) { Mark-Ok "items count=$itemsCount" } else { Mark-Warn "items count=0" }
+    if ($itemsCount -gt 0) {
+      $allDeepDiveOk = $true
+      for ($i = 0; $i -lt $itemsCount; $i++) {
+        $it = $rec.items[$i]
+        if ($null -eq $it.deepDive) {
+          Mark-Fail "item[$i] missing deepDive"
+          $allDeepDiveOk = $false
+          continue
+        }
+        $dd = $it.deepDive
+        $okFields = @(
+          $dd.summary,
+          $dd.backgroundContext,
+          $dd.whyItMatters,
+          $dd.userInsight,
+          $dd.riskAndUncertainty,
+          $dd.followUpSuggestion,
+          $dd.sourceReadingGuide
+        ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+
+        if ($okFields.Count -ne 7) {
+          Mark-Fail "item[$i] deepDive fields incomplete"
+          $allDeepDiveOk = $false
+        }
+      }
+
+      if ($allDeepDiveOk) {
+        Mark-Ok "all returned items contain complete deepDive fields"
+      } else {
+        Mark-Warn "DeepDive columns missing. Please run supabase/recommendation-deep-dives-v1.sql in Supabase SQL Editor."
+      }
+    }
     if ($rec.stats) {
       Mark-Info "stats: candidates=$($rec.stats.recommendationCandidates) MR=$($rec.stats.mustReadCount) HV=$($rec.stats.highValueCount)"
     }
@@ -118,12 +150,25 @@ Write-Host ""
 #
 # 5) List Snapshots
 #
-$snapshotsUrl = $Base + "/api/recommendations/snapshots?limit=10"
+$snapshotsUrl = $Base + "/api/recommendations/snapshots?limit=10&includeItems=true&itemsLimit=5"
 Write-Host "5) List Snapshots: $snapshotsUrl"
 try {
   $snaps = Invoke-RestMethod -Method Get -Uri $snapshotsUrl -TimeoutSec 20
   if ($snaps.ok) {
     Mark-Ok "snapshots ok=true count=$($snaps.count)"
+    if ($snaps.count -gt 0 -and $snaps.snapshots[0].items) {
+      $firstSnapItems = $snaps.snapshots[0].items
+      if ($firstSnapItems.Count -gt 0) {
+        $firstItem = $firstSnapItems[0]
+        if ($firstItem.deepDive) {
+          Mark-Ok "snapshot item has deepDive"
+        } else {
+          Mark-Fail "snapshot item missing deepDive"
+        }
+      } else {
+        Mark-Warn "latest snapshot has no items"
+      }
+    }
   } else {
     Mark-Fail "snapshots ok=false"
   }

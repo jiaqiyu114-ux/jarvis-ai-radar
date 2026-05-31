@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { listRecommendationSnapshots } from '@/lib/db/recommendation-snapshots'
+import {
+  listRecommendationSnapshots,
+  getRecommendationSnapshotById,
+} from '@/lib/db/recommendation-snapshots'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,11 +15,13 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '20', 10) || 20, 100)
+  const includeItems = searchParams.get('includeItems') === 'true'
+  const itemsLimit = Math.min(parseInt(searchParams.get('itemsLimit') ?? '20', 10) || 20, 100)
 
   try {
     const rows = await listRecommendationSnapshots(limit)
 
-    const snapshots = rows.map(s => ({
+    const baseSnapshots = rows.map(s => ({
       id:                       s.id,
       runId:                    s.run_id,
       status:                   s.status,
@@ -32,7 +37,26 @@ export async function GET(req: NextRequest) {
       createdAt:                s.created_at,
     }))
 
-    return NextResponse.json({ ok: true, count: snapshots.length, snapshots })
+    if (!includeItems) {
+      return NextResponse.json({ ok: true, count: baseSnapshots.length, snapshots: baseSnapshots })
+    }
+
+    const detailRows = await Promise.all(
+      rows.map(async (s) => getRecommendationSnapshotById(s.id)),
+    )
+
+    const snapshots = baseSnapshots.map((snap, idx) => ({
+      ...snap,
+      items: (detailRows[idx]?.items ?? []).slice(0, itemsLimit),
+    }))
+
+    return NextResponse.json({
+      ok: true,
+      count: snapshots.length,
+      includeItems: true,
+      itemsLimit,
+      snapshots,
+    })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     console.error('[GET /api/recommendations/snapshots]', message)

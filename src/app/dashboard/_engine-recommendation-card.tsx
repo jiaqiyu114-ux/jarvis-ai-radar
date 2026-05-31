@@ -62,6 +62,8 @@ export function EngineRecommendationCard({ item }: { item: RecommendedItem }) {
   const statusLabel = SOURCE_STATUS_LABELS[item.sourceStatus] ?? item.sourceStatus
   const statusColor = SOURCE_STATUS_COLORS[item.sourceStatus] ?? SOURCE_STATUS_COLORS.single_source
   const tierText    = TIER_TEXT[item.sourceTier] ?? TIER_TEXT.C
+  const deepDive    = item.deepDive
+  const deepDiveIsFallback = deepDive?.status === 'fallback' || deepDive?.deepDiveStatus === 'fallback'
 
   return (
     <article className="group border-b border-border last:border-b-0 bg-card transition-colors hover:bg-accent/60">
@@ -109,6 +111,26 @@ export function EngineRecommendationCard({ item }: { item: RecommendedItem }) {
           <p className="mt-1.5 text-xs text-foreground/80 leading-relaxed">
             {item.recommendationReason}
           </p>
+
+          {deepDive && (
+            <div className="mt-1.5 rounded border border-border/60 bg-muted/30 px-2.5 py-2">
+              <p className="text-[10px] font-medium text-muted-foreground">深度解读</p>
+              <p className="mt-1 text-xs text-foreground/80 leading-relaxed">
+                {deepDive.summary}
+              </p>
+              <p className="mt-1 text-[11px] text-foreground/70 leading-relaxed">
+                {deepDive.whyItMatters}
+              </p>
+              <p className="mt-1 text-[10px] text-muted-foreground leading-relaxed">
+                跟进建议：{deepDive.followUpSuggestion}
+              </p>
+              {deepDiveIsFallback && (
+                <p className="mt-1 text-[10px] text-warning/80">
+                  这条解读基于有限文本生成，建议结合原文确认。
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Risk note */}
           {item.riskNote && (

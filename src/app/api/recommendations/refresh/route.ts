@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getRecommendations } from '@/lib/recommendations/recommendation-engine'
+import { generateDeterministicDeepDive } from '@/lib/recommendations/deep-dive'
 import {
   insertRecommendationRun,
   updateRecommendationRun,
@@ -9,6 +10,59 @@ import {
 } from '@/lib/db/recommendation-snapshots'
 
 export const dynamic = 'force-dynamic'
+
+function withDeepDive<T extends {
+  title: string
+  summary: string
+  source: string
+  sourceTier: string
+  category: string
+  finalScore: number
+  evScore: number | null
+  truthScore: number | null
+  recommendationTier: string
+  sourceStatus: string
+  recommendationReason: string
+  riskNote: string
+  nextStep: string
+  shouldTrackEvent: boolean
+  shouldEnterDailyReport: boolean
+  shouldDeepAnalyze: boolean
+  analysisTier: string | null
+  publishedAt: string
+  fetchedAt: string | null
+  originalUrl: string
+  deepDive?: unknown
+}>(items: T[]) {
+  return items.map((item) => {
+    if (item.deepDive) return item
+    return {
+      ...item,
+      deepDive: generateDeterministicDeepDive({
+        title: item.title,
+        summary: item.summary,
+        source: item.source,
+        sourceTier: item.sourceTier,
+        category: item.category,
+        finalScore: item.finalScore,
+        evScore: item.evScore,
+        truthScore: item.truthScore,
+        recommendationTier: item.recommendationTier,
+        sourceStatus: item.sourceStatus,
+        recommendationReason: item.recommendationReason,
+        riskNote: item.riskNote,
+        nextStep: item.nextStep,
+        shouldTrackEvent: item.shouldTrackEvent,
+        shouldEnterDailyReport: item.shouldEnterDailyReport,
+        shouldDeepAnalyze: item.shouldDeepAnalyze,
+        analysisTier: item.analysisTier,
+        publishedAt: item.publishedAt,
+        fetchedAt: item.fetchedAt,
+        originalUrl: item.originalUrl,
+      }),
+    }
+  })
+}
 
 /**
  * POST /api/recommendations/refresh
@@ -62,6 +116,7 @@ export async function POST() {
 
     // 4. Persist snapshot (filter out archive items for main snapshot)
     const snapshotItems = result.items.filter(i => i.recommendationTier !== 'archive')
+    const snapshotItemsWithDeepDive = withDeepDive(snapshotItems)
 
     const snapshotId = await createRecommendationSnapshot(
       {
@@ -77,7 +132,7 @@ export async function POST() {
         archive_count:            result.stats.archiveCount,
         generated_at:             new Date().toISOString(),
       },
-      snapshotItems,
+      snapshotItemsWithDeepDive,
     )
 
     const run      = runId      ? { id: runId,      status: runStatus, startedAt, durationMs } : null
@@ -102,7 +157,7 @@ export async function POST() {
       run,
       snapshot,
       stats:     result.stats,
-      items:     snapshotItems,
+      items:     snapshotItemsWithDeepDive,
     })
 
   } catch (err) {

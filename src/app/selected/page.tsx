@@ -2,6 +2,7 @@ import { AppShell } from "@/components/layout/app-shell"
 import { getSelectedItems } from "@/lib/data/feed-adapter"
 import { getLatestRecommendationSnapshot } from "@/lib/db/recommendation-snapshots"
 import { enrichItemWithEngine, TIER_LABELS, TIER_COLORS } from "@/lib/recommendations/recommendation-engine"
+import { generateDeterministicDeepDive } from "@/lib/recommendations/deep-dive"
 import { EngineRecommendationCard } from "@/app/dashboard/_engine-recommendation-card"
 import { cn } from "@/lib/utils"
 import type { TopSignalData } from "@/components/layout/app-shell"
@@ -84,6 +85,28 @@ export default async function SelectedPage({
         recommendationReason: engine.recommendationReason,
         riskNote:             engine.riskNote,
         nextStep:             engine.nextStep,
+        deepDive:             generateDeterministicDeepDive({
+          title: item.title,
+          summary: item.summary,
+          source: item.source,
+          sourceTier: item.sourceTier,
+          category: item.category,
+          finalScore: item.finalScore,
+          evScore: item.evidenceProfile?.evidenceScore ?? null,
+          truthScore: item.evidenceProfile?.truthScore ?? null,
+          recommendationTier: engine.recommendationTier,
+          sourceStatus: engine.sourceStatus,
+          recommendationReason: engine.recommendationReason,
+          riskNote: engine.riskNote,
+          nextStep: engine.nextStep,
+          shouldTrackEvent: item.analysisGate?.shouldTrackEvent ?? false,
+          shouldEnterDailyReport: item.analysisGate?.shouldEnterDailyReport ?? false,
+          shouldDeepAnalyze: item.analysisGate?.shouldDeepAnalyze ?? false,
+          analysisTier: item.analysisGate?.analysisTier ?? null,
+          publishedAt: item.publishedAt,
+          fetchedAt: item.fetchedAt ?? null,
+          originalUrl: item.originalUrl,
+        }),
       }))
   }
 
