@@ -1,163 +1,128 @@
-# ============================================================
-#  JARVIS - Run Recommendation Pipeline (Single Execution)
-#
-#  Triggers one complete pipeline run:
-#    1. RSS ingest (up to MaxSources sources, IngestTimeoutMs deadline)
-#    2. Recommendation snapshot generation (WindowHours window)
-#
-#  Usage:
-#    powershell -ExecutionPolicy Bypass -File scripts\run-recommendation-pipeline.ps1
-#    powershell -ExecutionPolicy Bypass -File scripts\run-recommendation-pipeline.ps1 -MaxSources 4
-#    powershell -ExecutionPolicy Bypass -File scripts\run-recommendation-pipeline.ps1 -Mode scheduled -Secret "mysecret"
-#
-#  Future automation:
-#    Windows Task Scheduler:
-#      Action: powershell -ExecutionPolicy Bypass -File "C:\path\jarvis\scripts\run-recommendation-pipeline.ps1" -Mode scheduled -Secret "mysecret"
-#      Trigger: Daily / Every 6 hours
-#
-#  This script runs ONCE. It does not loop.
-# ============================================================
-
 param(
-  [string]$Base             = "http://localhost:3000",
-  [int]   $MaxSources       = 8,
-  [int]   $IngestTimeoutMs  = 55000,
-  [int]   $WindowHours      = 72,
-  [int]   $RefreshLimit     = 50,
-  [string]$Mode             = "manual",
-  [string]$Secret           = ""
+  [string]$Base = "http://localhost:3000",
+  [int]$MaxSources = 8,
+  [int]$IngestTimeoutMs = 55000,
+  [int]$WindowHours = 72,
+  [ValidateSet("manual", "scheduled", "auto")]
+  [string]$Mode = "manual",
+  [string]$Secret = "",
+  [string]$LogFile = ""
 )
+
+$ErrorActionPreference = "Stop"
+
+function Write-Info([string]$msg) { Write-Host "[INFO] $msg" -ForegroundColor Gray }
+function Write-Ok([string]$msg) { Write-Host "[OK]   $msg" -ForegroundColor Green }
+function Write-Warn([string]$msg) { Write-Host "[WARN] $msg" -ForegroundColor Yellow }
+function Write-Fail([string]$msg) { Write-Host "[FAIL] $msg" -ForegroundColor Red }
+
+function Append-Log([string]$line) {
+  if ([string]::IsNullOrWhiteSpace($LogFile)) { return }
+  try {
+    Add-Content -Path $LogFile -Value $line -Encoding UTF8
+  } catch {
+    Write-Warn "failed to append log file: $($_.Exception.Message)"
+  }
+}
+
+$startedAt = Get-Date
+$startedIso = $startedAt.ToString("s")
 
 Write-Host ""
 Write-Host "=== JARVIS Recommendation Pipeline ===" -ForegroundColor Cyan
-Write-Host "  Base        : $Base"
-Write-Host "  MaxSources  : $MaxSources"
-Write-Host "  IngestTimeout: ${IngestTimeoutMs}ms"
-Write-Host "  Window      : ${WindowHours}h"
-Write-Host "  Mode        : $Mode"
-Write-Host "  Started     : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-Write-Host ""
-
-# Check freshness before running
-$statusUrl = $Base + "/api/pipeline/recommendations"
-Write-Host "Checking pipeline status..." -ForegroundColor Gray
-try {
-  $status = Invoke-RestMethod -Method Get -Uri $statusUrl -TimeoutSec 15 -ErrorAction Stop
-  if ($status.freshness) {
-    $sev = $status.freshness.severity
-    $sevColor = switch ($sev) { "ok" { "Green" } "warning" { "Yellow" } "stale" { "Red" } default { "Gray" } }
-    Write-Host "  Freshness   : [$sev] $($status.freshness.reason)" -ForegroundColor $sevColor
-  }
-  if ($status.coverage) {
-    Write-Host "  Coverage    : $($status.coverage.fetchedLast24h)/$($status.coverage.totalActiveRss) fetched last 24h" -ForegroundColor Gray
-  }
-} catch {
-  Write-Host "  (status check failed: $_)" -ForegroundColor DarkGray
+Write-Host "Base            : $Base"
+Write-Host "Mode            : $Mode"
+Write-Host "MaxSources      : $MaxSources"
+Write-Host "IngestTimeoutMs : $IngestTimeoutMs"
+Write-Host "WindowHours     : $WindowHours"
+Write-Host "StartedAt       : $startedIso"
+if (-not [string]::IsNullOrWhiteSpace($LogFile)) {
+  Write-Host "LogFile         : $LogFile"
 }
 Write-Host ""
 
-# Build URL by concatenation — avoids PowerShell parsing & as call operator
+$effectiveSecret = $Secret
+if (($Mode -eq "scheduled" -or $Mode -eq "auto") -and [string]::IsNullOrWhiteSpace($effectiveSecret)) {
+  $effectiveSecret = [Environment]::GetEnvironmentVariable("PIPELINE_SECRET")
+}
+
+$headers = @{}
+if (($Mode -eq "scheduled" -or $Mode -eq "auto")) {
+  if ([string]::IsNullOrWhiteSpace($effectiveSecret)) {
+    Write-Warn "PIPELINE_SECRET is empty for scheduled/auto mode. continuing for local dev."
+  } else {
+    $headers["Authorization"] = "Bearer $effectiveSecret"
+    Write-Info "authorization header attached"
+  }
+}
+
 $url = $Base + "/api/pipeline/recommendations" +
   "?ingest=true" +
   "&refresh=true" +
   "&maxSources=$MaxSources" +
   "&ingestTimeoutMs=$IngestTimeoutMs" +
   "&refreshWindowHours=$WindowHours" +
-  "&refreshLimit=$RefreshLimit" +
+  "&refreshLimit=50" +
   "&mode=$Mode"
 
-Write-Host "Calling: POST /api/pipeline/recommendations (mode=$Mode)" -ForegroundColor Yellow
-Write-Host "  (this may take up to $([math]::Round(($IngestTimeoutMs / 1000) + 15)) seconds)" -ForegroundColor Gray
-Write-Host ""
-
-$headers = @{}
-if ($Mode -eq "scheduled" -and $Secret -ne "") {
-  $headers["Authorization"] = "Bearer $Secret"
-  Write-Host "  Auth: Bearer token set" -ForegroundColor Gray
-}
+Write-Info "POST $url"
+Append-Log "[$startedIso] started mode=$Mode maxSources=$MaxSources ingestTimeoutMs=$IngestTimeoutMs windowHours=$WindowHours"
 
 try {
-  $startTime = Get-Date
-  $result = Invoke-RestMethod -Method Post -Uri $url -Headers $headers -TimeoutSec 120 -ErrorAction Stop
-  $elapsed = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 1)
+  $apiStarted = Get-Date
+  $result = Invoke-RestMethod -Method Post -Uri $url -Headers $headers -TimeoutSec 120
+  $apiFinished = Get-Date
+  $durationMs = [math]::Round(($apiFinished - $apiStarted).TotalMilliseconds)
+  $finishedIso = $apiFinished.ToString("s")
 
-  # ── Handle already_running ────────────────────────────────────────────────
-  if ($result.status -eq "already_running") {
-    Write-Host "--- Already Running ---" -ForegroundColor Yellow
-    Write-Host "  Pipeline is already running (started $($result.run.ageMinutes)m ago)." -ForegroundColor Yellow
-    Write-Host "  Wait for it to finish, then run again." -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "Done (already_running)" -ForegroundColor Yellow
+  $status = [string]$result.status
+  if ($status -eq "already_running") {
+    Write-Warn "already_running: another pipeline run is active"
+    Append-Log "[$finishedIso] status=already_running durationMs=$durationMs"
     exit 0
   }
 
-  Write-Host "--- Result ---" -ForegroundColor Cyan
-  $statusColor = if ($result.ok) { "Green" } elseif ($result.status -eq "partial_success") { "Yellow" } else { "Red" }
-  Write-Host "  status     : $($result.status)" -ForegroundColor $statusColor
-  Write-Host "  durationMs : $($result.durationMs)"
-  Write-Host "  mode       : $($result.mode)"
-  Write-Host ""
+  $ingestSummary = ""
+  $refreshSummary = ""
+  $snapshotId = ""
 
   if ($result.ingest -and $result.ingest.enabled) {
-    Write-Host "--- Ingest ---" -ForegroundColor Yellow
-    Write-Host "  ok         : $($result.ingest.ok)"
-    Write-Host "  runStatus  : $($result.ingest.runStatus)"
-    if ($result.ingest.sources) {
-      Write-Host "  sources    : $($result.ingest.sources.successful)ok / $($result.ingest.sources.failed)fail / $($result.ingest.sources.timedOut)timeout"
-    }
-    if ($result.ingest.items) {
-      Write-Host "  items      : +$($result.ingest.items.insertedItems) new / ~$($result.ingest.items.reusedItems) reused"
-    }
-    if ($result.ingest.sourceSelection) {
-      $sel = $result.ingest.sourceSelection
-      Write-Host "  selected   : $($sel.selectedCount) sources / $($sel.deferredCount) deferred" -ForegroundColor Cyan
-      if ($sel.selectedSources -and $sel.selectedSources.Count -gt 0) {
-        foreach ($src in $sel.selectedSources | Select-Object -First 5) {
-          Write-Host "    + [$($src.tier)] $($src.name)" -ForegroundColor Cyan
-        }
-      }
-    }
-    if ($result.ingest.failedSources -and $result.ingest.failedSources.Count -gt 0) {
-      foreach ($fs in $result.ingest.failedSources | Select-Object -First 3) {
-        Write-Host "    x $($fs.name): $($fs.reason)" -ForegroundColor Red
-      }
-    }
-    Write-Host ""
+    $ingestSummary = "ingestOk=$($result.ingest.ok); sources=$($result.ingest.sources.successful)ok/$($result.ingest.sources.failed)fail/$($result.ingest.sources.timedOut)timeout; items=+$($result.ingest.items.insertedItems)/~$($result.ingest.items.reusedItems)"
   }
-
   if ($result.refresh -and $result.refresh.enabled) {
-    Write-Host "--- Refresh ---" -ForegroundColor Yellow
-    Write-Host "  ok         : $($result.refresh.ok)"
-    Write-Host "  runStatus  : $($result.refresh.runStatus)"
-    if ($result.refresh.stats) {
-      Write-Host "  must_read  : $($result.refresh.stats.mustReadCount)"
-      Write-Host "  high_value : $($result.refresh.stats.highValueCount)"
-      Write-Host "  observe    : $($result.refresh.stats.observeCount)"
+    $refreshSummary = "refreshOk=$($result.refresh.ok); runStatus=$($result.refresh.runStatus); MR=$($result.refresh.stats.mustReadCount); HV=$($result.refresh.stats.highValueCount); OB=$($result.refresh.stats.observeCount)"
+    if ($result.refresh.snapshot -and $result.refresh.snapshot.id) {
+      $snapshotId = [string]$result.refresh.snapshot.id
     }
-    if ($result.refresh.snapshot) {
-      Write-Host "  snapshot   : $($result.refresh.snapshot.id)" -ForegroundColor Green
-    }
-    Write-Host ""
   }
 
-  if ($result.hints -and $result.hints.Count -gt 0) {
-    Write-Host "--- Hints ---" -ForegroundColor Gray
-    foreach ($hint in $result.hints | Select-Object -First 5) {
-      Write-Host "  $hint" -ForegroundColor Gray
+  if ($result.ok -eq $true) {
+    if ($status -eq "partial_success") {
+      Write-Warn "pipeline finished: partial_success"
+    } else {
+      Write-Ok "pipeline finished: $status"
     }
-    Write-Host ""
+  } else {
+    Write-Fail "pipeline finished: $status"
   }
 
-  Write-Host "Finished in ${elapsed}s" -ForegroundColor $statusColor
+  Write-Info "durationMs: $durationMs"
+  if ($ingestSummary -ne "") { Write-Info $ingestSummary }
+  if ($refreshSummary -ne "") { Write-Info $refreshSummary }
+  if ($snapshotId -ne "") { Write-Info "snapshotId: $snapshotId" }
 
+  Append-Log "[$finishedIso] status=$status durationMs=$durationMs $ingestSummary $refreshSummary snapshotId=$snapshotId"
+
+  if ($result.ok -eq $true) {
+    exit 0
+  } else {
+    exit 1
+  }
 } catch {
-  Write-Host "FAILED: $_" -ForegroundColor Red
-  Write-Host ""
-  Write-Host "Possible causes:" -ForegroundColor Yellow
-  Write-Host "  - pnpm dev is not running at $Base"
-  Write-Host "  - Supabase is not configured (.env.local missing)"
-  Write-Host "  - Request timed out (pipeline ran too long)"
+  $finished = Get-Date
+  $finishedIso = $finished.ToString("s")
+  $errMsg = $_.Exception.Message
+  Write-Fail $errMsg
+  Append-Log "[$finishedIso] status=error error=$errMsg"
   exit 1
 }
-
-Write-Host ""

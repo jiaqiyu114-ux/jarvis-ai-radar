@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/pipeline/recommendations?mode=scheduled&maxSources=12&ingestTimeoutMs=55000",
+      "schedule": "0 */6 * * *"
+    }
+  ]
+}

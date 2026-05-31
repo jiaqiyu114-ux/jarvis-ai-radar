@@ -47,6 +47,7 @@ import { getRecommendations } from '@/lib/recommendations/recommendation-engine'
 import {
   getRecommendationFreshness,
 } from '@/lib/recommendations/recommendation-freshness'
+import { getPipelineAutomationStatus } from '@/lib/recommendations/pipeline-automation'
 import {
   insertRecommendationRun,
   updateRecommendationRun,
@@ -401,14 +402,22 @@ export async function POST(req: NextRequest) {
 
 export async function GET() {
   const now = new Date()
+  const runningCutoff = new Date(Date.now() - RUNNING_LOCK_MINUTES * 60_000).toISOString()
 
-  const [latestRun, latestSnapshot, coverage] = await Promise.all([
+  const [latestRun, latestSnapshot, coverage, runningRun, automationBase] = await Promise.all([
     getLatestRecommendationRun().catch(() => null),
     getLatestRecommendationSnapshot().catch(() => null),
     getSourceCoverageStats().catch(() => null),
+    getRecentRunningRun(runningCutoff).catch(() => null),
+    getPipelineAutomationStatus().catch(() => ({
+      localTaskScriptAvailable: false,
+      vercelCronConfigured: false,
+      cronPath: null,
+      recommendedSchedule: 'every 6 hours' as const,
+      secretConfigured: false,
+    })),
   ])
 
-  // Freshness
   const freshness = getRecommendationFreshness({
     latestSnapshot: latestSnapshot ? { generated_at: latestSnapshot.generated_at } : null,
     latestRun,
@@ -416,55 +425,140 @@ export async function GET() {
     now,
   })
 
-  // Snapshot summary
-  const snapshotAgeMs    = latestSnapshot
-    ? now.getTime() - new Date(latestSnapshot.generated_at).getTime()
+  const runningAgeMinutes = runningRun
+    ? Math.max(0, Math.round((now.getTime() - new Date(runningRun.started_at).getTime()) / 60_000))
     : null
-  const snapshotAgeHours = snapshotAgeMs !== null ? Math.round(snapshotAgeMs / 3_600_000) : null
 
-  // Automation readiness
-  const pipelineSecret = process.env.PIPELINE_SECRET
+  const latestRunAgeMinutes = latestRun
+    ? Math.max(0, Math.round((now.getTime() - new Date(latestRun.started_at).getTime()) / 60_000))
+    : null
+
+  const latestSnapshotAgeMinutes = latestSnapshot
+    ? Math.max(0, Math.round((now.getTime() - new Date(latestSnapshot.generated_at).getTime()) / 60_000))
+    : null
+
+  type PipelineStatus = 'ok' | 'warning' | 'stale' | 'missing' | 'running'
+  const status: PipelineStatus = runningRun
+    ? 'running'
+    : freshness.severity === 'ok'
+      ? 'ok'
+      : freshness.severity
+
+  const statusLabelMap: Record<Exclude<PipelineStatus, 'running'>, string> = {
+    ok: 'normal',
+    warning: 'warning',
+    stale: 'stale',
+    missing: 'missing snapshot',
+  }
+
+  const freshnessPayload = {
+    severity: freshness.severity,
+    label: statusLabelMap[freshness.severity],
+    message: freshness.reason,
+    shouldAutoRefresh: freshness.shouldAutoRefresh,
+    ageMinutes: freshness.ageMinutes,
+    ageHours: freshness.ageHours,
+    isFresh: freshness.isFresh,
+    isStale: freshness.isStale,
+  }
+
+  const coveragePayload = coverage
+    ? {
+        totalActive: coverage.totalActiveRss,
+        healthySources: coverage.healthySources,
+        neverFetchedSources: coverage.neverFetchedSources,
+        fetchedLast24h: coverage.fetchedLast24h,
+        suggestedNextMaxSources: coverage.suggestedNextMaxSources,
+        needsRefresh: coverage.needsRefresh,
+        reason: coverage.reason,
+      }
+    : {
+        totalActive: 0,
+        healthySources: 0,
+        neverFetchedSources: 0,
+        fetchedLast24h: 0,
+        suggestedNextMaxSources: 8,
+        needsRefresh: true,
+        reason: 'coverage unavailable',
+      }
+
   const automation = {
-    scheduledReady:    true,
-    secretConfigured:  !!pipelineSecret,
-    suggestedCronPath: '/api/pipeline/recommendations?mode=scheduled&maxSources=12&ingest=true&refresh=true',
-    hint: pipelineSecret
-      ? 'PIPELINE_SECRET is set. Use Authorization: Bearer <secret> for scheduled calls.'
-      : 'Set PIPELINE_SECRET env var before enabling automated cron.',
+    ...automationBase,
+    scheduledReady: automationBase.vercelCronConfigured || automationBase.localTaskScriptAvailable,
+    suggestedCronPath: automationBase.cronPath ?? '/api/pipeline/recommendations?mode=scheduled&maxSources=12&ingestTimeoutMs=55000',
+    hint: automationBase.secretConfigured
+      ? 'PIPELINE_SECRET configured'
+      : 'PIPELINE_SECRET not configured (recommended for production scheduled mode)',
   }
 
   const hints: string[] = []
   if (!latestSnapshot) {
-    hints.push('No snapshot found. Run POST /api/pipeline/recommendations to generate one.')
-  } else if (freshness.isStale) {
-    hints.push(`Snapshot is stale (${snapshotAgeHours}h old). Consider scheduling automated refresh.`)
+    hints.push('No snapshot found. Trigger POST /api/pipeline/recommendations once.')
+  }
+  if (runningRun) {
+    hints.push(`Pipeline is running now (${runningAgeMinutes}m elapsed).`)
+  }
+  if (coveragePayload.needsRefresh) {
+    hints.push(`Coverage suggests refresh: ${coveragePayload.reason}.`)
+  }
+  if (!automation.vercelCronConfigured) {
+    hints.push('Vercel cron not detected. Configure vercel.json or use local task scheduler.')
+  }
+  if (!automation.secretConfigured) {
+    hints.push('Set PIPELINE_SECRET in production before enabling scheduled mode.')
   }
   if (latestRun?.status === 'failed') {
-    hints.push('Last run failed. Check logs and retry.')
+    hints.push('Latest run failed. Existing snapshot is preserved, retry when needed.')
   }
 
   return NextResponse.json({
-    ok:        true,
+    ok: true,
+    status,
+    now: now.toISOString(),
     checkedAt: now.toISOString(),
-    freshness,
-    coverage:  coverage ?? null,
-    automation,
-    snapshot: latestSnapshot ? {
-      id:            latestSnapshot.id,
-      status:        latestSnapshot.status,
-      generatedAt:   latestSnapshot.generated_at,
-      ageHours:      snapshotAgeHours,
-      isStale:       freshness.isStale,
+    latestRun: latestRun ? {
+      id: latestRun.id,
+      status: latestRun.status,
+      startedAt: latestRun.started_at,
+      finishedAt: latestRun.finished_at,
+      durationMs: latestRun.duration_ms,
+      ageMinutes: latestRunAgeMinutes,
+    } : null,
+    latestSnapshot: latestSnapshot ? {
+      id: latestSnapshot.id,
+      status: latestSnapshot.status,
+      generatedAt: latestSnapshot.generated_at,
+      ageMinutes: latestSnapshotAgeMinutes,
+      capturedTotal: latestSnapshot.captured_total,
+      recommendationCandidates: latestSnapshot.recommendation_candidates,
       mustReadCount: latestSnapshot.must_read_count,
       highValueCount: latestSnapshot.high_value_count,
-      observeCount:  latestSnapshot.observe_count,
-      capturedTotal: latestSnapshot.captured_total,
+      observeCount: latestSnapshot.observe_count,
     } : null,
-    latestRun: latestRun ? {
-      id:         latestRun.id,
-      status:     latestRun.status,
-      startedAt:  latestRun.started_at,
-      durationMs: latestRun.duration_ms,
+    freshness: freshnessPayload,
+    coverage: coveragePayload,
+    automation: {
+      localTaskScriptAvailable: automation.localTaskScriptAvailable,
+      vercelCronConfigured: automation.vercelCronConfigured,
+      cronPath: automation.cronPath,
+      recommendedSchedule: automation.recommendedSchedule,
+      secretConfigured: automation.secretConfigured,
+      scheduledReady: automation.scheduledReady,
+      suggestedCronPath: automation.suggestedCronPath,
+      hint: automation.hint,
+    },
+
+    // Backward-compatible fields
+    snapshot: latestSnapshot ? {
+      id: latestSnapshot.id,
+      status: latestSnapshot.status,
+      generatedAt: latestSnapshot.generated_at,
+      ageHours: latestSnapshotAgeMinutes !== null ? Math.round((latestSnapshotAgeMinutes / 60) * 10) / 10 : null,
+      isStale: freshness.isStale,
+      mustReadCount: latestSnapshot.must_read_count,
+      highValueCount: latestSnapshot.high_value_count,
+      observeCount: latestSnapshot.observe_count,
+      capturedTotal: latestSnapshot.captured_total,
     } : null,
     hints,
   })

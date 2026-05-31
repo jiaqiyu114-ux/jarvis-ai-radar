@@ -19,6 +19,9 @@ import {
   formatSnapshotAge,
   type RecommendationFreshness,
 } from "@/lib/recommendations/recommendation-freshness"
+import {
+  getPipelineAutomationStatus,
+} from "@/lib/recommendations/pipeline-automation"
 import { cn } from "@/lib/utils"
 import type { RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import type { DailyRecommendationSnapshotItem } from "@/lib/data/daily-recommendation-snapshot"
@@ -276,13 +279,20 @@ function QualityPill({ label, value, color }: { label: string; value: number; co
 
 export default async function DashboardPage() {
   // ── Data fetching (priority: engine snapshot > legacy snapshot) ──────────────
-  const [engineSnapshot, legacySnapshot, latestRun, eventClustersResult, coverage] =
+  const [engineSnapshot, legacySnapshot, latestRun, eventClustersResult, coverage, automationStatus] =
     await Promise.all([
       getLatestRecommendationSnapshot().catch(() => null),
       getLatestDailyRecommendationSnapshot().catch(() => ({ hasSnapshot: false, isTodaySnapshot: false, run: null, items: [], grouped: { must_read: [], high_value: [], observe: [] }, date: '' })),
       getLatestRecommendationRun().catch(() => null),
       listEventClusters({ limit: 20, includeItems: false }).catch(() => ({ clusters: [] })),
       getSourceCoverageStats().catch(() => null),
+      getPipelineAutomationStatus().catch(() => ({
+        localTaskScriptAvailable: false,
+        vercelCronConfigured: false,
+        cronPath: null,
+        recommendedSchedule: "every 6 hours" as const,
+        secretConfigured: false,
+      })),
     ])
 
   const eventClusters = eventClustersResult.clusters
@@ -317,6 +327,15 @@ export default async function DashboardPage() {
     ? new Date().getTime() - new Date(engineSnapshot.generated_at).getTime()
     : null
   const snapshotIsStale = snapshotAgeMs !== null && snapshotAgeMs > 24 * 3_600_000
+  const engineStatusLabel = latestRun?.status === "running"
+    ? "正在运行"
+    : freshness.severity === "ok"
+      ? "正常"
+      : freshness.severity === "warning"
+        ? "警告"
+        : freshness.severity === "stale"
+          ? "过期"
+          : "尚无快照"
 
   // Top signal for app shell
   const topEngineItem   = engineItems[0] ?? null
@@ -441,6 +460,47 @@ export default async function DashboardPage() {
 
         {/* ── Run status strip + refresh button ── */}
         <RunStatusStrip run={latestRun} engineSnapshot={engineSnapshot} coverage={coverage} freshness={freshness} />
+
+        <div className="mb-4 rounded border border-border bg-card px-3 py-2 text-[11px] text-muted-foreground/80">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-muted-foreground/50">引擎状态</span>
+            <span className={cn(
+              "font-medium",
+              latestRun?.status === "running"
+                ? "text-sky-500"
+                : freshness.severity === "ok"
+                  ? "text-success"
+                  : freshness.severity === "warning"
+                    ? "text-warning"
+                    : "text-danger/70",
+            )}>{engineStatusLabel}</span>
+            {engineSnapshot && (
+              <>
+                <span className="text-muted-foreground/30">·</span>
+                <span>最近快照 {formatTime(engineSnapshot.generated_at)}</span>
+                {freshness.ageMinutes !== null && <span>({formatSnapshotAge(freshness.ageMinutes)})</span>}
+                <span className="text-muted-foreground/30">·</span>
+                <span>捕捉 {engineSnapshot.captured_total}</span>
+                <span>MR {engineSnapshot.must_read_count}</span>
+                <span>HV {engineSnapshot.high_value_count}</span>
+                <span>OB {engineSnapshot.observe_count}</span>
+              </>
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <span className={automationStatus.vercelCronConfigured ? "text-success/80" : "text-warning/80"}>
+              {automationStatus.vercelCronConfigured ? "自动刷新: 每 6 小时" : "自动刷新未接入，请使用本地任务或 Vercel Cron"}
+            </span>
+            {coverage && (
+              <>
+                <span className="text-muted-foreground/30">·</span>
+                <span>RSS 覆盖 {coverage.fetchedLast24h}/{coverage.totalActiveRss}</span>
+                {coverage.neverFetchedSources > 0 && <span>{coverage.neverFetchedSources} 个未抓</span>}
+                {coverage.needsRefresh && <span className="text-warning/80">建议扩大本轮抓取源数量</span>}
+              </>
+            )}
+          </div>
+        </div>
 
         {/* Snapshot table not-ready / no-snapshot notice */}
         {!hasEngineSnapshot && !latestRun && (
