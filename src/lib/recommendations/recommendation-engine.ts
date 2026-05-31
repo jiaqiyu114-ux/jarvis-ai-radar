@@ -180,6 +180,31 @@ const EVENT_KEYWORDS = [
 function n(v: number | null | undefined): number { return v ?? 0 }
 function b(v: boolean | null | undefined): boolean { return v === true }
 
+/**
+ * Detect text that contains mojibake (UTF-8 bytes decoded as Windows-1252/Latin-1).
+ * Items with garbled titles are force-downgraded to 'archive' tier.
+ * This prevents corrupted RSS data from appearing in recommendations.
+ *
+ * Common patterns:
+ *   â€™  → right single quote (') stored garbled
+ *   Ã©   → é stored garbled
+ *   â‚¬  → € stored garbled
+ *   � → Unicode replacement character
+ */
+function looksGarbled(text: string): boolean {
+  if (!text || text.length < 4) return false
+  return (
+    text.includes('â€')   ||  // broken UTF-8 smart quotes/dashes
+    text.includes('Ã©')   ||  // é as mojibake
+    text.includes('Ã ')   ||  // à as mojibake
+    text.includes('Ã¨')   ||  // è as mojibake
+    text.includes('Ã¼')   ||  // ü as mojibake
+    text.includes('Ã¶')   ||  // ö as mojibake
+    text.includes('â‚¬')  ||  // € as mojibake
+    text.includes('�')    // Unicode replacement character
+  )
+}
+
 function countKeywords(text: string, kw: readonly string[]): number {
   const lower = text.toLowerCase()
   return kw.filter(k => lower.includes(k)).length
@@ -294,7 +319,11 @@ function classifyTier(
   strongNoise: boolean,
   evScore:     number,
   truthScore:  number,
+  titleGarbled: boolean,
 ): RecommendationTier {
+  // Garbled titles are never recommended — they corrupt the display and suggest
+  // the ingest pipeline had an encoding issue that should be fixed, not surfaced.
+  if (titleGarbled) return 'archive'
   if (strongNoise && recScore < 70) return 'archive'
   const evidenceOk = evScore >= 55 || truthScore >= 55
   if (recScore >= 80 && (evidenceOk || recScore >= 88)) return 'must_read'
@@ -330,6 +359,7 @@ function buildQualityFlags(
   signalScore:   number,
   evLevel:       EngineEvidenceLevel,
   noiseType:     string | undefined,
+  titleGarbled:  boolean,
 ): string[] {
   const flags: string[] = []
   const tier = String(row.sources?.source_tier ?? 'C').toUpperCase()
@@ -337,6 +367,7 @@ function buildQualityFlags(
   const pubMs = row.published_at ? new Date(row.published_at).getTime() : 0
   const hours = pubMs > 0 ? (Date.now() - pubMs) / 3_600_000 : 999
 
+  if (titleGarbled)  flags.push('garbled_title')  // encoding corruption detected
   if (isOfficial)    flags.push('official_source')
   if (isUserCurated) flags.push('user_curated_source')
   if (tier === 'S' || tier === 'A') flags.push('high_quality_media')
@@ -432,15 +463,16 @@ function mapRow(row: EngineRow): RecommendedItem {
   const title         = normalizeDisplayText(row.title) || '(no title)'
   const summary       = normalizeDisplayText(row.summary)
 
+  const titleGarbled = looksGarbled(row.title ?? '') || looksGarbled(title)
   const noise       = detectLowValueNoise(title, summary, row.content_word_count)
   const signalScore = computeSignalScore(row, isOfficial, isUserCurated)
   const recScore    = computeRecommendationScore(row, isUserCurated, noise.penalty)
   const evScore     = n(row.ev_score)
   const truthScore  = n(row.truth_score)
-  const tier        = classifyTier(recScore, noise.penalty >= 15, evScore, truthScore)
+  const tier        = classifyTier(recScore, noise.penalty >= 15, evScore, truthScore, titleGarbled)
   const sourceStatus = classifySourceStatus(row, isOfficial, isUserCurated)
   const evLevel      = classifyEvidenceLevel(evScore, truthScore)
-  const qualityFlags = buildQualityFlags(row, isOfficial, isUserCurated, signalScore, evLevel, noise.noiseType)
+  const qualityFlags = buildQualityFlags(row, isOfficial, isUserCurated, signalScore, evLevel, noise.noiseType, titleGarbled)
 
   const reason  = buildReason(row, tier, sourceStatus)
   const risk    = buildRiskNote(sourceStatus, qualityFlags, tier)
@@ -628,10 +660,11 @@ export function enrichItemWithEngine(
   const recScore    = computeRecommendationScore(fakeRow, isUserCurated, noise.penalty)
   const ev          = item.evScore ?? 0
   const truth       = item.truthScore ?? 0
-  const tier        = classifyTier(recScore, noise.penalty >= 15, ev, truth)
+  const titleGarbledEnrich = looksGarbled(item.title ?? '')
+  const tier        = classifyTier(recScore, noise.penalty >= 15, ev, truth, titleGarbledEnrich)
   const sourceStatus = classifySourceStatus(fakeRow, isOfficial, isUserCurated)
   const evLevel      = classifyEvidenceLevel(ev, truth)
-  const flags        = buildQualityFlags(fakeRow, isOfficial, isUserCurated, signalScore, evLevel, noise.noiseType)
+  const flags        = buildQualityFlags(fakeRow, isOfficial, isUserCurated, signalScore, evLevel, noise.noiseType, titleGarbledEnrich)
 
   return {
     signalScore,
