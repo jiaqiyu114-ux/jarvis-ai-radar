@@ -9,19 +9,19 @@ import type { RecommendedItem } from "@/lib/recommendations/recommendation-engin
 import { RecommendationDetailModal } from "./_recommendation-detail-modal"
 
 const SOURCE_STATUS_LABELS: Record<string, string> = {
-  official: "官方来源",
+  official:     "官方来源",
   user_curated: "我的来源",
   multi_source: "多源验证",
-  single_source: "单源",
-  weak_source: "来源偏弱",
+  single_source:"单源",
+  weak_source:  "来源偏弱",
 }
 
 const SOURCE_STATUS_COLORS: Record<string, string> = {
-  official: "text-amber-700 border-amber-400/40 bg-amber-50 dark:text-amber-400 dark:bg-amber-400/10",
+  official:     "text-amber-700 border-amber-400/40 bg-amber-50 dark:text-amber-400 dark:bg-amber-400/10",
   user_curated: "text-teal-700 border-teal-400/40 bg-teal-50 dark:text-teal-400 dark:bg-teal-400/10",
   multi_source: "text-success border-success/25 bg-success/8",
-  single_source: "text-muted-foreground border-border bg-muted/40",
-  weak_source: "text-warning border-warning/25 bg-warning/8",
+  single_source:"text-muted-foreground border-border bg-muted/40",
+  weak_source:  "text-warning border-warning/25 bg-warning/8",
 }
 
 const TIER_TEXT: Record<string, string> = {
@@ -51,15 +51,26 @@ function ScoreBox({ score, tier }: { score: number; tier: string }) {
   )
 }
 
+function formatAge(dateStr: string | null | undefined): string {
+  if (!dateStr) return ""
+  try {
+    const diff = Date.now() - new Date(dateStr).getTime()
+    if (isNaN(diff) || diff < 0) return ""
+    const h = diff / 3_600_000
+    if (h < 1) return `${Math.round(diff / 60_000)}m前`
+    if (h < 24) return `${Math.floor(h)}h前`
+    const d = Math.round(h / 24)
+    if (d < 7) return `${d}d前`
+    const dt = new Date(dateStr)
+    return `${dt.getMonth() + 1}/${dt.getDate()}`
+  } catch { return "" }
+}
+
 function deepDiveLabel(item: RecommendedItem): string | null {
-  const deepDive = item.deepDive
-  if (!deepDive) return null
-  if (deepDive.status === "generated" && deepDive.model !== "deterministic-v1") {
-    return "AI 深度解读"
-  }
-  if (deepDive.status === "fallback" || deepDive.model === "deterministic-v1") {
-    return "规则生成"
-  }
+  const dd = item.deepDive
+  if (!dd) return null
+  if (dd.status === "generated" && dd.model !== "deterministic-v1") return "AI 解读"
+  if (dd.status === "fallback" || dd.model === "deterministic-v1") return "规则生成"
   return null
 }
 
@@ -70,17 +81,19 @@ type EngineRecommendationCardProps = {
 
 export function EngineRecommendationCard({ item, enableDetail = false }: EngineRecommendationCardProps) {
   const [open, setOpen] = useState(false)
-  const tierLabel = TIER_LABELS[item.recommendationTier] ?? item.recommendationTier
-  const tierColor = TIER_COLORS[item.recommendationTier] ?? TIER_COLORS.observe
+  const tierLabel   = TIER_LABELS[item.recommendationTier] ?? item.recommendationTier
+  const tierColor   = TIER_COLORS[item.recommendationTier] ?? TIER_COLORS.observe
   const statusLabel = SOURCE_STATUS_LABELS[item.sourceStatus] ?? item.sourceStatus
   const statusColor = SOURCE_STATUS_COLORS[item.sourceStatus] ?? SOURCE_STATUS_COLORS.single_source
-  const tierText = TIER_TEXT[item.sourceTier] ?? TIER_TEXT.C
-  const deepDive = item.deepDive
-  const modelLabel = deepDiveLabel(item)
+  const tierText    = TIER_TEXT[item.sourceTier] ?? TIER_TEXT.C
+  const deepDive    = item.deepDive
+  const modelLabel  = deepDiveLabel(item)
   const showDeepDive = Boolean(deepDive && deepDive.status !== "skipped")
+  const age = formatAge(item.publishedAt)
 
   const body = (
     <>
+      {/* Title row */}
       <div className="flex items-start gap-2">
         <span className={cn("text-[10px] font-semibold shrink-0 mt-0.5", tierText)}>
           {item.sourceTier}
@@ -90,12 +103,14 @@ export function EngineRecommendationCard({ item, enableDetail = false }: EngineR
         </h2>
       </div>
 
+      {/* Summary */}
       {item.summary && (
         <p className="mt-1 text-xs text-muted-foreground line-clamp-2 text-left">
           {item.summary}
         </p>
       )}
 
+      {/* Badges */}
       <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
         <SmallBadge className={tierColor}>{tierLabel}</SmallBadge>
         <SmallBadge className={statusColor}>{statusLabel}</SmallBadge>
@@ -111,30 +126,27 @@ export function EngineRecommendationCard({ item, enableDetail = false }: EngineR
         )}
       </div>
 
-      <p className="mt-1.5 text-xs text-foreground/80 leading-relaxed text-left">
+      {/* Recommendation reason */}
+      <p className="mt-1.5 text-xs text-foreground/75 leading-relaxed text-left">
         {item.recommendationReason}
       </p>
 
+      {/* DeepDive preview — only oneSentence */}
       {showDeepDive && deepDive && (
         <div className="mt-1.5 rounded border border-border/60 bg-muted/30 px-2.5 py-2">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[10px] font-medium text-muted-foreground">深度解读</p>
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <p className="text-[10px] font-medium text-muted-foreground">信号解读</p>
             {modelLabel && (
-              <span className="text-[10px] text-muted-foreground/70">{modelLabel}</span>
+              <span className="text-[10px] text-muted-foreground/60">{modelLabel}</span>
             )}
           </div>
-          <p className="mt-1 text-xs text-foreground/80 leading-relaxed line-clamp-3 text-left">
+          <p className="text-xs text-foreground/80 leading-relaxed line-clamp-3 text-left">
             {deepDive.oneSentence || deepDive.summary}
-          </p>
-          <p className="mt-1 text-[11px] text-foreground/70 leading-relaxed line-clamp-2 text-left">
-            {deepDive.whyItMatters}
-          </p>
-          <p className="mt-1 text-[10px] text-muted-foreground leading-relaxed line-clamp-2 text-left">
-            跟进建议：{deepDive.followUp?.[0] ?? deepDive.followUpSuggestion}
           </p>
         </div>
       )}
 
+      {/* Risk note */}
       {item.riskNote && (
         <p className="mt-0.5 text-[10px] text-warning/80 italic leading-relaxed text-left">
           · {item.riskNote}
@@ -164,13 +176,20 @@ export function EngineRecommendationCard({ item, enableDetail = false }: EngineR
               <div>{body}</div>
             )}
 
+            {/* Source + time + 查看原文 */}
             <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-              <span className="text-[10px] text-muted-foreground truncate max-w-[180px]">
+              <span className="text-[10px] text-muted-foreground truncate max-w-[160px]">
                 {item.source}
               </span>
+              {age && (
+                <>
+                  <span className="text-muted-foreground/30 text-[10px]">·</span>
+                  <span className="text-[10px] text-muted-foreground/60">{age}</span>
+                </>
+              )}
               {item.isUserCurated && (
                 <span className="text-[10px] text-teal-600/70 dark:text-teal-400/60">
-                  · 我的来源，仍需多源验证
+                  · 我的来源
                 </span>
               )}
               <a
