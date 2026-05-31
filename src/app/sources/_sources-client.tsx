@@ -14,12 +14,27 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import type { SourceWithHealth } from "@/lib/data/sources-adapter"
 import type { SourceHealthStatus } from "@/types/database"
-import { Ban, Check, Copy, Pencil, Plus, Star } from "lucide-react"
+import { Ban, Check, Copy, MoreHorizontal, Pencil, Plus, Star } from "lucide-react"
 
-// ── Health badge ──────────────────────────────────────────────────────────────
+// ── Time formatting ────────────────────────────────────────────────────────────
+
+function timeAgo(at: string | null): string {
+  if (!at) return ''
+  const ms = Date.now() - new Date(at).getTime()
+  if (ms < 60_000)     return '刚刚'
+  if (ms < 3_600_000)  return `${Math.floor(ms / 60_000)}m 前`
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h 前`
+  return `${Math.floor(ms / 86_400_000)}d 前`
+}
+
+// ── Health badge ───────────────────────────────────────────────────────────────
 
 const HEALTH_STYLE: Record<SourceHealthStatus, string> = {
   healthy:  "bg-success/10 text-success border-success/25",
@@ -54,53 +69,62 @@ const FETCH_STATUS_LABEL: Record<string, string> = {
   db_error:    "写入失败",
 }
 
-function fetchStatusLabel(status: string | null): string {
-  if (!status) return "—"
-  return FETCH_STATUS_LABEL[status] ?? status
-}
-
-function HealthBadge({ status, isRss }: { status: SourceHealthStatus; isRss: boolean }) {
-  if (!isRss) return <span className="text-[10px] text-muted-foreground/40">—</span>
+function HealthCell({ source }: { source: SourceWithHealth }) {
+  if (source.platform !== "rss") {
+    return <span className="text-[10px] text-muted-foreground/40">—</span>
+  }
+  const status = source.healthStatus
   return (
-    <span className={cn(
-      "inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full border font-medium",
-      HEALTH_STYLE[status] ?? HEALTH_STYLE.unknown,
-    )}>
-      <span className={cn("w-1.5 h-1.5 rounded-full", HEALTH_DOT[status] ?? HEALTH_DOT.unknown)} />
-      {HEALTH_LABEL[status] ?? status}
-    </span>
+    <div className="flex items-center gap-1.5">
+      <span className={cn(
+        "inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full border font-medium",
+        HEALTH_STYLE[status] ?? HEALTH_STYLE.unknown,
+      )}>
+        <span className={cn("w-1.5 h-1.5 rounded-full", HEALTH_DOT[status] ?? HEALTH_DOT.unknown)} />
+        {HEALTH_LABEL[status] ?? status}
+      </span>
+      <span className={cn(
+        "text-[10px] font-mono tabular-nums",
+        source.healthScore >= 70 ? "text-success/70" :
+        source.healthScore >= 40 ? "text-warning/70" : "text-danger/70",
+      )}>
+        {source.healthScore}
+      </span>
+    </div>
   )
 }
 
 // ── Filter types ──────────────────────────────────────────────────────────────
 
-type FilterKey = "all" | "my" | "official" | "rss" | "failing" | "blocked"
+type FilterKey = "all" | "my" | "failing" | "rss" | "blocked"
 
 const FILTERS: { key: FilterKey; label: string }[] = [
-  { key: "all",      label: "全部" },
-  { key: "my",       label: "我的源" },
-  { key: "official", label: "官方源" },
-  { key: "rss",      label: "RSS" },
-  { key: "failing",  label: "失败" },
-  { key: "blocked",  label: "被屏蔽" },
+  { key: "all",     label: "全部" },
+  { key: "my",      label: "我的源" },
+  { key: "failing", label: "失败" },
+  { key: "rss",     label: "RSS" },
+  { key: "blocked", label: "被屏蔽" },
 ]
 
 function applyFilter(sources: SourceWithHealth[], filter: FilterKey): SourceWithHealth[] {
   switch (filter) {
-    case "my":       return sources.filter(s => s.isUserCurated)
-    case "official": return sources.filter(s => s.isOfficial)
-    case "rss":      return sources.filter(s => s.platform === "rss")
-    case "failing":  return sources.filter(s => s.healthStatus === "failing" || s.healthStatus === "degraded")
-    case "blocked":  return sources.filter(s => s.isBlocked)
-    default:         return sources
+    case "my":      return sources.filter(s => s.isUserCurated)
+    case "failing": return sources.filter(s => s.healthStatus === "failing" || s.healthStatus === "degraded")
+    case "rss":     return sources.filter(s => s.platform === "rss")
+    case "blocked": return sources.filter(s => s.isBlocked)
+    default:        return sources
   }
 }
 
 // ── Form state ────────────────────────────────────────────────────────────────
 
-const CATEGORIES = ['AI技术', '商业动态', '产品发布', '监管政策', '融资并购', '行业趋势', '开源项目', '研究报告', '人物动态', '其他'] as const
-const PLATFORMS  = ['rss', 'website', 'api', 'x', 'youtube', 'other'] as const
-const TIERS      = ['S', 'A', 'B', 'C', 'D'] as const
+const CATEGORIES = [
+  'AI技术', '商业动态', '产品发布', '监管政策', '融资并购',
+  '行业趋势', '开源项目', '研究报告', '人物动态', '其他',
+] as const
+
+const PLATFORMS = ['rss', 'website', 'api', 'x', 'youtube', 'other'] as const
+const TIERS     = ['S', 'A', 'B', 'C', 'D'] as const
 
 type SourceFormState = {
   name:                 string
@@ -140,8 +164,8 @@ function sourceToForm(s: SourceWithHealth): SourceFormState {
     source_tier:          s.tier,
     category:             s.category,
     is_user_curated:      s.isUserCurated,
-    user_source_label:    s.userSourceLabel ?? '外部精选源',
-    user_source_note:     s.userSourceNote  ?? '',
+    user_source_label:    s.userSourceLabel      ?? '外部精选源',
+    user_source_note:     s.userSourceNote       ?? '',
     user_source_priority: s.userSourcePriority,
     is_official:          s.isOfficial,
     is_blocked:           s.isBlocked,
@@ -152,9 +176,9 @@ function sourceToForm(s: SourceWithHealth): SourceFormState {
 // ── Form field helper ─────────────────────────────────────────────────────────
 
 function FormRow({ label, required, children }: {
-  label: string
+  label:     string
   required?: boolean
-  children: React.ReactNode
+  children:  React.ReactNode
 }) {
   return (
     <div className="grid grid-cols-[120px_1fr] items-start gap-3">
@@ -167,6 +191,13 @@ function FormRow({ label, required, children }: {
 }
 
 // ── Source form dialog ────────────────────────────────────────────────────────
+//
+// IMPORTANT: This component MUST receive a stable `key` from its parent:
+//   key={editSource?.id ?? `new-${addKey}`}
+//
+// The key forces a remount (and full state reset) every time the user opens
+// a different source's edit dialog, preventing form state from leaking across
+// sources (the "串数据" bug).
 
 function SourceFormDialog({
   open,
@@ -174,14 +205,16 @@ function SourceFormDialog({
   onClose,
   onSuccess,
 }: {
-  open:        boolean
-  editSource:  SourceWithHealth | null
-  onClose:     () => void
-  onSuccess:   () => void
+  open:       boolean
+  editSource: SourceWithHealth | null
+  onClose:    () => void
+  onSuccess:  () => void
 }) {
   const isEdit = editSource !== null
+
+  // useState initializer runs only on mount — remounting via key ensures correct init
   const [form, setForm] = useState<SourceFormState>(
-    () => isEdit ? sourceToForm(editSource!) : { ...DEFAULT_FORM },
+    () => isEdit ? sourceToForm(editSource) : { ...DEFAULT_FORM },
   )
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState<string | null>(null)
@@ -192,62 +225,88 @@ function SourceFormDialog({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!form.name.trim() || !form.url.trim()) {
-      setError('名称和 URL 不能为空')
-      return
-    }
+
+    // Validate: name always required; URL only required for new sources (readonly in edit)
+    if (!form.name.trim()) { setError('名称不能为空'); return }
+    if (!isEdit && !form.url.trim()) { setError('URL 不能为空'); return }
+
     setSaving(true)
     setError(null)
 
-    const payload = {
-      name:                 form.name.trim(),
-      url:                  form.url.trim(),
-      platform:             form.platform,
-      source_tier:          form.source_tier,
-      category:             form.category,
-      is_user_curated:      form.is_user_curated,
-      user_source_label:    form.is_user_curated ? form.user_source_label : null,
-      user_source_note:     form.user_source_note || null,
-      user_source_priority: form.user_source_priority,
-      is_official:          form.is_official,
-      data_origin:          form.data_origin,
-      ...(isEdit && { is_blocked: form.is_blocked }),
-      source_badge_variant: form.is_user_curated ? 'user_curated' : null,
+    const isCurated = form.is_user_curated
+
+    if (isEdit) {
+      // PATCH: URL is readonly — do not send it; update by sourceId in the route
+      const patch = {
+        name:                 form.name.trim(),
+        platform:             form.platform,
+        source_tier:          form.source_tier,
+        category:             form.category,
+        is_user_curated:      isCurated,
+        user_source_label:    isCurated ? (form.user_source_label.trim() || '外部精选源') : null,
+        user_source_note:     form.user_source_note.trim() || null,
+        user_source_priority: form.user_source_priority,
+        is_official:          form.is_official,
+        data_origin:          form.data_origin,
+        is_blocked:           form.is_blocked,
+        source_badge_variant: isCurated ? 'user_curated' : null,
+      }
+      const res  = await fetch(`/api/sources/${editSource.id}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(patch),
+      })
+      const json = await res.json() as { ok: boolean; error?: string }
+      setSaving(false)
+      if (!json.ok) { setError(`保存失败：${json.error ?? '数据库更新失败'}`); return }
+    } else {
+      // POST: include url for new source creation
+      const post = {
+        name:                 form.name.trim(),
+        url:                  form.url.trim(),
+        platform:             form.platform,
+        source_tier:          form.source_tier,
+        category:             form.category,
+        is_user_curated:      isCurated,
+        user_source_label:    isCurated ? (form.user_source_label.trim() || '外部精选源') : null,
+        user_source_note:     form.user_source_note.trim() || null,
+        user_source_priority: form.user_source_priority,
+        is_official:          form.is_official,
+        data_origin:          form.data_origin,
+        source_badge_variant: isCurated ? 'user_curated' : null,
+      }
+      const res  = await fetch('/api/sources', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(post),
+      })
+      const json = await res.json() as { ok: boolean; error?: string }
+      setSaving(false)
+      if (!json.ok) { setError(`添加失败：${json.error ?? '数据库写入失败'}`); return }
     }
 
-    const url    = isEdit ? `/api/sources/${editSource!.id}` : '/api/sources'
-    const method = isEdit ? 'PATCH' : 'POST'
-
-    const res  = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-    const json = await res.json() as { ok: boolean; error?: string }
-
-    setSaving(false)
-    if (!json.ok) { setError(json.error ?? '保存失败'); return }
     onSuccess()
   }
 
-  // Reset form when dialog opens with new target
-  const handleOpenChange = (v: boolean) => {
-    if (!v) { onClose(); setError(null) }
-  }
-
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open} onOpenChange={v => { if (!v) { onClose(); setError(null) } }}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-base">
-            {isEdit ? `编辑信源 · ${editSource!.name}` : '添加信源'}
+            {isEdit ? `编辑信源 · ${editSource.name}` : '添加信源'}
           </DialogTitle>
           <DialogDescription className="text-[11px]">
             {isEdit
-              ? '修改信源属性。URL 不可更改，屏蔽状态可在此切换。'
-              : '填写信源基本信息。添加后系统会在下次抓取时纳入观察。用户认可源不等于已验证事实，仍需多源验证。'}
+              ? 'URL 不可修改，如需更换 URL 请新建信源。修改其他字段后点击保存。'
+              : '填写信源信息。用户认可源不等于已验证事实，仍需多源验证。'}
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-3 mt-2">
           {/* ── 基本信息 ── */}
-          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider pb-1 border-b border-border">基本信息</p>
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider pb-1 border-b border-border">
+            基本信息
+          </p>
 
           <FormRow label="名称" required>
             <Input
@@ -258,22 +317,31 @@ function SourceFormDialog({
             />
           </FormRow>
 
-          <FormRow label="URL" required>
-            <Input
-              value={form.url}
-              onChange={e => set('url', e.target.value)}
-              placeholder="https://example.com/feed.xml"
-              className="h-8 text-sm font-mono"
-              disabled={isEdit}
-              title={isEdit ? 'URL 创建后不可更改' : undefined}
-            />
-            {isEdit && (
-              <p className="text-[10px] text-muted-foreground/60 mt-1">URL 创建后不可更改</p>
+          <FormRow label="URL" required={!isEdit}>
+            {isEdit ? (
+              // Display real URL as read-only — never empty, never editable
+              <div>
+                <div className="h-8 px-3 flex items-center rounded-md border border-input bg-muted/40 overflow-hidden">
+                  <span className="text-sm font-mono text-muted-foreground truncate">{editSource.url}</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground/60 mt-1">
+                  URL 创建后暂不可修改，如需更换请新建信源
+                </p>
+              </div>
+            ) : (
+              <Input
+                value={form.url}
+                onChange={e => set('url', e.target.value)}
+                placeholder="https://example.com/feed.xml"
+                className="h-8 text-sm font-mono"
+              />
             )}
           </FormRow>
 
           {/* ── 分类 ── */}
-          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider pb-1 border-b border-border pt-2">分类</p>
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider pb-1 border-b border-border pt-2">
+            分类
+          </p>
 
           <FormRow label="平台类型">
             <Select value={form.platform} onValueChange={v => set('platform', v)}>
@@ -292,7 +360,12 @@ function SourceFormDialog({
               <SelectContent>
                 {TIERS.map(t => (
                   <SelectItem key={t} value={t} className="text-sm">
-                    {t} — {t === 'S' ? '顶级权威' : t === 'A' ? '高可信' : t === 'B' ? '中等可信' : t === 'C' ? '参考' : '低可信'}
+                    {t} — {
+                      t === 'S' ? '顶级权威' :
+                      t === 'A' ? '高可信'   :
+                      t === 'B' ? '中等可信' :
+                      t === 'C' ? '参考'     : '低可信'
+                    }
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -311,16 +384,18 @@ function SourceFormDialog({
           </FormRow>
 
           {/* ── 认可设置 ── */}
-          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider pb-1 border-b border-border pt-2">认可设置</p>
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider pb-1 border-b border-border pt-2">
+            认可设置
+          </p>
 
           <FormRow label="我的源">
             <div className="flex items-center gap-2 pt-1">
               <Switch
                 checked={form.is_user_curated}
                 onCheckedChange={v => set('is_user_curated', v)}
-                id="is_user_curated"
+                id="sw_curated"
               />
-              <label htmlFor="is_user_curated" className="text-xs text-muted-foreground cursor-pointer">
+              <label htmlFor="sw_curated" className="text-xs text-muted-foreground cursor-pointer">
                 标记为「我的源」（优先观察，仍需多源验证）
               </label>
             </div>
@@ -341,7 +416,7 @@ function SourceFormDialog({
                 <textarea
                   value={form.user_source_note}
                   onChange={e => set('user_source_note', e.target.value)}
-                  placeholder="为什么接入这个源？例：高质量 AI 每日精选，注重信噪比"
+                  placeholder="为什么接入这个源？（可选）"
                   rows={2}
                   className="w-full text-sm bg-background border border-input rounded-md px-3 py-2 resize-none text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 />
@@ -364,16 +439,18 @@ function SourceFormDialog({
           )}
 
           {/* ── 高级设置 ── */}
-          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider pb-1 border-b border-border pt-2">高级设置</p>
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider pb-1 border-b border-border pt-2">
+            高级设置
+          </p>
 
           <FormRow label="官方源">
             <div className="flex items-center gap-2 pt-1">
               <Switch
                 checked={form.is_official}
                 onCheckedChange={v => set('is_official', v)}
-                id="is_official"
+                id="sw_official"
               />
-              <label htmlFor="is_official" className="text-xs text-muted-foreground cursor-pointer">
+              <label htmlFor="sw_official" className="text-xs text-muted-foreground cursor-pointer">
                 第一方发布源（不应与「我的源」同时勾选）
               </label>
             </div>
@@ -397,9 +474,9 @@ function SourceFormDialog({
                 <Switch
                   checked={form.is_blocked}
                   onCheckedChange={v => set('is_blocked', v)}
-                  id="is_blocked"
+                  id="sw_blocked"
                 />
-                <label htmlFor="is_blocked" className={cn(
+                <label htmlFor="sw_blocked" className={cn(
                   "text-xs cursor-pointer",
                   form.is_blocked ? "text-danger" : "text-muted-foreground",
                 )}>
@@ -430,37 +507,31 @@ function SourceFormDialog({
   )
 }
 
-// ── Row actions type ──────────────────────────────────────────────────────────
+// ── Source row ────────────────────────────────────────────────────────────────
 
-type RowActions = {
+function SourceRow({ source, onEdit, onToggleBlock, onMarkCurated, onCopyUrl, copiedId }: {
+  source:        SourceWithHealth
   onEdit:        (s: SourceWithHealth) => void
   onToggleBlock: (s: SourceWithHealth) => Promise<void>
   onMarkCurated: (s: SourceWithHealth) => Promise<void>
   onCopyUrl:     (s: SourceWithHealth) => void
-}
-
-// ── Source row ────────────────────────────────────────────────────────────────
-
-function SourceRow({ source, actions, copiedId }: {
-  source:   SourceWithHealth
-  actions:  RowActions
-  copiedId: string | null
+  copiedId:      string | null
 }) {
-  const isRss  = source.platform === "rss"
-  const isDemo = source.dataOrigin === "demo"
+  const isDemo  = source.dataOrigin === "demo"
+  const fetchAt = source.lastSuccessAt ?? source.lastFetchAt
 
   return (
     <tr className={cn(
-      "border-b border-border last:border-0 transition-colors hover:bg-accent",
-      isDemo            && "opacity-60",
-      source.isBlocked  && "opacity-50",
+      "border-b border-border last:border-0 transition-colors hover:bg-accent/50",
+      isDemo           && "opacity-60",
+      source.isBlocked && "opacity-50",
       source.isUserCurated && "border-l-2 border-l-teal-500/60",
     )}>
-      {/* Name + URL */}
-      <td className="px-5 py-3.5">
+      {/* 信源 */}
+      <td className="px-5 py-3.5 max-w-[280px]">
         <div className="flex items-start gap-2 flex-wrap">
           <p className={cn(
-            "text-sm font-medium",
+            "text-sm font-medium leading-snug",
             isDemo ? "text-muted-foreground" : "text-foreground",
           )}>
             {source.name}
@@ -472,153 +543,104 @@ function SourceRow({ source, actions, copiedId }: {
             size="xs"
           />
         </div>
-        <p className="text-[10px] text-muted-foreground mt-0.5 max-w-[220px] truncate">
+        <p className="text-[10px] text-muted-foreground/60 mt-0.5 truncate max-w-[240px]">
           {source.url}
         </p>
         {source.userSourceNote && (
-          <p className="text-[10px] text-teal-600/70 dark:text-teal-400/60 mt-0.5 max-w-[260px] line-clamp-2">
+          <p className="text-[10px] text-teal-600/70 dark:text-teal-400/60 mt-0.5 line-clamp-1 max-w-[240px]">
             {source.userSourceNote}
           </p>
         )}
-        {source.isBlocked && (
-          <span className="text-[9px] text-danger font-medium">BLOCKED</span>
-        )}
-        {isDemo && (
-          <span className="text-[9px] text-muted-foreground/50 font-medium">DEMO</span>
-        )}
+        <div className="flex gap-1.5 mt-0.5">
+          {source.isBlocked && <span className="text-[9px] text-danger font-medium">BLOCKED</span>}
+          {isDemo           && <span className="text-[9px] text-muted-foreground/50 font-medium">DEMO</span>}
+        </div>
       </td>
 
-      {/* Platform */}
-      <td className="px-4 py-3.5">
-        <span className={cn(
-          "text-[9px] px-1.5 py-0.5 rounded border font-mono uppercase",
-          source.platform === "rss"
-            ? "text-primary/70 border-primary/20 bg-primary/5"
-            : "text-muted-foreground/50 border-border/40",
-        )}>
-          {source.platform}
-        </span>
-      </td>
-
-      {/* Tier */}
-      <td className="px-4 py-3.5">
+      {/* 等级 */}
+      <td className="px-4 py-3.5 whitespace-nowrap">
         <SourceTierBadge tier={source.tier} />
       </td>
 
-      {/* Health */}
-      <td className="px-4 py-3.5 text-center">
-        <HealthBadge status={source.healthStatus} isRss={isRss} />
+      {/* 健康 */}
+      <td className="px-4 py-3.5 whitespace-nowrap">
+        <HealthCell source={source} />
       </td>
 
-      {/* Health score */}
-      <td className="px-4 py-3.5 text-right">
-        {isRss ? (
-          <span className={cn(
-            "text-xs font-mono tabular-nums",
-            source.healthScore >= 70 ? "text-success" :
-            source.healthScore >= 40 ? "text-warning" : "text-danger",
-          )}>
-            {source.healthScore}
-          </span>
-        ) : (
-          <span className="text-[10px] text-muted-foreground/40">—</span>
-        )}
-      </td>
-
-      {/* Success / Failure counts */}
-      <td className="px-4 py-3.5 text-right">
-        {isRss ? (
-          <span className="text-[10px] font-mono text-muted-foreground tabular-nums">
-            <span className="text-success">{source.successfulFetchCount}</span>
-            <span className="text-muted-foreground/40">/</span>
-            <span className={source.failedFetchCount > 0 ? "text-warning" : "text-muted-foreground"}>
-              {source.failedFetchCount}
+      {/* 最近同步 */}
+      <td className="px-4 py-3.5">
+        {source.lastFetchStatus ? (
+          <div className="space-y-0.5">
+            <span className={cn(
+              "text-[10px]",
+              source.lastFetchStatus === "success" ? "text-success" : "text-warning",
+            )}>
+              {FETCH_STATUS_LABEL[source.lastFetchStatus] ?? source.lastFetchStatus}
             </span>
-          </span>
+            {fetchAt && (
+              <p className="text-[10px] text-muted-foreground/50">{timeAgo(fetchAt)}</p>
+            )}
+          </div>
         ) : (
           <span className="text-[10px] text-muted-foreground/40">—</span>
         )}
       </td>
 
-      {/* Last status */}
-      <td className="px-4 py-3.5">
-        {isRss ? (
-          <span className={cn(
-            "text-[10px]",
-            source.lastFetchStatus === "success" ? "text-success"
-              : source.lastFetchStatus ? "text-warning"
-              : "text-muted-foreground/40",
-          )}>
-            {fetchStatusLabel(source.lastFetchStatus)}
-          </span>
-        ) : (
-          <span className="text-[10px] text-muted-foreground/40">—</span>
-        )}
-      </td>
-
-      {/* Latency */}
-      <td className="px-4 py-3.5">
-        {isRss && source.lastLatencyMs != null ? (
-          <span className={cn(
-            "text-[10px] font-mono tabular-nums",
-            source.lastLatencyMs > 8000 ? "text-warning" : "text-muted-foreground",
-          )}>
-            {source.lastLatencyMs > 1000
-              ? `${(source.lastLatencyMs / 1000).toFixed(1)}s`
-              : `${source.lastLatencyMs}ms`}
-          </span>
-        ) : (
-          <span className="text-[10px] text-muted-foreground/40">—</span>
-        )}
-      </td>
-
-      {/* Actions */}
+      {/* 操作 */}
       <td className="px-3 py-3.5">
-        <div className="flex items-center gap-1">
-          <ActionBtn title="编辑" onClick={() => actions.onEdit(source)}>
-            <Pencil className="w-3 h-3" />
-          </ActionBtn>
-          {!source.isUserCurated && (
-            <ActionBtn title="标记为我的源" onClick={() => actions.onMarkCurated(source)}
-              className="hover:text-teal-500">
-              <Star className="w-3 h-3" />
-            </ActionBtn>
-          )}
-          <ActionBtn
-            title={source.isBlocked ? "取消屏蔽" : "屏蔽"}
-            onClick={() => actions.onToggleBlock(source)}
-            className={source.isBlocked ? "text-danger/60 hover:text-danger" : "hover:text-warning"}
+        <div className="flex items-center gap-0.5">
+          <Button
+            variant="ghost" size="sm"
+            className="h-7 px-2 text-xs gap-1 text-muted-foreground hover:text-foreground"
+            onClick={() => onEdit(source)}
           >
-            <Ban className="w-3 h-3" />
-          </ActionBtn>
-          <ActionBtn title="复制 URL" onClick={() => actions.onCopyUrl(source)}>
-            {copiedId === source.id
-              ? <Check className="w-3 h-3 text-success" />
-              : <Copy className="w-3 h-3" />}
-          </ActionBtn>
+            <Pencil className="w-3 h-3" />
+            编辑
+          </Button>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground">
+                <MoreHorizontal className="w-3.5 h-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              {!source.isUserCurated && (
+                <DropdownMenuItem
+                  className="text-xs gap-2 cursor-pointer text-teal-600 dark:text-teal-400 focus:text-teal-600 dark:focus:text-teal-400"
+                  onSelect={() => onMarkCurated(source)}
+                >
+                  <Star className="w-3.5 h-3.5" />
+                  标记为我的源
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                className="text-xs gap-2 cursor-pointer"
+                onSelect={() => onCopyUrl(source)}
+              >
+                {copiedId === source.id
+                  ? <Check className="w-3.5 h-3.5 text-success" />
+                  : <Copy className="w-3.5 h-3.5" />}
+                {copiedId === source.id ? '已复制' : '复制 URL'}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className={cn(
+                  "text-xs gap-2 cursor-pointer",
+                  source.isBlocked
+                    ? "text-muted-foreground"
+                    : "text-warning focus:text-warning",
+                )}
+                onSelect={() => onToggleBlock(source)}
+              >
+                <Ban className="w-3.5 h-3.5" />
+                {source.isBlocked ? '取消屏蔽' : '屏蔽此源'}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </td>
     </tr>
-  )
-}
-
-function ActionBtn({ children, title, onClick, className }: {
-  children:  React.ReactNode
-  title:     string
-  onClick:   () => void
-  className?: string
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={title}
-      className={cn(
-        "p-1 rounded text-muted-foreground/40 hover:bg-accent hover:text-muted-foreground transition-colors",
-        className,
-      )}
-    >
-      {children}
-    </button>
   )
 }
 
@@ -638,14 +660,16 @@ function StatPill({ label, value, accent }: { label: string; value: number; acce
 // ── Main client component ─────────────────────────────────────────────────────
 
 export default function SourcesClient({ sources: initialSources }: { sources: SourceWithHealth[] }) {
-  const [sources,   setSources]   = useState<SourceWithHealth[]>(initialSources)
-  const [filter,    setFilter]    = useState<FilterKey>("all")
+  const [sources,    setSources]    = useState<SourceWithHealth[]>(initialSources)
+  const [filter,     setFilter]     = useState<FilterKey>("all")
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editSource, setEditSource] = useState<SourceWithHealth | null>(null)
   const [copiedId,   setCopiedId]   = useState<string | null>(null)
   const [busyId,     setBusyId]     = useState<string | null>(null)
+  // Increments on every "add new" open to force SourceFormDialog remount
+  const [addKey,     setAddKey]     = useState(0)
 
-  // Refresh source list from API
+  // Re-fetch entire sources list after any mutation
   const refresh = useCallback(async () => {
     try {
       const res  = await fetch('/api/sources')
@@ -658,9 +682,11 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
 
   function openAdd() {
     setEditSource(null)
+    setAddKey(k => k + 1)   // ensure fresh form every time
     setDialogOpen(true)
   }
 
+  // Each source gets a unique key so the form is always initialized from that source
   function openEdit(s: SourceWithHealth) {
     setEditSource(s)
     setDialogOpen(true)
@@ -668,7 +694,7 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
 
   function closeDialog() {
     setDialogOpen(false)
-    setEditSource(null)
+    setEditSource(null)   // must clear before next open
   }
 
   async function handleDialogSuccess() {
@@ -692,9 +718,9 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
     setBusyId(s.id)
     try {
       await fetch(`/api/sources/${s.id}/mark-curated`, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label: '外部精选源', priority: 10 }),
+        body:    JSON.stringify({ label: '外部精选源', priority: 10 }),
       })
       await refresh()
     } finally {
@@ -708,33 +734,26 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
     setTimeout(() => setCopiedId(prev => prev === s.id ? null : prev), 1500)
   }, [])
 
-  const rowActions: RowActions = {
-    onEdit:        openEdit,
-    onToggleBlock: handleToggleBlock,
-    onMarkCurated: handleMarkCurated,
-    onCopyUrl:     handleCopyUrl,
-  }
-
   const stats = useMemo(() => {
-    const rss      = sources.filter(s => s.platform === "rss")
-    const healthy  = rss.filter(s => s.healthStatus === "healthy").length
-    const degraded = rss.filter(s => s.healthStatus === "degraded").length
-    const failing  = rss.filter(s => s.healthStatus === "failing").length
+    const rss = sources.filter(s => s.platform === "rss")
     return {
       total:     sources.length,
       myCurated: sources.filter(s => s.isUserCurated).length,
-      official:  sources.filter(s => s.isOfficial).length,
-      rssCount:  rss.length,
-      healthy,
-      degraded,
-      failing,
+      rssOk:     rss.filter(s => s.healthStatus === "healthy").length,
+      failing:   rss.filter(s => s.healthStatus === "failing" || s.healthStatus === "degraded").length,
       blocked:   sources.filter(s => s.isBlocked).length,
-      demo:      sources.filter(s => s.dataOrigin === "demo").length,
       active:    sources.filter(s => !s.isBlocked).length,
     }
   }, [sources])
 
   const filtered = useMemo(() => applyFilter(sources, filter), [sources, filter])
+
+  // Dialog key: changes whenever the target source changes, forcing a clean remount
+  // — edit mode: key = source.id (unique per source)
+  // — add mode:  key = `new-${addKey}` (increments on every open)
+  const dialogKey = dialogOpen
+    ? (editSource ? editSource.id : `new-${addKey}`)
+    : 'closed'
 
   return (
     <AppShell>
@@ -743,12 +762,10 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
         <div className="mb-6">
           <p className="page-kicker mb-1">Source Library</p>
           <div className="flex items-end justify-between">
-            <div>
-              <h1 className="editorial-title text-3xl">信源管理</h1>
-            </div>
+            <h1 className="editorial-title text-3xl">信源管理</h1>
             <div className="flex items-center gap-3 pb-1">
               <p className="text-xs text-muted-foreground">
-                {sources.length} 个信源 · {stats.active} 个运行中
+                {stats.total} 个信源 · {stats.active} 个运行中
               </p>
               <Button size="sm" onClick={openAdd} className="h-7 gap-1.5 text-xs">
                 <Plus className="w-3.5 h-3.5" />
@@ -758,27 +775,22 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
           </div>
         </div>
 
-        {/* ── Stats bar ── */}
+        {/* ── Stats bar (simplified) ── */}
         <div className="flex items-center gap-4 mb-4 px-1 flex-wrap">
-          <StatPill label="Total"  value={stats.total} />
+          <StatPill label="全部"      value={stats.total} />
           <span className="w-px h-3 bg-border" />
-          <StatPill label="我的源" value={stats.myCurated} accent="text-teal-600 dark:text-teal-400" />
-          <StatPill label="官方源" value={stats.official}  accent="text-amber-600 dark:text-amber-400" />
+          <StatPill label="我的源"    value={stats.myCurated} accent="text-teal-600 dark:text-teal-400" />
           <span className="w-px h-3 bg-border" />
-          <StatPill label="RSS"    value={stats.rssCount}  accent="text-primary/80" />
-          <StatPill label="正常"   value={stats.healthy}   accent="text-success" />
-          <StatPill label="不稳定" value={stats.degraded}  accent="text-warning" />
-          {stats.failing  > 0 && <StatPill label="连续失败" value={stats.failing}  accent="text-danger" />}
-          {stats.blocked  > 0 && <StatPill label="屏蔽"     value={stats.blocked}  accent="text-danger" />}
-          {stats.demo     > 0 && (
-            <>
-              <span className="w-px h-3 bg-border" />
-              <StatPill label="demo" value={stats.demo} accent="text-muted-foreground/50" />
-            </>
+          <StatPill label="RSS 正常"  value={stats.rssOk}     accent="text-success" />
+          {stats.failing > 0 && (
+            <StatPill label="失败/不稳定" value={stats.failing} accent="text-warning" />
+          )}
+          {stats.blocked > 0 && (
+            <StatPill label="被屏蔽"  value={stats.blocked}   accent="text-danger" />
           )}
         </div>
 
-        {/* ── Filter bar ── */}
+        {/* ── Filter bar (simplified) ── */}
         <div className="flex items-center gap-1.5 mb-4">
           {FILTERS.map(({ key, label }) => (
             <button
@@ -790,20 +802,17 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
                   ? key === "my"
                     ? "bg-teal-500/15 text-teal-700 border-teal-400/40 dark:text-teal-400 font-medium"
                     : "bg-primary/10 text-primary border-primary/25 font-medium"
-                  : "text-muted-foreground border-border hover:border-border hover:bg-accent",
+                  : "text-muted-foreground border-border hover:bg-accent",
               )}
             >
               {label}
-              {key === "my"       && stats.myCurated > 0 && (
+              {key === "my"      && stats.myCurated > 0 && (
                 <span className="ml-1.5 font-mono text-[10px] opacity-70">{stats.myCurated}</span>
               )}
-              {key === "official" && stats.official  > 0 && (
-                <span className="ml-1.5 font-mono text-[10px] opacity-70">{stats.official}</span>
+              {key === "failing" && stats.failing  > 0 && (
+                <span className="ml-1.5 font-mono text-[10px] text-warning opacity-80">{stats.failing}</span>
               )}
-              {key === "failing"  && stats.failing   > 0 && (
-                <span className="ml-1.5 font-mono text-[10px] text-danger opacity-80">{stats.failing}</span>
-              )}
-              {key === "blocked"  && stats.blocked   > 0 && (
+              {key === "blocked" && stats.blocked  > 0 && (
                 <span className="ml-1.5 font-mono text-[10px] text-danger opacity-80">{stats.blocked}</span>
               )}
             </button>
@@ -815,38 +824,38 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
           )}
         </div>
 
-        {/* ── My curated sources banner ── */}
+        {/* ── My curated banner ── */}
         {filter === "my" && filtered.length > 0 && (
           <div className="mb-4 rounded border border-teal-400/30 bg-teal-50/50 dark:bg-teal-400/8 px-4 py-3">
-            <p className="text-sm font-medium text-teal-700 dark:text-teal-400 mb-1">你主动接入的信息源</p>
+            <p className="text-sm font-medium text-teal-700 dark:text-teal-400 mb-1">
+              你主动接入的信息源
+            </p>
             <p className="text-[11px] text-teal-700/70 dark:text-teal-400/60">
-              这些信源由你手动接入，系统会提高观察优先级，但仍需通过证据评分与多源验证后才构成事实判断。
+              系统提高观察优先级，但仍需证据评分与多源验证后才构成事实判断。
             </p>
           </div>
         )}
 
-        {/* ── Table ── */}
-        <div className="border border-border rounded-lg overflow-hidden bg-card overflow-x-auto">
-          <table className="w-full text-sm min-w-[860px]">
+        {/* ── Table (5 columns, simplified) ── */}
+        <div className="border border-border rounded-lg overflow-hidden bg-card">
+          <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-surface">
                 <th className="text-left px-5 py-3"><span className="muted-label">信源</span></th>
-                <th className="text-left px-4 py-3"><span className="muted-label">类型</span></th>
                 <th className="text-left px-4 py-3"><span className="muted-label">等级</span></th>
-                <th className="text-center px-4 py-3"><span className="muted-label">健康</span></th>
-                <th className="text-right px-4 py-3"><span className="muted-label">得分</span></th>
-                <th className="text-right px-4 py-3"><span className="muted-label">成功/失败</span></th>
-                <th className="text-left px-4 py-3"><span className="muted-label">上次状态</span></th>
-                <th className="text-left px-4 py-3"><span className="muted-label">延迟</span></th>
+                <th className="text-left px-4 py-3"><span className="muted-label">健康</span></th>
+                <th className="text-left px-4 py-3"><span className="muted-label">最近同步</span></th>
                 <th className="text-left px-3 py-3"><span className="muted-label">操作</span></th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-5 py-10 text-center">
+                  <td colSpan={5} className="px-5 py-10 text-center">
                     <p className="text-sm text-muted-foreground">
-                      {filter === "all" ? "暂无信源" : "当前筛选无结果"}
+                      {filter === "all"
+                        ? "暂无信源，点击右上角「添加信源」开始"
+                        : "当前筛选无结果"}
                     </p>
                   </td>
                 </tr>
@@ -855,7 +864,10 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
                 <SourceRow
                   key={source.id}
                   source={source}
-                  actions={rowActions}
+                  onEdit={openEdit}
+                  onToggleBlock={handleToggleBlock}
+                  onMarkCurated={handleMarkCurated}
+                  onCopyUrl={handleCopyUrl}
                   copiedId={copiedId}
                 />
               ))}
@@ -864,8 +876,15 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
         </div>
       </div>
 
-      {/* ── Add / Edit dialog ── */}
+      {/*
+       * Dialog key is critical for correctness:
+       *   - 'closed'       → remount with clean state when dialog is not visible
+       *   - source.id      → remount with that source's data when editing
+       *   - `new-${addKey}` → fresh empty form on every new-source open
+       * This prevents form state from leaking across sources.
+       */}
       <SourceFormDialog
+        key={dialogKey}
         open={dialogOpen}
         editSource={editSource}
         onClose={closeDialog}
