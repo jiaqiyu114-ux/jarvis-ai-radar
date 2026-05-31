@@ -6,6 +6,7 @@ import { formatDistanceToNow } from "date-fns"
 import { zhCN } from "date-fns/locale"
 import { ScoreBadge } from "./score-badge"
 import { SourceTierBadge } from "./source-tier-badge"
+import { SourceOriginBadge } from "@/components/sources/source-origin-badge"
 import { FeedbackActions } from "./feedback-actions"
 import { ItemDetailPanel } from "./item-detail-panel"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
@@ -106,6 +107,14 @@ export function InformationCard({
             </div>
             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
               <span className="text-[11px] text-muted-foreground">{item.source}</span>
+              {(item.isUserCurated || item.isOfficial) && (
+                <SourceOriginBadge
+                  isUserCurated={item.isUserCurated}
+                  isOfficial={item.isOfficial}
+                  sourceBadgeVariant={item.sourceBadgeVariant}
+                  size="xs"
+                />
+              )}
               <span className="text-muted-foreground/40">·</span>
               <span className={cn("text-[10px] px-1 py-px rounded font-medium", categoryClass)}>
                 {item.category}
@@ -171,9 +180,17 @@ export function InformationCard({
               onClick={() => setOpen(true)}
               className="w-full text-left space-y-1 cursor-pointer"
             >
-              {/* Row 1: TierBadge + Title */}
+              {/* Row 1: TierBadge + OriginBadge + Title */}
               <div className="flex items-start gap-1.5">
                 <SourceTierBadge tier={item.sourceTier} />
+                {(item.isUserCurated || item.isOfficial) && (
+                  <SourceOriginBadge
+                    isUserCurated={item.isUserCurated}
+                    isOfficial={item.isOfficial}
+                    sourceBadgeVariant={item.sourceBadgeVariant}
+                    size="xs"
+                  />
+                )}
                 <span className={cn(
                   "flex-1 min-w-0 text-sm text-foreground leading-snug",
                   isEmphasis ? "font-semibold" : "font-medium"

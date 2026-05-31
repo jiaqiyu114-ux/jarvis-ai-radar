@@ -17,6 +17,7 @@ import type { DimensionStatus } from "@/lib/scoring/explanation"
 import type { InsightType } from "@/lib/content/detail-explanation"
 import { ItemFeedbackActions } from "@/components/feedback/item-feedback-actions"
 import { ItemClusterLink } from "@/components/clusters/item-cluster-link"
+import { SourceOriginBadge } from "@/components/sources/source-origin-badge"
 
 // ── Colors / maps ─────────────────────────────────────────────────────────────
 
@@ -654,11 +655,29 @@ export function ItemDetailPanel({
 
       {/* ── 6. 来源与原文 ── */}
       <Section label="来源与原文">
+        {/* User-curated source notice */}
+        {item.isUserCurated && (
+          <div className="mb-3 rounded border border-teal-400/30 bg-teal-50/60 dark:bg-teal-400/8 px-3 py-2">
+            <p className="text-[11px] font-medium text-teal-700 dark:text-teal-400 mb-0.5">
+              你接入的来源
+            </p>
+            <p className="text-[10px] text-teal-700/80 dark:text-teal-400/70 leading-relaxed">
+              {item.userSourceNote
+                ? item.userSourceNote
+                : '这是你主动接入的信息源，系统会优先纳入观察，但仍会等待多源验证才构成事实依据。'}
+            </p>
+          </div>
+        )}
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5 min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <SourceTierBadge tier={detail.sourcePanel.sourceTier} />
               <span className="text-sm font-medium text-foreground">{detail.sourcePanel.sourceName}</span>
+              <SourceOriginBadge
+                isUserCurated={item.isUserCurated}
+                isOfficial={item.isOfficial}
+                sourceBadgeVariant={item.sourceBadgeVariant}
+              />
             </div>
             <p className="text-[10px] text-muted-foreground">{detail.sourcePanel.tierLabel}</p>
             {localContent?.authorName && (

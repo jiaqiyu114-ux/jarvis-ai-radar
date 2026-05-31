@@ -65,6 +65,12 @@ function mapDbItem(item: DbItemWithSource): InformationItem {
     articleContent:  mapArticleContent(item),
     evidenceProfile: mapEvidenceProfile(item),
     analysisGate:    mapAnalysisGate(item),
+    // Source curation fields (gracefully absent before migration runs)
+    isOfficial:         item.sources?.is_official         ?? false,
+    isUserCurated:      item.sources?.is_user_curated     ?? false,
+    userSourceLabel:    item.sources?.user_source_label   ?? null,
+    userSourceNote:     item.sources?.user_source_note    ?? null,
+    sourceBadgeVariant: item.sources?.source_badge_variant ?? null,
   }
 }
 

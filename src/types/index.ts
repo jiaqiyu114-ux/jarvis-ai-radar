@@ -166,6 +166,12 @@ export interface InformationItem {
   articleContent?: ArticleContent   // populated after content extraction
   evidenceProfile?: EvidenceProfile  // populated after evidence scoring
   analysisGate?:   AnalysisGate     // populated after budget gate run
+  // Source curation (source-curation-v1) — optional for backward compat
+  isOfficial?:         boolean
+  isUserCurated?:      boolean
+  userSourceLabel?:    string | null
+  userSourceNote?:     string | null
+  sourceBadgeVariant?: string | null
 }
 
 export interface MockSource {

@@ -2,9 +2,17 @@ import { supabase, isSupabaseConfigured } from '@/lib/supabase/client'
 import { supabaseServer, isServerSupabaseConfigured } from '@/lib/supabase/server'
 import type { DbItem, DbItemInsert, DbItemScoreUpdate, DbItemStatus, DbSourceTier } from '@/types/database'
 
-/** Items row enriched with source name and tier via JOIN (feed display). */
+/** Items row enriched with source name, tier, and curation flags via JOIN (feed display). */
 export type DbItemWithSource = DbItem & {
-  sources: { name: string; source_tier: DbSourceTier | null } | null
+  sources: {
+    name:                string
+    source_tier:         DbSourceTier | null
+    is_official:         boolean | null
+    is_user_curated:     boolean | null
+    user_source_label:   string | null
+    user_source_note:    string | null
+    source_badge_variant:string | null
+  } | null
 }
 
 /** Items row enriched with full source metadata via JOIN (rule scoring). */
@@ -82,7 +90,7 @@ export async function listItemsWithSource(
     sortByScore = false, sortByTime = 'published_at',
   } = options
 
-  const selectClause = '*, sources!items_source_id_fkey(name, source_tier)'
+  const selectClause = '*, sources!items_source_id_fkey(name, source_tier, is_official, is_user_curated, user_source_label, user_source_note, source_badge_variant)'
 
   let query = supabase
     .from('items')

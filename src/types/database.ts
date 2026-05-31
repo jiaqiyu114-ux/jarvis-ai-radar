@@ -92,26 +92,37 @@ export type DbSource = {
   successful_fetch_count: number
   failed_fetch_count:     number
   health_score:           number
+  // User curation fields (source-curation-v1.sql)
+  is_user_curated:        boolean
+  user_source_label:      string | null
+  user_source_note:       string | null
+  user_source_priority:   number
+  source_badge_variant:   string | null
 }
 
 export type DbSourceInsert = {
-  name:               string
-  url:                string
-  platform?:          string
-  source_tier?:       DbSourceTier
-  base_score?:        number
-  reliability_score?: number
-  category?:          string
-  is_official?:       boolean
-  description?:       string
-  data_origin?:       DataOrigin
+  name:                  string
+  url:                   string
+  platform?:             string
+  source_tier?:          DbSourceTier
+  base_score?:           number
+  reliability_score?:    number
+  category?:             string
+  is_official?:          boolean
+  description?:          string
+  data_origin?:          DataOrigin
+  is_user_curated?:      boolean
+  user_source_label?:    string | null
+  user_source_note?:     string | null
+  user_source_priority?: number
+  source_badge_variant?: string | null
 }
 
 export type DbSourceUpdate = Partial<Omit<DbSourceInsert, 'url'>> & {
-  is_blocked?:        boolean
-  items_today?:       number
-  last_fetched_at?:   string | null
-  data_origin?:       DataOrigin
+  is_blocked?:           boolean
+  items_today?:          number
+  last_fetched_at?:      string | null
+  data_origin?:          DataOrigin
   // RSS Source Health v1
   health_status?:     string | null
   last_fetch_at?:     string | null

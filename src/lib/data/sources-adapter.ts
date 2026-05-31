@@ -58,6 +58,7 @@ export type SourceWithHealth = {
   tier:                 SourceTier
   category:             Category
   isBlocked:            boolean
+  isOfficial:           boolean
   description:          string | null
   itemsToday:           number
   avgScore:             number
@@ -70,12 +71,18 @@ export type SourceWithHealth = {
   lastErrorAt:          string | null
   lastErrorMessage:     string | null
   lastLatencyMs:        number | null
-  // v2 fields
+  // v2 health fields
   lastFetchStatus:      string | null
   lastFetchErrorStage:  string | null
   totalFetchCount:      number
   successfulFetchCount: number
   failedFetchCount:     number
+  // User curation fields (source-curation-v1)
+  isUserCurated:        boolean
+  userSourceLabel:      string | null
+  userSourceNote:       string | null
+  userSourcePriority:   number
+  sourceBadgeVariant:   string | null
 }
 
 function mapDbSourceWithHealth(source: DbSource): SourceWithHealth {
@@ -86,6 +93,12 @@ function mapDbSourceWithHealth(source: DbSource): SourceWithHealth {
     successful_fetch_count?: number | null
     failed_fetch_count?:     number | null
     health_score?:           number | null
+    // Curation fields are optional pre-migration
+    is_user_curated?:        boolean | null
+    user_source_label?:      string | null
+    user_source_note?:       string | null
+    user_source_priority?:   number | null
+    source_badge_variant?:   string | null
   }
   return {
     id:                   source.id,
@@ -95,6 +108,7 @@ function mapDbSourceWithHealth(source: DbSource): SourceWithHealth {
     tier:                 toSourceTier(source.source_tier),
     category:             toCategory(source.category),
     isBlocked:            source.is_blocked,
+    isOfficial:           source.is_official ?? false,
     description:          source.description ?? null,
     itemsToday:           source.items_today,
     avgScore:             source.base_score,
@@ -112,6 +126,11 @@ function mapDbSourceWithHealth(source: DbSource): SourceWithHealth {
     totalFetchCount:      s.total_fetch_count ?? 0,
     successfulFetchCount: s.successful_fetch_count ?? 0,
     failedFetchCount:     s.failed_fetch_count ?? 0,
+    isUserCurated:        s.is_user_curated ?? false,
+    userSourceLabel:      s.user_source_label ?? null,
+    userSourceNote:       s.user_source_note ?? null,
+    userSourcePriority:   s.user_source_priority ?? 0,
+    sourceBadgeVariant:   s.source_badge_variant ?? null,
   }
 }
 
