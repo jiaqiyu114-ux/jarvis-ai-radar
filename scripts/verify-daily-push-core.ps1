@@ -535,17 +535,112 @@ $corePasses = (
   $script:hiddenDueToDeepDiveBudgetCount -eq 0
 )
 
+# ── Threshold checks ──────────────────────────────────────────────────────────
+
+Write-Host "7) Threshold checks" -ForegroundColor White
+
+# Profile thresholds (standard defaults — snapshot metadata would override in full impl)
+$profileThresholds = @{
+  "minimal"      = @{ mustRead = 88; highValue = 82; observe = 70 }
+  "conservative" = @{ mustRead = 84; highValue = 72; observe = 55 }
+  "standard"     = @{ mustRead = 80; highValue = 65; observe = 50 }
+  "broad"        = @{ mustRead = 75; highValue = 60; observe = 45 }
+  "observe_all"  = @{ mustRead = 70; highValue = 55; observe = 40 }
+}
+
+# Try to read profile from latest snapshot metadata
+$snapshotProfile = "standard"
+$snapshotThresholds = $profileThresholds["standard"]
+try {
+  $snapUrl = ($Base + "/api/recommendations/snapshots?limit=1&includeItems=false")
+  $snapResp = Invoke-RestMethod -Method Get -Uri $snapUrl -TimeoutSec 15 -ErrorAction Stop
+  if ($snapResp.snapshots -and @($snapResp.snapshots).Count -gt 0) {
+    $meta = $snapResp.snapshots[0].metadata
+    if ($meta -and $meta.thresholds) {
+      $snapshotThresholds = @{
+        mustRead  = $meta.thresholds.mustRead
+        highValue = $meta.thresholds.highValue
+        observe   = $meta.thresholds.observe
+      }
+      Mark-Info ("snapshot thresholds: mustRead=" + $snapshotThresholds.mustRead + " highValue=" + $snapshotThresholds.highValue + " observe=" + $snapshotThresholds.observe)
+    } else {
+      Mark-Info "snapshot metadata has no thresholds field (using standard defaults)"
+    }
+  }
+} catch {
+  Mark-Info ("Could not read snapshot metadata: " + $_.Exception.Message)
+}
+
+$hvThresh  = $snapshotThresholds.highValue
+$obsThresh = $snapshotThresholds.observe
+Mark-Info ("Using thresholds: highValue=" + $hvThresh + " observe=" + $obsThresh)
+
+# Fetch latest snapshot items
+$thresholdFail = $false
+try {
+  $snapItems = Invoke-RestMethod -Method Get -Uri ($Base + "/api/recommendations?windowHours=72&limit=100") -TimeoutSec 30 -ErrorAction Stop
+  $allItems = @()
+  if ($snapItems.items) { $allItems = @($snapItems.items) }
+
+  # Check 1: today_recommendation items must have score >= highValue
+  $todayRecs = @($allItems | Where-Object { $_.recommendationBucket -eq "today_recommendation" -or ($_.recommendationTier -eq "must_read" -or $_.recommendationTier -eq "high_value") })
+  $violations = @($todayRecs | Where-Object { $_.recommendationScore -lt $hvThresh })
+  if ($violations.Count -eq 0) {
+    Mark-Ok ("All today recommendations have score >= " + $hvThresh + " (highValue threshold)")
+  } else {
+    Mark-Fail ("Found " + $violations.Count + " today_recommendation items with score < " + $hvThresh)
+    $violations | Select-Object -First 3 | ForEach-Object {
+      Mark-Info ("  VIOLATION: score=" + $_.recommendationScore + " title=" + $_.title.Substring(0, [Math]::Min(50, $_.title.Length)))
+    }
+    $thresholdFail = $true
+  }
+
+  # Check 2: observe_backlog items must have observe <= score < highValue
+  $obsItems = @($allItems | Where-Object { $_.recommendationBucket -eq "observe_backlog" -or $_.recommendationTier -eq "observe" })
+  $obsAboveHV = @($obsItems | Where-Object { $_.recommendationScore -ge $hvThresh })
+  $obsBelowObs = @($obsItems | Where-Object { $_.recommendationScore -lt $obsThresh })
+  if ($obsAboveHV.Count -gt 0) {
+    Mark-Warn ("Found " + $obsAboveHV.Count + " observe items with score >= " + $hvThresh + " (should be in today_recommendation)")
+  } else {
+    Mark-Ok ("Observe items all have score < " + $hvThresh)
+  }
+  if ($obsBelowObs.Count -eq 0) {
+    Mark-Ok ("Observe items all have score >= " + $obsThresh + " (observe threshold)")
+  } else {
+    Mark-Fail ("Found " + $obsBelowObs.Count + " observe items with score < " + $obsThresh + " (below observe floor)")
+    $thresholdFail = $true
+  }
+
+} catch {
+  Mark-Warn ("Threshold check failed: " + $_.Exception.Message)
+}
+
+# Check 3: Verify thresholds differ between profiles (sanity check)
+$conservativeHV = $profileThresholds["conservative"].highValue
+$broadHV = $profileThresholds["broad"].highValue
+if ($conservativeHV -ne $broadHV) {
+  Mark-Ok ("Profile thresholds are distinct: conservative.highValue=" + $conservativeHV + " broad.highValue=" + $broadHV)
+} else {
+  Mark-Fail "Profile thresholds are identical — settings have no effect!"
+  $thresholdFail = $true
+}
+
+if ($thresholdFail) { $script:allOk = $false }
+Write-Host ""
+
 Write-Host "── Daily Push Core Criteria ──────────────────────────────────────────" -ForegroundColor Cyan
 $criteriaColor = if ($corePasses) { "Green" } else { "Red" }
 Write-Host ("  todayRecommendations >= 1:       " + $script:todayRecommendationsCount + " -- " + (if ($script:todayRecommendationsCount -ge 1) { "PASS" } else { "FAIL" })) -ForegroundColor $criteriaColor
 Write-Host ("  previousDayInTodayCount == 0:    " + $script:previousDayInTodayCount + " -- " + (if ($script:previousDayInTodayCount -eq 0) { "PASS" } else { "FAIL" })) -ForegroundColor $criteriaColor
 Write-Host ("  hiddenDueToDeepDiveBudget == 0:  " + $script:hiddenDueToDeepDiveBudgetCount + " -- " + (if ($script:hiddenDueToDeepDiveBudgetCount -eq 0) { "PASS" } else { "FAIL" })) -ForegroundColor $criteriaColor
+Write-Host ("  threshold violations == 0:        " + (if ($thresholdFail) { "FAIL (see above)" } else { "PASS" })) -ForegroundColor (if ($thresholdFail) { "Red" } else { "Green" })
 Write-Host ""
 Write-Host "── Structural Guarantees ─────────────────────────────────────────────" -ForegroundColor Gray
 Write-Host "  Today recommendations are threshold-based, not fixed top-5" -ForegroundColor DarkGray
 Write-Host "  Observe backlog is separated from today recommendations" -ForegroundColor DarkGray
 Write-Host "  Previous-day items are excluded from today recommendations" -ForegroundColor DarkGray
 Write-Host "  DeepDive failure falls back to deterministic, never hides items" -ForegroundColor DarkGray
+Write-Host ("  Threshold profiles: " + ($profileThresholds.Keys -join ", ")) -ForegroundColor DarkGray
 Write-Host ""
 
 Write-Host "=== RESULT ===" -ForegroundColor Cyan

@@ -1,10 +1,12 @@
 export const dynamic = 'force-dynamic'
 
 import Link from "next/link"
+import { cookies } from "next/headers"
 import { AppShell } from "@/components/layout/app-shell"
 import { TodayRecommendationCard } from "./_today-recommendation-card"
 import { EngineRecommendationCard } from "./_engine-recommendation-card"
 import { RefreshRecommendationsButton } from "./_refresh-button"
+import { ProfileSync } from "./_profile-sync"
 import { listEventClusters, type EventClusterListItem } from "@/lib/db/event-clusters"
 import { getLatestDailyRecommendationSnapshot } from "@/lib/data/daily-recommendation-snapshot"
 import { getLatestRecommendationSnapshot } from "@/lib/db/recommendation-snapshots"
@@ -19,6 +21,12 @@ import {
   getPipelineAutomationStatus,
 } from "@/lib/recommendations/pipeline-automation"
 import { todayKey, JARVIS_TIMEZONE } from "@/lib/recommendations/daily-gate"
+import {
+  PROFILE_COOKIE,
+  PROFILE_PRESETS,
+  getProfileThresholds,
+  DEFAULT_PROFILE_ID,
+} from "@/lib/recommendations/recommendation-thresholds"
 import { cn } from "@/lib/utils"
 import type { RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import type { DailyRecommendationSnapshotItem } from "@/lib/data/daily-recommendation-snapshot"
@@ -184,6 +192,12 @@ function timeAgo(iso: string | null | undefined): string {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default async function DashboardPage() {
+  // Read current profile from cookie (set by settings page after save)
+  const cookieStore = await cookies()
+  const profileId = cookieStore.get(PROFILE_COOKIE)?.value ?? DEFAULT_PROFILE_ID
+  const thresholds = getProfileThresholds(profileId)
+  const activePreset = PROFILE_PRESETS.find(p => p.id === profileId) ?? PROFILE_PRESETS[2]
+
   const [engineSnapshot, legacySnapshot, latestRun, eventClustersResult, coverage, automationStatus] =
     await Promise.all([
       getLatestRecommendationSnapshot().catch(() => null),
@@ -215,15 +229,48 @@ export default async function DashboardPage() {
   const hasLegacySnapshot = legacySnapshot.hasSnapshot
   const currentDateKey    = todayKey(JARVIS_TIMEZONE)
 
-  const engineItems        = engineSnapshot?.items ?? []
-  const engineMustRead     = engineItems.filter(i => i.recommendationTier === 'must_read')
-  const engineHighValue    = engineItems.filter(i => i.recommendationTier === 'high_value')
-  const engineObserveBacklog = engineItems.filter(
-    i => i.recommendationTier === 'observe' && i.recommendationBucket === 'observe_backlog',
+  const engineItems = engineSnapshot?.items ?? []
+
+  // Re-classify items at display time based on the CURRENT profile's thresholds.
+  // Snapshot tiers were set when snapshot was created (possibly with a different profile).
+  // We re-filter so that items below the current highValue threshold are moved to observe.
+  const isToday = (i: RecommendedItem) =>
+    i.recommendationBucket === 'today_recommendation' || i.recommendationBucket == null
+
+  // Today's recommendations: must pass both today gate AND current highValue threshold
+  const engineTodayAll = engineItems.filter(i =>
+    isToday(i) &&
+    (i.recommendationTier === 'must_read' || i.recommendationTier === 'high_value') &&
+    i.recommendationScore >= thresholds.highValue,
   )
-  const engineObserve = engineItems.filter(
-    i => i.recommendationTier === 'observe' && i.recommendationBucket !== 'observe_backlog',
+  const engineMustRead  = engineTodayAll.filter(i => i.recommendationScore >= thresholds.mustRead)
+  const engineHighValue = engineTodayAll.filter(i =>
+    i.recommendationScore >= thresholds.highValue && i.recommendationScore < thresholds.mustRead,
   )
+
+  // Observe backlog: either originally backlog, or today items demoted by threshold re-filter,
+  // or genuine observe-tier items — all must be >= observe threshold
+  const demoterToObserve = engineItems.filter(i =>
+    isToday(i) &&
+    (i.recommendationTier === 'must_read' || i.recommendationTier === 'high_value') &&
+    i.recommendationScore >= thresholds.observe &&
+    i.recommendationScore < thresholds.highValue,
+  )
+  const engineObserveBacklog = [
+    ...engineItems.filter(i =>
+      i.recommendationTier === 'observe' &&
+      i.recommendationBucket === 'observe_backlog' &&
+      i.recommendationScore >= thresholds.observe,
+    ),
+    ...demoterToObserve,
+  ]
+  const engineObserve = engineItems.filter(i =>
+    i.recommendationTier === 'observe' &&
+    i.recommendationBucket !== 'observe_backlog' &&
+    i.recommendationScore >= thresholds.observe &&
+    i.recommendationScore < thresholds.highValue,
+  )
+
   const todayMRCount = engineMustRead.length
   const todayHVCount = engineHighValue.length
   const todayTotal   = todayMRCount + todayHVCount
@@ -249,7 +296,7 @@ export default async function DashboardPage() {
   if (todayTotal > 0) {
     headerSubtitle = `今天筛出 ${todayTotal} 条重点信息，按重要程度排序。全量捕捉请看「全量流」。`
   } else if (hasEngineSnapshot) {
-    headerSubtitle = `今日暂无新推荐。系统正在持续抓取，可查看下方观察榜或稍后刷新。`
+    headerSubtitle = `今日暂无新推荐（当前档位：${activePreset.label}，推荐线 ${thresholds.highValue} 分）。可查看近期观察。`
   } else {
     headerSubtitle = '点击「刷新推荐」开始生成今日推荐。'
   }
@@ -257,6 +304,12 @@ export default async function DashboardPage() {
   return (
     <AppShell topSignal={topSignal}>
       <div className="max-w-[1280px] p-6 md:p-8">
+
+        {/* Auto-refresh if profile changed after snapshot */}
+        <ProfileSync
+          snapshotGeneratedAt={engineSnapshot?.generated_at ?? null}
+          profileId={profileId}
+        />
 
         {/* ── Header ── */}
         <header className="mb-5">
@@ -267,6 +320,9 @@ export default async function DashboardPage() {
               <p className="page-subtitle mt-1.5 max-w-[520px]">{headerSubtitle}</p>
             </div>
             <div className="flex items-center gap-2 pt-1">
+              <span className="text-[10px] text-muted-foreground/50 border border-border/50 rounded px-2 py-1">
+                {activePreset.label}
+              </span>
               <RefreshRecommendationsButton />
             </div>
           </div>
@@ -307,17 +363,19 @@ export default async function DashboardPage() {
             {/* Empty state */}
             {hasEngineSnapshot && todayTotal === 0 && (
               <div className="mb-3 rounded-lg border border-border bg-muted/15 px-4 py-5 space-y-2">
-                <p className="text-sm font-medium text-muted-foreground">今日暂无新推荐</p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  今日暂无新推荐（档位：{activePreset.label}，推荐线 {thresholds.highValue} 分）
+                </p>
                 <div className="text-[11px] text-muted-foreground/70 space-y-1">
                   {capturedTotal === 0 && <p>· 快照无捕获信息，请点击「刷新推荐」触发抓取。</p>}
-                  {capturedTotal > 0 && engineObserveBacklog.length > 0 && (
-                    <p>· 观察榜有 {engineObserveBacklog.length} 条近期高分信息，见下方。</p>
+                  {capturedTotal > 0 && demoterToObserve.length > 0 && (
+                    <p>· 有 {demoterToObserve.length} 条信息接近推荐线但未达到 {thresholds.highValue} 分，已进入近期观察。</p>
                   )}
-                  {engineObserve.length > 0 && (
-                    <p>· 另有 {engineObserve.length} 条低于推荐阈值，可在全量流查看。</p>
+                  {engineObserveBacklog.length > 0 && (
+                    <p>· 近期观察有 {engineObserveBacklog.length} 条，见下方。</p>
                   )}
                 </div>
-                <Link href="/feed" className="text-[10px] text-primary/70 hover:text-primary underline">查看全量流 →</Link>
+                <Link href="/settings" className="text-[10px] text-primary/70 hover:text-primary underline">调整推荐强度 →</Link>
               </div>
             )}
 
@@ -359,14 +417,16 @@ export default async function DashboardPage() {
               )}
             </div>
 
-            {/* Observe backlog — clearly separated */}
+            {/* Observe backlog — clearly separated from today_recommendation */}
             {engineObserveBacklog.length > 0 && (
               <div className="mt-5">
-                <div className="mb-1.5 flex items-center gap-2">
+                <div className="mb-1.5 flex items-center gap-2 flex-wrap">
                   <div className="h-1.5 w-1.5 rounded-full bg-sky-500/50 shrink-0" />
-                  <h2 className="section-title text-sky-600/70 dark:text-sky-400/70">观察榜</h2>
+                  <h2 className="section-title text-sky-600/70 dark:text-sky-400/70">近期观察</h2>
                   <span className="meta-text">{engineObserveBacklog.length} 条</span>
-                  <span className="text-[10px] text-muted-foreground/40">· 近 72 小时高分 · 非今日内容</span>
+                  <span className="text-[10px] text-muted-foreground/40">
+                    · 分数 {thresholds.observe}–{thresholds.highValue - 1} · 未达今日推荐线 · 供参考
+                  </span>
                   {engineObserveBacklog.length > 30 && (
                     <span className="ml-auto text-[10px] text-muted-foreground/40">显示前 30 条</span>
                   )}

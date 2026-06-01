@@ -1,88 +1,53 @@
 "use client"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
 import { AppShell } from "@/components/layout/app-shell"
 import { ThemeToggle } from "@/components/theme/theme-toggle"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
+import {
+  PROFILE_PRESETS,
+  DEFAULT_PROFILE_ID,
+  getProfileThresholds,
+  SETTINGS_STORAGE_KEY,
+  PROFILE_COOKIE,
+  PROFILE_UPDATED_AT_COOKIE,
+  type ProfileId,
+} from "@/lib/recommendations/recommendation-thresholds"
 
-// ── Recommendation intensity presets ──────────────────────────────────────────
-
-type PresetId = 'minimal' | 'conservative' | 'standard' | 'relaxed' | 'all'
-
-type Preset = {
-  id:       PresetId
-  label:    string
-  desc:     string
-  daily:    string    // expected daily count estimate
-  thresholds: {
-    mustRead:   number  // maps to engine must_read tier threshold
-    highValue:  number  // maps to engine high_value tier threshold
-    observeMin: number  // maps to observe tier minimum
-  }
-}
-
-const PRESETS: Preset[] = [
-  {
-    id: 'minimal',
-    label: '极简',
-    desc: '只推最重要的内容',
-    daily: '每日约 1-3 条',
-    thresholds: { mustRead: 88, highValue: 82, observeMin: 70 },
-  },
-  {
-    id: 'conservative',
-    label: '保守',
-    desc: '少量高确信内容',
-    daily: '每日约 3-8 条',
-    thresholds: { mustRead: 84, highValue: 72, observeMin: 55 },
-  },
-  {
-    id: 'standard',
-    label: '标准',
-    desc: '平衡质量和覆盖',
-    daily: '每日约 5-20 条',
-    thresholds: { mustRead: 80, highValue: 65, observeMin: 50 },
-  },
-  {
-    id: 'relaxed',
-    label: '宽松',
-    desc: '多看一些潜在重要信息',
-    daily: '每日约 10-30 条',
-    thresholds: { mustRead: 75, highValue: 60, observeMin: 45 },
-  },
-  {
-    id: 'all',
-    label: '全量观察',
-    desc: '尽量多推，仍过滤垃圾',
-    daily: '每日约 20+ 条',
-    thresholds: { mustRead: 70, highValue: 55, observeMin: 40 },
-  },
-]
-
-const SETTINGS_KEY = 'jarvis_settings_v1'
+// ── Persistence ────────────────────────────────────────────────────────────────
 
 type SavedSettings = {
-  presetId: PresetId
-  autoScore: boolean
-  interests: string
-  blocklist: string
+  profileId:              ProfileId
+  autoScore:              boolean
+  interests:              string
+  blocklist:              string
+  profileUpdatedAt?:      string  // ISO timestamp when profile last changed
 }
 
 function loadSettings(): SavedSettings {
-  if (typeof window === 'undefined') return { presetId: 'standard', autoScore: true, interests: '', blocklist: '' }
+  if (typeof window === 'undefined') {
+    return { profileId: DEFAULT_PROFILE_ID, autoScore: true, interests: '', blocklist: '' }
+  }
   try {
-    const raw = localStorage.getItem(SETTINGS_KEY)
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY)
     if (raw) return JSON.parse(raw) as SavedSettings
   } catch {}
-  return { presetId: 'standard', autoScore: true, interests: '大语言模型, AI工具, 内容创作, 独立开发', blocklist: '' }
+  return { profileId: DEFAULT_PROFILE_ID, autoScore: true, interests: '大语言模型, AI工具, 内容创作', blocklist: '' }
 }
 
-function saveSettings(s: SavedSettings) {
-  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)) } catch {}
+function persistSettings(s: SavedSettings) {
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(s))
+    // Also write cookies so the server-rendered dashboard can read the profile
+    const exp = '; max-age=31536000; path=/; SameSite=Strict'
+    document.cookie = `${PROFILE_COOKIE}=${encodeURIComponent(s.profileId)}${exp}`
+    if (s.profileUpdatedAt) {
+      document.cookie = `${PROFILE_UPDATED_AT_COOKIE}=${encodeURIComponent(s.profileUpdatedAt)}${exp}`
+    }
+  } catch {}
 }
 
 // ── Layout helpers ────────────────────────────────────────────────────────────
@@ -119,44 +84,38 @@ function Collapsible({ title, children }: { title: string; children: React.React
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
-  const router = useRouter()
-  // Lazy initializers read localStorage only on first render (client-side).
-  // During SSR the `typeof window` guard returns the default value.
-  const [savedPresetId, setSavedPresetId] = useState<PresetId>(() => loadSettings().presetId)
-  const [presetId, setPresetId]           = useState<PresetId>(() => loadSettings().presetId)
-  const [autoScore, setAutoScore]         = useState(() => loadSettings().autoScore)
-  const [interests, setInterests]         = useState(() => loadSettings().interests)
-  const [blocklist, setBlocklist]         = useState(() => loadSettings().blocklist)
-  const [saveMsg, setSaveMsg]             = useState('')
-  const [refreshing, setRefreshing]       = useState(false)
+  const [profileId, setProfileId]   = useState<ProfileId>(() => loadSettings().profileId)
+  const [autoScore, setAutoScore]   = useState(() => loadSettings().autoScore)
+  const [interests, setInterests]   = useState(() => loadSettings().interests)
+  const [blocklist, setBlocklist]   = useState(() => loadSettings().blocklist)
+  const [saveMsg, setSaveMsg]       = useState<string | null>(null)
 
-  async function handleSave() {
-    const s: SavedSettings = { presetId, autoScore, interests, blocklist }
-    saveSettings(s)
-    setSavedPresetId(presetId)
-    setSaveMsg('保存中...')
-    setRefreshing(true)
-
-    // Trigger a recommendation refresh with the new thresholds so the dashboard
-    // immediately reflects the intensity change.
-    const preset = PRESETS.find(p => p.id === presetId) ?? PRESETS[2]
-    const t = preset.thresholds
-    try {
-      await fetch(
-        `/api/recommendations/refresh?deepDive=deterministic&mustRead=${t.mustRead}&highValue=${t.highValue}&observe=${t.observeMin}`,
-        { method: 'POST' },
-      )
-      setSaveMsg('已保存，推荐已更新 ✓')
-      router.refresh()  // reload dashboard data without full page reload
-    } catch {
-      setSaveMsg('已保存（推荐刷新失败，下次打开自动更新）')
-    } finally {
-      setRefreshing(false)
-    }
-    setTimeout(() => setSaveMsg(''), 2000)
+  /** Auto-save when user selects a profile — no button required. */
+  function handleProfileChange(id: ProfileId) {
+    setProfileId(id)
+    const now = new Date().toISOString()
+    const s: SavedSettings = { profileId: id, autoScore, interests, blocklist, profileUpdatedAt: now }
+    persistSettings(s)
+    setSaveMsg('已自动保存，回到今日雷达后自动生效')
+    setTimeout(() => setSaveMsg(null), 3000)
   }
 
-  const activePreset = PRESETS.find(p => p.id === presetId) ?? PRESETS[2]
+  /** Save other settings (interests, blocklist, autoScore). */
+  function handleMiscSave() {
+    const s: SavedSettings = {
+      profileId,
+      autoScore,
+      interests,
+      blocklist,
+      profileUpdatedAt: loadSettings().profileUpdatedAt,
+    }
+    persistSettings(s)
+    setSaveMsg('其他设置已保存')
+    setTimeout(() => setSaveMsg(null), 2000)
+  }
+
+  const activePreset   = PROFILE_PRESETS.find(p => p.id === profileId) ?? PROFILE_PRESETS[2]
+  const activeThresholds = getProfileThresholds(profileId)
 
   return (
     <AppShell>
@@ -181,17 +140,20 @@ export default function SettingsPage() {
 
         <Separator />
 
-        {/* ── Recommendation intensity ── */}
-        <Section title="推荐强度" desc="控制每日推荐的松紧程度，影响今日雷达的推荐数量">
+        {/* ── Recommendation intensity — auto-save on click ── */}
+        <Section
+          title="推荐强度"
+          desc="选择你每天想看的信息密度。进入「今日推荐」的内容必须达到当前档位阈值；分数不够但有观察价值的内容会进入「近期观察」。"
+        >
           <div className="space-y-2">
-            {PRESETS.map(preset => (
+            {PROFILE_PRESETS.map(preset => (
               <button
                 key={preset.id}
                 type="button"
-                onClick={() => setPresetId(preset.id)}
+                onClick={() => handleProfileChange(preset.id)}
                 className={cn(
                   "w-full text-left px-4 py-3 rounded-lg border transition-colors",
-                  presetId === preset.id
+                  profileId === preset.id
                     ? "border-primary bg-primary/8 text-foreground"
                     : "border-border bg-card text-muted-foreground hover:border-border/80 hover:text-foreground",
                 )}
@@ -200,7 +162,9 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-3">
                     <span className={cn(
                       "w-3 h-3 rounded-full shrink-0 border-2",
-                      presetId === preset.id ? "border-primary bg-primary" : "border-muted-foreground/40 bg-transparent",
+                      profileId === preset.id
+                        ? "border-primary bg-primary"
+                        : "border-muted-foreground/40 bg-transparent",
                     )} />
                     <div>
                       <span className="text-sm font-medium">{preset.label}</span>
@@ -213,26 +177,29 @@ export default function SettingsPage() {
             ))}
           </div>
 
-          {savedPresetId !== presetId && (
-            <p className="text-[11px] text-warning/80">· 当前设置未保存</p>
+          {/* Auto-save status */}
+          {saveMsg && (
+            <p className="text-[11px] text-success">{saveMsg}</p>
           )}
 
-          {/* Advanced: show internal thresholds */}
-          <Collapsible title="高级：阈值详情（当前档位）">
+          {/* Advanced thresholds */}
+          <Collapsible title={`高级：当前档位「${activePreset.label}」的阈值详情`}>
             <div className="grid grid-cols-3 gap-3 text-xs">
               {[
-                { label: 'Must Read 阈值', val: activePreset.thresholds.mustRead },
-                { label: 'High Value 阈值', val: activePreset.thresholds.highValue },
-                { label: 'Observe 最低分', val: activePreset.thresholds.observeMin },
+                { label: '重点推荐门槛', val: activeThresholds.mustRead },
+                { label: '今日推荐门槛', val: activeThresholds.highValue },
+                { label: '近期观察门槛', val: activeThresholds.observe },
               ].map(({ label, val }) => (
-                <div key={label} className="text-center">
-                  <p className="text-muted-foreground text-[10px]">{label}</p>
-                  <p className="font-mono font-bold text-base text-foreground">{val}</p>
+                <div key={label} className="text-center p-2 rounded border border-border">
+                  <p className="text-muted-foreground text-[10px] mb-1">{label}</p>
+                  <p className="font-mono font-bold text-lg text-foreground">{val}</p>
                 </div>
               ))}
             </div>
-            <p className="text-[10px] text-muted-foreground/60 mt-1">
-              TODO: 下一版本将这些阈值同步到推荐引擎，当前仅展示。
+            <p className="text-[10px] text-muted-foreground/60">
+              分数 ≥ {activeThresholds.highValue}：进入今日推荐 ·{' '}
+              {activeThresholds.observe}–{activeThresholds.highValue - 1}：进入近期观察 ·{' '}
+              低于 {activeThresholds.observe}：不显示
             </p>
           </Collapsible>
         </Section>
@@ -247,7 +214,7 @@ export default function SettingsPage() {
                 <p className="text-sm font-medium text-foreground">自动评分</p>
                 <p className="text-xs text-muted-foreground">抓取后自动调用模型打分</p>
               </div>
-              <Switch checked={autoScore} onCheckedChange={setAutoScore} />
+              <Switch checked={autoScore} onCheckedChange={v => { setAutoScore(v); handleMiscSave() }} />
             </div>
             <Separator />
             <div className="space-y-1.5">
@@ -267,6 +234,7 @@ export default function SettingsPage() {
               <Input
                 value={interests}
                 onChange={e => setInterests(e.target.value)}
+                onBlur={handleMiscSave}
                 placeholder="大语言模型, AI工具, 独立开发..."
                 className="text-xs h-8"
               />
@@ -276,30 +244,13 @@ export default function SettingsPage() {
               <Input
                 value={blocklist}
                 onChange={e => setBlocklist(e.target.value)}
+                onBlur={handleMiscSave}
                 placeholder="逗号分隔，匹配到的内容将被降权..."
                 className="text-xs h-8"
               />
             </div>
           </div>
         </Section>
-
-        <Separator />
-
-        {/* ── Save button ── */}
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={refreshing}
-            className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-60 transition-colors"
-          >
-            {refreshing ? '刷新中...' : '保存并刷新推荐'}
-          </button>
-          {saveMsg && <span className="text-xs text-success">{saveMsg}</span>}
-          <span className="text-[10px] text-muted-foreground/50 ml-auto">
-            保存后自动重新生成今日推荐
-          </span>
-        </div>
 
       </div>
     </AppShell>

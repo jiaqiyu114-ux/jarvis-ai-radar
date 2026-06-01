@@ -224,6 +224,7 @@ export async function POST(req: NextRequest) {
           deepDiveStats,
           relatedSignals: relatedStats,
           dailyGate: gateStats,
+          thresholds,   // store the thresholds used for this snapshot
         },
       },
       snapshotItemsFinal,
