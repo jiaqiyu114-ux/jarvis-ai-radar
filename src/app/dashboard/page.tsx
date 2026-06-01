@@ -318,7 +318,14 @@ export default async function DashboardPage() {
   const engineItems = engineSnapshot?.items ?? []
   const engineMustRead  = engineItems.filter(i => i.recommendationTier === 'must_read')
   const engineHighValue = engineItems.filter(i => i.recommendationTier === 'high_value')
-  const engineObserve   = engineItems.filter(i => i.recommendationTier === 'observe')
+  // observeBacklog: items demoted from must_read/high_value by daily gate
+  const engineObserveBacklog = engineItems.filter(
+    i => i.recommendationTier === 'observe' && i.recommendationBucket === 'observe_backlog',
+  )
+  // Genuine observe-tier (not demoted by gate)
+  const engineObserve = engineItems.filter(
+    i => i.recommendationTier === 'observe' && i.recommendationBucket !== 'observe_backlog',
+  )
 
   // Legacy snapshot items
   const snapshotItems = hasLegacySnapshot ? legacySnapshot.items : []
@@ -565,11 +572,19 @@ export default async function DashboardPage() {
               </span>
             </div>
 
-            {/* Low today-count notice — shown when daily gate left fewer than 5 today-items */}
-            {hasEngineSnapshot && engineMustRead.length + engineHighValue.length < 5 &&
-             engineObserve.length > 0 && (
+            {/* Zero today-recommendation notice */}
+            {hasEngineSnapshot && engineMustRead.length + engineHighValue.length === 0 && (
+              <div className="mb-2 rounded border border-warning/25 bg-warning/5 px-3 py-2 text-[11px] text-warning/80">
+                今日暂无达到阈值的新推荐。可查看观察榜或{' '}
+                <a href="/feed" className="underline hover:text-warning">全量流</a>。
+              </div>
+            )}
+
+            {/* Low today-count notice */}
+            {hasEngineSnapshot && engineMustRead.length + engineHighValue.length > 0 &&
+             (engineObserveBacklog.length > 0 || engineObserve.length > 0) && (
               <div className="mb-2 rounded border border-border/60 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground/70">
-                今日新推荐较少，部分近期高分但未推送信息已进入观察榜（Observe）。
+                今日推荐已按阈值筛选，近期高分但未推送信息进入观察榜。
               </div>
             )}
 
@@ -582,6 +597,10 @@ export default async function DashboardPage() {
                     empty="今日暂无新的 high_value 推荐" />
                   <EngineSectionBlock title="Observe" items={engineObserve}
                     empty="当前无 observe 候选" />
+                  {engineObserveBacklog.length > 0 && (
+                    <EngineSectionBlock title="观察榜 · 近期回溯" items={engineObserveBacklog}
+                      empty="" />
+                  )}
                 </>
               ) : hasLegacySnapshot ? (
                 <>
