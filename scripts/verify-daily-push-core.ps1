@@ -516,6 +516,41 @@ if ($MaxSources -le 5) {
   Write-Host ""
 }
 
+# ── Score distribution (from recommendations API) ─────────────────────────────
+Write-Host "── Score Distribution ────────────────────────────────────────────────" -ForegroundColor Cyan
+try {
+  $distResp = Invoke-RestMethod -Method Get -Uri ($Base + "/api/recommendations?windowHours=72&limit=200") -TimeoutSec 20 -ErrorAction Stop
+  $distItems = @()
+  if ($distResp.items) { $distItems = @($distResp.items) }
+
+  $dist80p   = @($distItems | Where-Object { $_.recommendationScore -ge 80 }).Count
+  $dist72_79 = @($distItems | Where-Object { $_.recommendationScore -ge 72 -and $_.recommendationScore -lt 80 }).Count
+  $dist65_71 = @($distItems | Where-Object { $_.recommendationScore -ge 65 -and $_.recommendationScore -lt 72 }).Count
+  $dist55_64 = @($distItems | Where-Object { $_.recommendationScore -ge 55 -and $_.recommendationScore -lt 65 }).Count
+  $dist50_54 = @($distItems | Where-Object { $_.recommendationScore -ge 50 -and $_.recommendationScore -lt 55 }).Count
+  $distBelow = @($distItems | Where-Object { $_.recommendationScore -lt 50 }).Count
+
+  Write-Host ("  80+    : " + $dist80p   + " 条") -ForegroundColor Green
+  Write-Host ("  72-79  : " + $dist72_79 + " 条") -ForegroundColor Cyan
+  Write-Host ("  65-71  : " + $dist65_71 + " 条") -ForegroundColor Cyan
+  Write-Host ("  55-64  : " + $dist55_64 + " 条") -ForegroundColor Gray
+  Write-Host ("  50-54  : " + $dist50_54 + " 条") -ForegroundColor Gray
+  Write-Host ("  <50    : " + $distBelow + " 条") -ForegroundColor DarkGray
+  Write-Host ""
+
+  # Explain gap if exists
+  $todayHV = $snapshotThresholds.highValue
+  $gapRange = "(" + $dist55_64 + " 条在 55-" + ($todayHV - 1) + " 区间，进入近期观察)"
+  if ($todayHV -gt 65) {
+    Write-Host ("  Note: today_recommendation threshold=" + $todayHV + ". Items 65-" + ($todayHV-1) + " go to observe_backlog.") -ForegroundColor Gray
+    Write-Host ("  Gap between today and observe: " + $gapRange) -ForegroundColor DarkGray
+  }
+  Write-Host "  Source tier (S/A/B/C) = source trust rating, NOT content score." -ForegroundColor DarkGray
+  Write-Host ""
+} catch {
+  Mark-Warn ("Score distribution check failed: " + $_.Exception.Message)
+}
+
 if ($warnings.Count -gt 0) {
   Write-Host "── Warnings ──────────────────────────────────────────────────────────" -ForegroundColor Yellow
   $warnings | ForEach-Object { Write-Host ("  * " + $_) -ForegroundColor Yellow }

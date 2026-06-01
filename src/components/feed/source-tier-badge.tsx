@@ -1,7 +1,6 @@
 import { cn } from "@/lib/utils"
 
 interface SourceTierBadgeProps {
-  // Accept any runtime value — real DB rows may have null/undefined tier
   tier: string | null | undefined
 }
 
@@ -24,11 +23,10 @@ const tierConfig: Record<string, { label: string; className: string }> = {
   },
 }
 
-/** Normalise any runtime value to a valid SourceTier key. */
 function normalizeSourceTier(value: string | null | undefined): 'S' | 'A' | 'B' | 'C' {
   const t = String(value ?? '').trim().toUpperCase()
   if (t === 'S' || t === 'A' || t === 'B' || t === 'C') return t
-  return 'C'   // default for null / unknown / D
+  return 'C'
 }
 
 export function SourceTierBadge({ tier }: SourceTierBadgeProps) {
@@ -36,9 +34,10 @@ export function SourceTierBadge({ tier }: SourceTierBadgeProps) {
   const { label, className } = tierConfig[safeTier]
   return (
     <span
+      title={`信源等级 ${safeTier}（这是信源可信度评级，不是内容评分）`}
       className={cn(
-        "inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold border shrink-0",
-        className
+        "inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold border shrink-0 cursor-help",
+        className,
       )}
     >
       {label}

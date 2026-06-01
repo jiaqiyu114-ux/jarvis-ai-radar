@@ -118,8 +118,11 @@ export function EngineRecommendationCard({ item, enableDetail = false }: EngineR
     <>
       {/* Title row */}
       <div className="flex items-start gap-2">
-        <span className={cn("text-[10px] font-semibold shrink-0 mt-0.5", tierText)}>
-          {item.sourceTier}
+        <span
+          className={cn("text-[10px] font-medium shrink-0 mt-0.5 leading-none", tierText)}
+          title="信源等级（信源可信度评级，不是内容评分）"
+        >
+          信源{item.sourceTier}
         </span>
         <h2 className="min-w-0 flex-1 text-sm font-semibold leading-snug text-foreground group-hover:text-primary transition-colors line-clamp-2 text-left">
           {title}

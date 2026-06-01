@@ -275,6 +275,22 @@ export default async function DashboardPage() {
   const todayHVCount = engineHighValue.length
   const todayTotal   = todayMRCount + todayHVCount
 
+  // Score distribution across all engine candidates (for explaining gaps)
+  const scoreDist = hasEngineSnapshot ? {
+    '80+':   engineItems.filter(i => i.recommendationScore >= 80).length,
+    '72–79': engineItems.filter(i => i.recommendationScore >= 72 && i.recommendationScore < 80).length,
+    '65–71': engineItems.filter(i => i.recommendationScore >= 65 && i.recommendationScore < 72).length,
+    '55–64': engineItems.filter(i => i.recommendationScore >= 55 && i.recommendationScore < 65).length,
+    '50–54': engineItems.filter(i => i.recommendationScore >= 50 && i.recommendationScore < 55).length,
+    '<50':   engineItems.filter(i => i.recommendationScore < 50).length,
+  } : null
+
+  // Items close to threshold but below — used in aside as candidate reference
+  const candidateRef = engineItems
+    .filter(i => i.recommendationScore >= thresholds.observe && i.recommendationScore < thresholds.highValue)
+    .sort((a, b) => b.recommendationScore - a.recommendationScore)
+    .slice(0, 6)
+
   const snapshotItems = hasLegacySnapshot ? legacySnapshot.items : []
   const snapshotAgeMs = engineSnapshot
     ? new Date().getTime() - new Date(engineSnapshot.generated_at).getTime()
@@ -353,11 +369,32 @@ export default async function DashboardPage() {
         <div className="grid grid-cols-4 gap-5">
           <main className="col-span-3">
 
-            {/* Section label */}
-            <div className="mb-2 flex items-center gap-2">
-              <div className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
-              <h2 className="section-title text-primary/80">今日推荐</h2>
-              {todayTotal > 0 && <span className="meta-text">{todayTotal} 条</span>}
+            {/* Section label + score distribution */}
+            <div className="mb-2 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <div className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
+                <h2 className="section-title text-primary/80">今日推荐</h2>
+                {todayTotal > 0 && <span className="meta-text">{todayTotal} 条</span>}
+                <span className="text-[10px] text-muted-foreground/40">· 分数 ≥ {thresholds.highValue}</span>
+              </div>
+              {/* Score distribution — explains gaps between today and observe */}
+              {scoreDist && (
+                <div className="flex items-center gap-0.5 flex-wrap text-[10px] text-muted-foreground/50">
+                  <span className="mr-1 text-muted-foreground/40">分数分布：</span>
+                  {(Object.entries(scoreDist) as [string, number][]).map(([range, count], i) => (
+                    <span key={range} className={cn(
+                      "px-1.5 py-0.5 rounded",
+                      range === '80+' && count > 0 ? "text-success/70 bg-success/8" :
+                      range.startsWith('72') && count > 0 ? "text-primary/70 bg-primary/8" :
+                      range.startsWith('65') && count > 0 ? "text-primary/50 bg-primary/5" :
+                      "text-muted-foreground/40",
+                    )}>
+                      {i > 0 && <span className="text-muted-foreground/20 mr-0.5">|</span>}
+                      {range} {count}条
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Empty state */}
@@ -448,18 +485,22 @@ export default async function DashboardPage() {
           {/* ── Aside ── */}
           <aside className="col-span-1 space-y-4">
 
-            {/* Candidate reference — low visual weight, collapsed if many today items */}
-            {snapshotItems.length > 0 && todayTotal < 5 && (
-              <section className="border border-border/60 rounded-lg bg-card/80 px-3 py-2.5">
-                <h2 className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider mb-1">候选参考</h2>
-                <p className="text-[10px] text-muted-foreground/50 mb-2">未进入今日推荐，仅供排查。</p>
+            {/* Candidate reference — items below today threshold, clearly labeled */}
+            {candidateRef.length > 0 && (
+              <section className="border border-border rounded-lg bg-card px-3 py-2.5">
+                <h2 className="text-[10px] font-semibold text-foreground/70 uppercase tracking-wider mb-0.5">候选参考</h2>
+                <p className="text-[10px] text-muted-foreground mb-2">
+                  未进入今日推荐（分数 {thresholds.observe}–{thresholds.highValue - 1}），仅供排查和比对。
+                </p>
                 <div className="space-y-0">
-                  {[...snapshotItems].sort((a, b) => b.finalScore - a.finalScore).slice(0, 5).map(item => (
-                    <div key={item.id} className="border-b border-border/40 last:border-0 py-2 flex items-start gap-2">
-                      <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0 pt-0.5 w-6 text-right">{item.finalScore}</span>
+                  {candidateRef.map(item => (
+                    <div key={item.id} className="border-b border-border/50 last:border-0 py-2 flex items-start gap-2">
+                      <span className="text-[10px] font-mono font-semibold text-foreground/60 shrink-0 pt-0.5 w-7 text-right">
+                        {item.recommendationScore}
+                      </span>
                       <div className="min-w-0">
-                        <p className="text-[11px] text-muted-foreground/70 line-clamp-2 leading-snug">{item.title}</p>
-                        <p className="text-[10px] text-muted-foreground/40 mt-0.5">{item.source}</p>
+                        <p className="text-[11px] text-foreground/80 line-clamp-2 leading-snug">{item.title}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">{item.source}</p>
                       </div>
                     </div>
                   ))}
