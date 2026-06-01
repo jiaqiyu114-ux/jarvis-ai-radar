@@ -183,19 +183,20 @@ export default function FeedClient({
                 </button>
               ))}
               <span className="text-muted-foreground/30 mx-1">|</span>
-              <span className="text-[10px] text-muted-foreground/60">层级：</span>
+              <span className="text-[10px] text-muted-foreground/60">信源等级：</span>
               {ALL_TIERS.map(tier => (
                 <button
                   key={tier}
+                  title={`仅显示信源等级 ${tier} 的内容（这是信源可信度评级，不是内容评分）`}
                   onClick={() => setSelectedTier(selectedTier === tier ? null : tier)}
                   className={cn(
-                    "text-[10px] px-2 py-0.5 rounded border font-bold transition-colors",
+                    "text-[10px] px-2 py-0.5 rounded border font-medium transition-colors",
                     selectedTier === tier
                       ? "bg-primary/10 text-primary border-primary/20"
                       : "text-muted-foreground border-border/50 hover:border-border"
                   )}
                 >
-                  {tier}
+                  信源{tier}
                 </button>
               ))}
             </div>
