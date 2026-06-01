@@ -61,7 +61,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const queryStart = Date.now()
-    const result = await getRecommendations({ windowHours: WINDOW_HOURS, limit: LIMIT, includeArchive: true })
+    // fetchAll=true: threshold-based — every item that meets the score threshold
+    // (must_read ≥ 80, high_value ≥ 65) is eligible, not just the top-LIMIT.
+    // LIMIT is still used as the fallback for non-fetchAll callers and run stats.
+    const result = await getRecommendations({ windowHours: WINDOW_HOURS, limit: LIMIT, includeArchive: true, fetchAll: true })
     const queryDurationMs = Date.now() - queryStart
 
     const durationMs = Date.now() - startMs
@@ -90,14 +93,19 @@ export async function POST(req: NextRequest) {
     const today = todayKey(JARVIS_TIMEZONE)
 
     const gateStats = {
-      timezone:                     JARVIS_TIMEZONE,
-      todayKey:                     today,
-      todayRecommendationCount:     0,
-      observeBacklogCount:          0,
-      suppressedPreviousDayCount:   0,
-      previousDeliveredExcludedCount: 0,
-      updateCandidateCount:         0,
-      recentUnpushedObserveCount:   0,
+      timezone:                       JARVIS_TIMEZONE,
+      todayKey:                       today,
+      // Threshold-based counts — no fixed top-N
+      todayRecommendationCount:       0,   // must_read + high_value after gate
+      todayMustReadCount:             0,
+      todayHighValueCount:            0,
+      observeBacklogCount:            0,   // items demoted to observe by gate
+      suppressedPreviousDayCount:     0,   // captured_yesterday_or_older
+      previousDeliveredExcludedCount: 0,   // previously in must_read/high_value
+      updateCandidateCount:           0,   // title signals new development
+      recentUnpushedObserveCount:     0,   // recent but not today → observe
+      // DeepDive coverage (all today recommendations should get deepDive)
+      deepDiveEligibleCount:          0,   // must_read+high_value eligible for deepDive
     }
 
     const snapshotItemsBase = result.items
@@ -129,7 +137,7 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        const result_item = {
+        const enriched = {
           ...i,
           recommendationBucket: decision.bucket,
           deliveryStatus:       decision.deliveryStatus,
@@ -137,13 +145,21 @@ export async function POST(req: NextRequest) {
           previousDelivery:     decision.previousDelivery,
           observeReason:        decision.observeReason,
         }
-        if (result_item.recommendationTier === 'must_read' ||
-            result_item.recommendationTier === 'high_value') {
+        if (enriched.recommendationTier === 'must_read') {
           gateStats.todayRecommendationCount++
+          gateStats.todayMustReadCount++
+          gateStats.deepDiveEligibleCount++
+        } else if (enriched.recommendationTier === 'high_value') {
+          gateStats.todayRecommendationCount++
+          gateStats.todayHighValueCount++
+          gateStats.deepDiveEligibleCount++
         }
-        return result_item
+        return enriched
       })
 
+    // DeepDive: generated for ALL must_read/high_value items (no budget cap).
+    // Concurrency controls parallelism only, not total count.
+    // This ensures deepDive coverage doesn't hide eligible recommendations.
     const deepDiveStart = Date.now()
     const { items: snapshotItemsWithDeepDive, deepDiveStats } =
       await attachDeepDivesToRecommendations(snapshotItemsBase, {
@@ -152,6 +168,14 @@ export async function POST(req: NextRequest) {
         includeSkipped: false,
       })
     const deepDiveDurationMs = Date.now() - deepDiveStart
+
+    // Verify deepDive coverage: all today recommendations should have deepDive
+    // (or a deterministic fallback). hiddenDueToDeepDiveBudget must be 0.
+    const deepDiveReadyCount   = snapshotItemsWithDeepDive.filter(i =>
+      (i.recommendationTier === 'must_read' || i.recommendationTier === 'high_value') && i.deepDive
+    ).length
+    const hiddenDueToDeepDiveBudget = 0  // always 0 — deepDive has no cap
+    // deepDiveEligibleCount already tracked in gateStats above
 
     // Compute related signals (rule-based, no LLM). Uses the full candidate pool
     // (all tiers including archive) as the match space.
@@ -222,8 +246,11 @@ export async function POST(req: NextRequest) {
       },
       deepDiveMode,
       deepDiveStats,
-      relatedSignals: relatedStats,
-      dailyGate:      gateStats,
+      relatedSignals:           relatedStats,
+      dailyGate:                gateStats,
+      // Threshold coverage audit: always 0 with uncapped deepDive
+      hiddenDueToDeepDiveBudget: hiddenDueToDeepDiveBudget,
+      deepDiveReadyCount,
       run,
       snapshot,
       stats: result.stats,

@@ -123,9 +123,16 @@ export type RecommendedItem = {
 
 export type RecommendationEngineOptions = {
   windowHours?:    number              // Default 72; lookback window
-  limit?:          number              // Default 30; max items returned
+  limit?:          number              // Default 30; max items returned (ignored when fetchAll=true)
   tier?:           RecommendationTier | null  // Filter by tier (null = all)
   includeArchive?: boolean             // Default false
+  /**
+   * When true, return ALL qualifying items without slicing to `limit`.
+   * Use this in the refresh pipeline for threshold-based recommendations:
+   * every item meeting the score threshold should be included, regardless of count.
+   * DB fetch is still capped at MAX_POOL (300) rows.
+   */
+  fetchAll?:       boolean
 }
 
 export type RecommendationStats = {
@@ -587,6 +594,7 @@ export async function getRecommendations(
 ): Promise<RecommendationResult> {
   const windowHours = Math.min(Math.max(options.windowHours ?? DEFAULT_WINDOW, 1), 168)
   const limit       = Math.min(Math.max(options.limit ?? DEFAULT_LIMIT, 1), 100)
+  const fetchAll    = options.fetchAll ?? false
   const now         = new Date()
   const windowEnd   = now.toISOString()
   const windowStart = new Date(now.getTime() - windowHours * 3_600_000).toISOString()
@@ -599,7 +607,9 @@ export async function getRecommendations(
 
   if (!isServerSupabaseConfigured || !supabaseServer) return empty
 
-  const poolLimit = Math.min(limit * 8, MAX_POOL)
+  // fetchAll: use MAX_POOL directly — return every qualifying item for threshold-based selection.
+  // Standard: use limit * 8 so the pool is wider than the final output, but still bounded.
+  const poolLimit = fetchAll ? MAX_POOL : Math.min(limit * 8, MAX_POOL)
 
   try {
     const [{ data, error }, countResult] = await Promise.all([
@@ -638,7 +648,9 @@ export async function getRecommendations(
         ? mapped
         : mapped.filter(item => item.recommendationTier !== 'archive')
 
-    const output = filtered.slice(0, limit)
+    // fetchAll: threshold-based — return ALL qualifying items, not a fixed top-N.
+    // Standard: slice to `limit` for paginated/live-query use.
+    const output = fetchAll ? filtered : filtered.slice(0, limit)
 
     const stats: RecommendationStats = {
       capturedTotal:            countResult.count ?? 0,

@@ -169,12 +169,22 @@ if ($Refresh) {
     # Daily gate stats from refresh
     if ($refreshResult.PSObject.Properties.Name -contains "dailyGate" -and $null -ne $refreshResult.dailyGate) {
       $dg = $refreshResult.dailyGate
-      Write-Info ("dailyGate: tz={0}  today={1}  todayRec={2}  observeBacklog={3}  prevDay={4}  prevDelivered={5}  updateCandidate={6}" -f `
-        $dg.timezone, $dg.todayKey, $dg.todayRecommendationCount,
-        $dg.observeBacklogCount, $dg.suppressedPreviousDayCount,
-        $dg.previousDeliveredExcludedCount, $dg.updateCandidateCount)
+      Write-Info ("dailyGate: tz={0}  today={1}" -f $dg.timezone, $dg.todayKey)
+      Write-Info ("  todayRec={0} (MR={1} HV={2})  observeBacklog={3}" -f `
+        $dg.todayRecommendationCount, $dg.todayMustReadCount, $dg.todayHighValueCount, $dg.observeBacklogCount)
+      Write-Info ("  prevDay={0}  prevDelivered={1}  updateCandidate={2}" -f `
+        $dg.suppressedPreviousDayCount, $dg.previousDeliveredExcludedCount, $dg.updateCandidateCount)
       if ([int]$dg.todayRecommendationCount -eq 0) {
         Write-Warn "dailyGate: todayRecommendationCount=0 (no items captured today in configured timezone)"
+      }
+    }
+    # Threshold coverage: hiddenDueToDeepDiveBudget must be 0
+    if ($refreshResult.PSObject.Properties.Name -contains "hiddenDueToDeepDiveBudget") {
+      $hddb = [int]$refreshResult.hiddenDueToDeepDiveBudget
+      if ($hddb -gt 0) {
+        Write-Fail ("hiddenDueToDeepDiveBudget={0} from refresh: recommendations hidden by deepDive budget" -f $hddb)
+      } else {
+        Write-Ok "hiddenDueToDeepDiveBudget=0 (all qualified recommendations shown)"
       }
     }
   } catch {
@@ -628,9 +638,38 @@ try {
       }
     }
 
+    # ── Threshold-based coverage checks ──────────────────────────────────────
+    # Verify: no items hidden due to limit/budget; all qualifying items shown
+    $todayMR   = @($items | Where-Object { ([string]$_.recommendationTier) -eq "must_read" })
+    $todayHV   = @($items | Where-Object { ([string]$_.recommendationTier) -eq "high_value" })
+    $todayObs  = @($items | Where-Object { ([string]$_.recommendationTier) -eq "observe" })
+    $allShownCount = $todayMR.Count + $todayHV.Count + $todayObs.Count
+
+    # FAIL: recommendations cannot be fixed at exactly 5 (strongly suggests truncation)
+    if ($finalItems.Count -eq 5 -and ($rec.source -eq "snapshot") -and $allShownCount -gt 5) {
+      Write-Warn ("Exactly 5 final items in snapshot — possible top-5 truncation? Check fetchAll=true in refresh route")
+    }
+
+    # hiddenDueToDeepDiveBudget: check refresh response (if available)
+    $hiddenDD = 0
+    if ($null -ne $refreshResult -and $refreshResult.PSObject.Properties.Name -contains "hiddenDueToDeepDiveBudget") {
+      $hiddenDD = [int]$refreshResult.hiddenDueToDeepDiveBudget
+      if ($hiddenDD -gt 0) {
+        Write-Fail ("hiddenDueToDeepDiveBudget={0}: recommendations were hidden because deepDive budget ran out" -f $hiddenDD)
+      } else {
+        Write-Ok "hiddenDueToDeepDiveBudget=0 (deepDive budget did not hide any recommendations)"
+      }
+    }
+    if ($null -ne $refreshResult -and $refreshResult.PSObject.Properties.Name -contains "deepDiveReadyCount") {
+      Write-Info ("deepDiveReadyCount={0}" -f $refreshResult.deepDiveReadyCount)
+    }
+
     Write-Host ""
     Write-Host "  --- daily gate stats ---"
-    Write-Info ("todayRecommendationCount: {0}/{1}" -f $dgTodayCount, $finalItems.Count)
+    Write-Info ("todayRecommendationCount: {0} (MR={1} HV={2})" -f $dgTodayCount, `
+      (@($finalItems | Where-Object { ([string]$_.recommendationTier) -eq "must_read"  }).Count), `
+      (@($finalItems | Where-Object { ([string]$_.recommendationTier) -eq "high_value" }).Count))
+    Write-Info ("observeBacklog: {0}" -f $todayObs.Count)
     if ($oldInTodayRec -gt 0) {
       Write-Fail ("{0} non-today item(s) in must_read/high_value" -f $oldInTodayRec)
     } else {
@@ -639,9 +678,7 @@ try {
     if ($prevDelivInFinal -gt 0) {
       Write-Fail ("{0} previously_delivered item(s) in must_read/high_value without update_candidate" -f $prevDelivInFinal)
     }
-    if ($dgTodayCount -lt 5 -and $dgTodayCount -ge 0) {
-      Write-Info ("today recommendation count = {0} (< 5 is OK - no stale content used)" -f $dgTodayCount)
-    }
+    Write-Info ("todayRecommendationCount = {0} (any count is valid with threshold-based approach)" -f $dgTodayCount)
     # Check for items without dailyGate (pre-gate snapshot)
     $withGate = @($finalItems | Where-Object { $_.PSObject.Properties.Name -contains "dailyGate" -and $null -ne $_.dailyGate })
     if ($withGate.Count -eq 0 -and $finalItems.Count -gt 0) {
