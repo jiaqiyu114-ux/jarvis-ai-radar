@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getRecommendations } from '@/lib/recommendations/recommendation-engine'
+import { getRecommendations, DEFAULT_THRESHOLDS, type TierThresholds } from '@/lib/recommendations/recommendation-engine'
 import {
   attachDeepDivesToRecommendations,
   type FinalDeepDiveMode,
@@ -56,6 +56,14 @@ export async function POST(req: NextRequest) {
   const deepDiveMode = parseDeepDiveMode(queryMode ?? body.deepDive)
   const llmConfig = getLlmConfig()
 
+  // Custom tier thresholds from query params (set by recommendation intensity presets)
+  const sp = req.nextUrl.searchParams
+  const thresholds: TierThresholds = {
+    mustRead:  Number(sp.get('mustRead'))  || DEFAULT_THRESHOLDS.mustRead,
+    highValue: Number(sp.get('highValue')) || DEFAULT_THRESHOLDS.highValue,
+    observe:   Number(sp.get('observe'))   || DEFAULT_THRESHOLDS.observe,
+  }
+
   const runId = await insertRecommendationRun({
     status: 'running',
     window_hours: WINDOW_HOURS,
@@ -68,7 +76,7 @@ export async function POST(req: NextRequest) {
     // fetchAll=true: threshold-based — every item that meets the score threshold
     // (must_read ≥ 80, high_value ≥ 65) is eligible, not just the top-LIMIT.
     // LIMIT is still used as the fallback for non-fetchAll callers and run stats.
-    const result = await getRecommendations({ windowHours: WINDOW_HOURS, limit: LIMIT, includeArchive: true, fetchAll: true })
+    const result = await getRecommendations({ windowHours: WINDOW_HOURS, limit: LIMIT, includeArchive: true, fetchAll: true, thresholds })
     const queryDurationMs = Date.now() - queryStart
 
     const durationMs = Date.now() - startMs

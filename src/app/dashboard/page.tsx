@@ -82,6 +82,27 @@ function EngineSectionBlock({ title, items, empty, enableDetail = false }: {
   )
 }
 
+// ── Compact stat pill ─────────────────────────────────────────────────────────
+
+function StatPill({ label, value, sub, accent, warn }: {
+  label:   string
+  value:   string
+  sub?:    string
+  accent?: boolean
+  warn?:   boolean
+}) {
+  return (
+    <div className="flex items-baseline gap-1.5 shrink-0">
+      <span className="text-[10px] text-muted-foreground/60">{label}</span>
+      <span className={cn(
+        "text-base font-bold tabular-nums leading-none",
+        accent ? "text-primary" : warn ? "text-warning" : "text-foreground",
+      )}>{value}</span>
+      {sub && <span className="text-[10px] text-muted-foreground/40">{sub}</span>}
+    </div>
+  )
+}
+
 // ── Status bar ────────────────────────────────────────────────────────────────
 
 function StatusBar({
@@ -100,52 +121,29 @@ function StatusBar({
   const isStale = freshness?.severity === 'stale' || freshness?.severity === 'missing'
 
   return (
-    <div className="mb-4 grid grid-cols-4 rounded-lg border border-border bg-card divide-x divide-border overflow-hidden">
-      {/* 今日推荐 */}
-      <div className="px-4 py-3">
-        <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mb-0.5">今日推荐</p>
-        <p className={cn(
-          "text-2xl font-bold tabular-nums leading-none",
-          todayCount > 0 ? "text-primary" : "text-muted-foreground",
-        )}>
-          {todayCount}
-        </p>
-        <p className="text-[10px] text-muted-foreground/50 mt-0.5">今天筛出的重点信息</p>
-      </div>
-
-      {/* 近72h捕捉 */}
-      <div className="px-4 py-3">
-        <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mb-0.5">近72h捕捉</p>
-        <p className="text-2xl font-bold tabular-nums leading-none text-foreground">{capturedTotal}</p>
-        <p className="text-[10px] text-muted-foreground/50 mt-0.5">系统抓取量</p>
-      </div>
-
-      {/* 可用信源 */}
-      <div className="px-4 py-3">
-        <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mb-0.5">可用信源</p>
-        <p className={cn(
-          "text-2xl font-bold tabular-nums leading-none",
-          hasFailing ? "text-warning" : "text-foreground",
-        )}>
-          {healthySrc}
-          <span className="text-base text-muted-foreground/50">/{activeSrc}</span>
-        </p>
-        <p className="text-[10px] text-muted-foreground/50 mt-0.5">正在参与抓取</p>
-      </div>
-
-      {/* 快照状态 */}
-      <div className="px-4 py-3">
-        <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mb-0.5">快照状态</p>
-        <p className={cn(
-          "text-2xl font-bold tabular-nums leading-none",
-          isStale ? "text-warning" : "text-foreground",
-        )}>
-          {snapshotAge}
-        </p>
-        <p className="text-[10px] text-muted-foreground/50 mt-0.5">
-          {freshness?.severity === 'ok' ? '自动刷新正常' : freshness?.severity === 'stale' ? '建议刷新' : '自动刷新状态'}
-        </p>
-      </div>
+    <div className="mb-4 flex items-center gap-5 rounded-lg border border-border bg-card px-4 py-2.5">
+      <StatPill
+        label="今日推荐"
+        value={String(todayCount)}
+        accent={todayCount > 0}
+        sub="今天筛出"
+      />
+      <div className="w-px h-6 bg-border/50" />
+      <StatPill label="近72h捕捉" value={String(capturedTotal)} sub="系统抓取" />
+      <div className="w-px h-6 bg-border/50" />
+      <StatPill
+        label="可用信源"
+        value={`${healthySrc}/${activeSrc}`}
+        warn={hasFailing}
+        sub={hasFailing ? '部分失败' : '参与抓取'}
+      />
+      <div className="w-px h-6 bg-border/50" />
+      <StatPill
+        label="快照"
+        value={snapshotAge}
+        warn={isStale}
+        sub={isStale ? '建议刷新' : '状态正常'}
+      />
     </div>
   )
 }
@@ -295,9 +293,9 @@ export default async function DashboardPage() {
           hasFailing={failingSrc > 0}
         />
 
-        {/* ── Main grid ── */}
-        <div className="grid grid-cols-3 gap-6">
-          <main className="col-span-2">
+        {/* ── Main grid: 3/4 main + 1/4 aside ── */}
+        <div className="grid grid-cols-4 gap-5">
+          <main className="col-span-3">
 
             {/* Section label */}
             <div className="mb-2 flex items-center gap-2">

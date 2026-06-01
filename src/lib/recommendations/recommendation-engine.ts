@@ -121,6 +121,14 @@ export type RecommendedItem = {
   observeReason?:         string
 }
 
+export type TierThresholds = {
+  mustRead:  number   // default 80 — minimum recScore for must_read
+  highValue: number   // default 65 — minimum recScore for high_value
+  observe:   number   // default 50 — minimum recScore for observe
+}
+
+export const DEFAULT_THRESHOLDS: TierThresholds = { mustRead: 80, highValue: 65, observe: 50 }
+
 export type RecommendationEngineOptions = {
   windowHours?:    number              // Default 72; lookback window
   limit?:          number              // Default 30; max items returned (ignored when fetchAll=true)
@@ -133,6 +141,8 @@ export type RecommendationEngineOptions = {
    * DB fetch is still capped at MAX_POOL (300) rows.
    */
   fetchAll?:       boolean
+  /** Custom tier thresholds — overrides DEFAULT_THRESHOLDS when provided. */
+  thresholds?:     TierThresholds
 }
 
 export type RecommendationStats = {
@@ -387,20 +397,21 @@ function computeRecommendationScore(
 }
 
 function classifyTier(
-  recScore:    number,
-  strongNoise: boolean,
-  evScore:     number,
-  truthScore:  number,
+  recScore:     number,
+  strongNoise:  boolean,
+  evScore:      number,
+  truthScore:   number,
   titleGarbled: boolean,
+  thresholds:   TierThresholds = DEFAULT_THRESHOLDS,
 ): RecommendationTier {
   // Garbled titles are never recommended — they corrupt the display and suggest
   // the ingest pipeline had an encoding issue that should be fixed, not surfaced.
   if (titleGarbled) return 'archive'
   if (strongNoise && recScore < 70) return 'archive'
   const evidenceOk = evScore >= 55 || truthScore >= 55
-  if (recScore >= 80 && (evidenceOk || recScore >= 88)) return 'must_read'
-  if (recScore >= 65) return 'high_value'
-  if (recScore >= 50) return 'observe'
+  if (recScore >= thresholds.mustRead && (evidenceOk || recScore >= thresholds.mustRead + 8)) return 'must_read'
+  if (recScore >= thresholds.highValue) return 'high_value'
+  if (recScore >= thresholds.observe) return 'observe'
   return 'archive'
 }
 
@@ -528,7 +539,7 @@ function buildNextStep(
 
 // ── Row mapper ────────────────────────────────────────────────────────────────
 
-function mapRow(row: EngineRow): RecommendedItem {
+function mapRow(row: EngineRow, thresholds: TierThresholds = DEFAULT_THRESHOLDS): RecommendedItem {
   const source        = row.sources
   const isOfficial    = source?.is_official    ?? false
   const isUserCurated = source?.is_user_curated ?? false
@@ -541,7 +552,7 @@ function mapRow(row: EngineRow): RecommendedItem {
   const recScore    = computeRecommendationScore(row, isUserCurated, noise.penalty)
   const evScore     = n(row.ev_score)
   const truthScore  = n(row.truth_score)
-  const tier        = classifyTier(recScore, noise.penalty >= 15, evScore, truthScore, titleGarbled)
+  const tier        = classifyTier(recScore, noise.penalty >= 15, evScore, truthScore, titleGarbled, thresholds)
   const sourceStatus = classifySourceStatus(row, isOfficial, isUserCurated)
   const evLevel      = classifyEvidenceLevel(evScore, truthScore)
   const qualityFlags = buildQualityFlags(row, isOfficial, isUserCurated, signalScore, evLevel, noise.noiseType, titleGarbled)
@@ -599,6 +610,7 @@ export async function getRecommendations(
   const windowHours = Math.min(Math.max(options.windowHours ?? DEFAULT_WINDOW, 1), 168)
   const limit       = Math.min(Math.max(options.limit ?? DEFAULT_LIMIT, 1), 100)
   const fetchAll    = options.fetchAll ?? false
+  const thresholds  = options.thresholds ?? DEFAULT_THRESHOLDS
   const now         = new Date()
   const windowEnd   = now.toISOString()
   const windowStart = new Date(now.getTime() - windowHours * 3_600_000).toISOString()
@@ -640,7 +652,7 @@ export async function getRecommendations(
     }
 
     const rows = (data ?? []) as unknown as EngineRow[]
-    const mapped = rows.map(mapRow)
+    const mapped = rows.map(row => mapRow(row, thresholds))
 
     // Sort by recommendationScore descending
     mapped.sort((a, b) => b.recommendationScore - a.recommendationScore)

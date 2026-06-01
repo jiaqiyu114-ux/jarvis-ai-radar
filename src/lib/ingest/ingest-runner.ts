@@ -478,7 +478,24 @@ async function writeItems(
       mentionCount:       1,
     })
     const dims = defaultDimensions(sourceId !== null, item.providerTrustScore ?? 65)
-    const { finalScore } = calculateFinalScore(dims, item.publishedAt ?? new Date().toISOString())
+    const { finalScore: rawScore } = calculateFinalScore(dims, item.publishedAt ?? new Date().toISOString())
+
+    // ── Source tier floor: prevent high-quality fresh content from scoring invisibly low ──
+    // The freshness multiplier (0.70–0.95) can push S/A tier items below the
+    // recommendation engine's candidate-pool threshold (50). Apply a floor so
+    // genuinely good sources always enter the recommendation candidate pool.
+    // Guards: item must be recent (< 72h), have title+URL, and not be spam-heavy.
+    const trustScore    = item.providerTrustScore ?? 65
+    const publishedMs   = item.publishedAt ? new Date(item.publishedAt).getTime() : 0
+    const hoursOld      = publishedMs > 0 ? (Date.now() - publishedMs) / 3_600_000 : 999
+    const isFresh72h    = hoursOld < 72
+    const hasTitleUrl   = !!(item.title?.trim() && item.url?.trim())
+    let finalScore = rawScore
+    if (isFresh72h && hasTitleUrl) {
+      if (trustScore >= 88) finalScore = Math.max(finalScore, 68)  // S-tier: min 68
+      else if (trustScore >= 78) finalScore = Math.max(finalScore, 60)  // A-tier: min 60
+    }
+
     const row = buildItemPayload(item, sourceId, providerSignal, finalScore, dims)
 
     try {

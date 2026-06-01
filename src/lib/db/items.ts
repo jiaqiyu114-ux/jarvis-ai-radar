@@ -81,13 +81,18 @@ export async function listSelectedItems(options: Omit<ListItemsOptions, 'minScor
  * Used by the feed adapter to display source names instead of UUIDs.
  */
 export async function listItemsWithSource(
-  options: ListItemsOptions & { sortByScore?: boolean; sortByTime?: 'published_at' | 'fetched_at' } = {},
+  options: ListItemsOptions & {
+    sortByScore?: boolean
+    sortByTime?:  'published_at' | 'fetched_at'
+    since?:       string   // ISO timestamp — only return items with sortByTime >= since
+  } = {},
 ): Promise<DbItemWithSource[]> {
   if (!isSupabaseConfigured || !supabase) return []
   const {
     category, sourceTier, minScore, maxScore,
     limit = 50, offset = 0, search, status,
-    sortByScore = false, sortByTime = 'published_at',
+    sortByScore = false, sortByTime = 'fetched_at',
+    since,
   } = options
 
   const selectClause = '*, sources!items_source_id_fkey(name, source_tier, is_official, is_user_curated, user_source_label, user_source_note, source_badge_variant)'
@@ -97,13 +102,22 @@ export async function listItemsWithSource(
     .select(selectClause)
     .range(offset, offset + limit - 1)
 
-  // Sort: scored items by final_score desc, then published_at desc
+  // Sort: time-sorted uses fetched_at DESC (recent captures first); score uses final_score DESC
   if (sortByScore) {
     query = query
       .order('final_score', { ascending: false, nullsFirst: false })
-      .order('published_at', { ascending: false, nullsFirst: false })
+      .order('fetched_at',   { ascending: false, nullsFirst: false })
   } else {
+    // Time sort: ORDER BY fetched_at DESC NULLS LAST
+    // Supabase doesn't support COALESCE in .order(), so we filter out very old items via `since`.
     query = query.order(sortByTime, { ascending: false, nullsFirst: false })
+  }
+
+  // Time window filter — applied regardless of sort mode to keep results recent
+  if (since) {
+    // For fetched_at sort: filter by fetched_at first, then fall back to rows without fetched_at
+    // Simplified: exclude rows older than the window on the primary sort field
+    query = query.or(`${sortByTime}.gte.${since},${sortByTime}.is.null`)
   }
 
   if (category)               query = query.eq('category', category)

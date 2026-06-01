@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { AppShell } from "@/components/layout/app-shell"
 import { ThemeToggle } from "@/components/theme/theme-toggle"
 import { Input } from "@/components/ui/input"
@@ -30,7 +31,7 @@ const PRESETS: Preset[] = [
     label: '极简',
     desc: '只推最重要的内容',
     daily: '每日约 1-3 条',
-    thresholds: { mustRead: 88, highValue: 78, observeMin: 60 },
+    thresholds: { mustRead: 88, highValue: 82, observeMin: 70 },
   },
   {
     id: 'conservative',
@@ -51,14 +52,14 @@ const PRESETS: Preset[] = [
     label: '宽松',
     desc: '多看一些潜在重要信息',
     daily: '每日约 10-30 条',
-    thresholds: { mustRead: 75, highValue: 58, observeMin: 45 },
+    thresholds: { mustRead: 75, highValue: 60, observeMin: 45 },
   },
   {
     id: 'all',
     label: '全量观察',
     desc: '尽量多推，仍过滤垃圾',
     daily: '每日约 20+ 条',
-    thresholds: { mustRead: 70, highValue: 50, observeMin: 40 },
+    thresholds: { mustRead: 70, highValue: 55, observeMin: 40 },
   },
 ]
 
@@ -118,6 +119,7 @@ function Collapsible({ title, children }: { title: string; children: React.React
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
+  const router = useRouter()
   // Lazy initializers read localStorage only on first render (client-side).
   // During SSR the `typeof window` guard returns the default value.
   const [savedPresetId, setSavedPresetId] = useState<PresetId>(() => loadSettings().presetId)
@@ -126,12 +128,31 @@ export default function SettingsPage() {
   const [interests, setInterests]         = useState(() => loadSettings().interests)
   const [blocklist, setBlocklist]         = useState(() => loadSettings().blocklist)
   const [saveMsg, setSaveMsg]             = useState('')
+  const [refreshing, setRefreshing]       = useState(false)
 
-  function handleSave() {
+  async function handleSave() {
     const s: SavedSettings = { presetId, autoScore, interests, blocklist }
     saveSettings(s)
     setSavedPresetId(presetId)
-    setSaveMsg('已保存')
+    setSaveMsg('保存中...')
+    setRefreshing(true)
+
+    // Trigger a recommendation refresh with the new thresholds so the dashboard
+    // immediately reflects the intensity change.
+    const preset = PRESETS.find(p => p.id === presetId) ?? PRESETS[2]
+    const t = preset.thresholds
+    try {
+      await fetch(
+        `/api/recommendations/refresh?deepDive=deterministic&mustRead=${t.mustRead}&highValue=${t.highValue}&observe=${t.observeMin}`,
+        { method: 'POST' },
+      )
+      setSaveMsg('已保存，推荐已更新 ✓')
+      router.refresh()  // reload dashboard data without full page reload
+    } catch {
+      setSaveMsg('已保存（推荐刷新失败，下次打开自动更新）')
+    } finally {
+      setRefreshing(false)
+    }
     setTimeout(() => setSaveMsg(''), 2000)
   }
 
@@ -269,13 +290,14 @@ export default function SettingsPage() {
           <button
             type="button"
             onClick={handleSave}
-            className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+            disabled={refreshing}
+            className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-60 transition-colors"
           >
-            保存设置
+            {refreshing ? '刷新中...' : '保存并刷新推荐'}
           </button>
           {saveMsg && <span className="text-xs text-success">{saveMsg}</span>}
           <span className="text-[10px] text-muted-foreground/50 ml-auto">
-            设置保存在本地，不同步到服务器
+            保存后自动重新生成今日推荐
           </span>
         </div>
 

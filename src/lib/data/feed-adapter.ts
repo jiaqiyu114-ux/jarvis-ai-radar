@@ -204,13 +204,21 @@ export async function getFeedItems(opts?: {
   includeDemo?: boolean
   sortBy?:      'score' | 'time'
   limit?:       number
+  windowHours?: number  // default 72h — time window for recent items
 }): Promise<InformationItem[]> {
-  const includeDemo = opts?.includeDemo ?? false
+  const includeDemo  = opts?.includeDemo ?? false
+  const sortByScore  = opts?.sortBy === 'score'
+  const windowHours  = opts?.windowHours ?? 72
+  // Always apply a recency window: fetched/published in the last N hours comes first.
+  // This prevents items from months ago from ranking above today's content.
+  const since = new Date(Date.now() - windowHours * 3_600_000).toISOString()
+
   if (shouldUseDatabase()) {
     const rows = await listItemsWithSource({
-      sortByScore: opts?.sortBy !== 'time',
-      sortByTime:  opts?.sortBy === 'time' ? 'fetched_at' : 'published_at',
-      limit:       opts?.limit,
+      sortByScore,
+      sortByTime: 'fetched_at',  // always sort by fetch time, not publish time
+      since:      since,          // restrict to recent window
+      limit:      opts?.limit ?? 100,
     })
     const relevant = includeDemo
       ? rows
