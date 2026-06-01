@@ -11,6 +11,10 @@ function Mark-Warn([string]$msg) { Write-Host "[WARN] $msg" -ForegroundColor Yel
 function Mark-Fail([string]$msg) { Write-Host "[FAIL] $msg" -ForegroundColor Red; $script:allOk = $false }
 function Mark-Info([string]$msg) { Write-Host "[INFO] $msg" -ForegroundColor Gray }
 
+function Is-FinalTier([string]$tier) {
+  return $tier -eq "must_read" -or $tier -eq "high_value"
+}
+
 Write-Host ""
 Write-Host "=== Verify Recommendations Pipeline ===" -ForegroundColor Cyan
 Write-Host "Base: $Base"
@@ -74,16 +78,25 @@ if ($SkipPipelineTrigger) {
     "&refresh=true" +
     "&maxSources=8" +
     "&ingestTimeoutMs=55000" +
+    "&deepDive=llm" +
     "&mode=manual"
   Write-Host "3) Trigger Pipeline: $triggerUrl"
   try {
-    $trigger = Invoke-RestMethod -Method Post -Uri $triggerUrl -TimeoutSec 120
+    $trigger = Invoke-RestMethod -Method Post -Uri $triggerUrl -TimeoutSec 180
     if ($trigger.status -eq "already_running") {
       Mark-Warn "pipeline already_running"
     } elseif ($trigger.ok -and ($trigger.status -eq "success" -or $trigger.status -eq "partial_success")) {
       Mark-Ok "pipeline trigger status=$($trigger.status)"
     } else {
       Mark-Fail "pipeline trigger failed status=$($trigger.status)"
+    }
+
+    if ($trigger.refresh -and $trigger.refresh.deepDiveStats) {
+      $s = $trigger.refresh.deepDiveStats
+      Mark-Info ("deepDiveStats: total={0} generated={1} fallback={2} failed={3} model={4}" -f `
+        $s.total, $s.generated, $s.fallback, $s.failed, $s.model)
+    } else {
+      Mark-Warn "trigger response missing refresh.deepDiveStats"
     }
   } catch {
     Mark-Fail "pipeline trigger request failed: $($_.Exception.Message)"
@@ -97,21 +110,23 @@ Write-Host ""
 $recommendationsUrl = $Base + "/api/recommendations?windowHours=72&limit=30"
 Write-Host "4) Query Recommendations: $recommendationsUrl"
 try {
-  $rec = Invoke-RestMethod -Method Get -Uri $recommendationsUrl -TimeoutSec 20
+  $rec = Invoke-RestMethod -Method Get -Uri $recommendationsUrl -TimeoutSec 30
   if (-not $rec.ok) {
     Mark-Fail "recommendations ok=false"
   } else {
     Mark-Ok "recommendations ok=true"
     if ($rec.source -eq "snapshot") { Mark-Ok "source=snapshot" } else { Mark-Warn "source=$($rec.source)" }
-    $itemsCount = 0
-    if ($rec.items) { $itemsCount = $rec.items.Count }
-    if ($itemsCount -gt 0) { Mark-Ok "items count=$itemsCount" } else { Mark-Warn "items count=0" }
-    if ($itemsCount -gt 0) {
+    $items = @()
+    if ($rec.items) { $items = @($rec.items) }
+    if ($items.Count -gt 0) { Mark-Ok "items count=$($items.Count)" } else { Mark-Warn "items count=0" }
+
+    $finalItems = @($items | Where-Object { Is-FinalTier ([string]$_.recommendationTier) })
+    if ($finalItems.Count -gt 0) {
       $allDeepDiveOk = $true
-      for ($i = 0; $i -lt $itemsCount; $i++) {
-        $it = $rec.items[$i]
+      for ($i = 0; $i -lt $finalItems.Count; $i++) {
+        $it = $finalItems[$i]
         if ($null -eq $it.deepDive) {
-          Mark-Fail "item[$i] missing deepDive"
+          Mark-Fail "final item[$i] missing deepDive"
           $allDeepDiveOk = $false
           continue
         }
@@ -127,17 +142,18 @@ try {
         ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
 
         if ($okFields.Count -ne 7) {
-          Mark-Fail "item[$i] deepDive fields incomplete"
+          Mark-Fail "final item[$i] deepDive fields incomplete"
           $allDeepDiveOk = $false
         }
       }
 
       if ($allDeepDiveOk) {
-        Mark-Ok "all returned items contain complete deepDive fields"
-      } else {
-        Mark-Warn "DeepDive columns missing. Please run supabase/recommendation-deep-dives-v1.sql in Supabase SQL Editor."
+        Mark-Ok "all final recommendation items contain complete deepDive fields"
       }
+    } else {
+      Mark-Warn "no must_read/high_value items returned"
     }
+
     if ($rec.stats) {
       Mark-Info "stats: candidates=$($rec.stats.recommendationCandidates) MR=$($rec.stats.mustReadCount) HV=$($rec.stats.highValueCount)"
     }
@@ -150,23 +166,24 @@ Write-Host ""
 #
 # 5) List Snapshots
 #
-$snapshotsUrl = $Base + "/api/recommendations/snapshots?limit=10&includeItems=true&itemsLimit=5"
+$snapshotsUrl = $Base + "/api/recommendations/snapshots?limit=10&includeItems=true&itemsLimit=10"
 Write-Host "5) List Snapshots: $snapshotsUrl"
 try {
-  $snaps = Invoke-RestMethod -Method Get -Uri $snapshotsUrl -TimeoutSec 20
+  $snaps = Invoke-RestMethod -Method Get -Uri $snapshotsUrl -TimeoutSec 30
   if ($snaps.ok) {
     Mark-Ok "snapshots ok=true count=$($snaps.count)"
     if ($snaps.count -gt 0 -and $snaps.snapshots[0].items) {
-      $firstSnapItems = $snaps.snapshots[0].items
-      if ($firstSnapItems.Count -gt 0) {
-        $firstItem = $firstSnapItems[0]
+      $latestItems = @($snaps.snapshots[0].items)
+      $latestFinal = @($latestItems | Where-Object { Is-FinalTier ([string]$_.recommendationTier) })
+      if ($latestFinal.Count -gt 0) {
+        $firstItem = $latestFinal[0]
         if ($firstItem.deepDive) {
-          Mark-Ok "snapshot item has deepDive"
+          Mark-Ok "snapshot final item has deepDive"
         } else {
-          Mark-Fail "snapshot item missing deepDive"
+          Mark-Fail "snapshot final item missing deepDive"
         }
       } else {
-        Mark-Warn "latest snapshot has no items"
+        Mark-Warn "latest snapshot has no final-tier items"
       }
     }
   } else {

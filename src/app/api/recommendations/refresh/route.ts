@@ -15,6 +15,10 @@ import {
   createRecommendationSnapshot,
   getPreviouslyRecommendedItemIds,
 } from '@/lib/db/recommendation-snapshots'
+import {
+  getTodayDeliveredItemIds,
+  writeDeliveries,
+} from '@/lib/db/recommendation-deliveries'
 
 export const dynamic = 'force-dynamic'
 
@@ -85,12 +89,15 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Daily hard gate ───────────────────────────────────────────────────────
-    // Rules: item must be (1) captured today in JARVIS_TIMEZONE, (2) not previously
-    // delivered in a recent must_read/high_value snapshot.
-    // Previously delivered or non-today items are demoted to 'observe' (backlog).
-    // No score-based decay: the gate enforces scheduling, scores reflect quality.
-    const prevDeliveredIds = await getPreviouslyRecommendedItemIds()
+    // Uses BOTH the deliveries table (precise, same-day) and recent snapshots
+    // (fallback for pre-migration data) to detect previously delivered items.
     const today = todayKey(JARVIS_TIMEZONE)
+    const [snapshotDeliveredIds, deliveryTableIds] = await Promise.all([
+      getPreviouslyRecommendedItemIds(),
+      getTodayDeliveredItemIds(today),
+    ])
+    // Merge both sets — delivery table takes precedence for today's items
+    const prevDeliveredIds = new Set([...snapshotDeliveredIds, ...deliveryTableIds])
 
     const gateStats = {
       timezone:                       JARVIS_TIMEZONE,
@@ -213,6 +220,23 @@ export async function POST(req: NextRequest) {
       },
       snapshotItemsFinal,
     )
+
+    // ── Write delivery records ────────────────────────────────────────────────
+    // Persist today_recommendation and observe_backlog items to the deliveries
+    // table so the next refresh can quickly check what was already delivered today.
+    const deliveryRecords = snapshotItemsFinal
+      .filter(i => i.recommendationBucket === 'today_recommendation' || i.recommendationBucket === 'observe_backlog')
+      .map(i => ({
+        itemId:         i.id,
+        snapshotId:     snapshotId ?? undefined,
+        deliveryDate:   today,
+        deliveryBucket: (i.recommendationBucket ?? 'archive') as 'today_recommendation' | 'observe_backlog' | 'archive',
+        tier:           i.recommendationTier ?? null,
+        finalScore:     i.finalScore ?? null,
+        reason:         i.recommendationBucket === 'today_recommendation' ? 'daily_push_v1' : 'observe_backlog_v1',
+      }))
+    const deliveryResult = await writeDeliveries(deliveryRecords)
+    console.log(`[refresh] deliveries written=${deliveryResult.written} skipped=${deliveryResult.skipped}`)
 
     const run = runId
       ? { id: runId, status: runStatus, startedAt, durationMs }

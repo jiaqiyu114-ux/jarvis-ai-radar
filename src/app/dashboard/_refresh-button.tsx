@@ -54,6 +54,7 @@ export function RefreshRecommendationsButton() {
         "&refresh=true" +
         "&maxSources=8" +
         "&ingestTimeoutMs=55000" +
+        "&deepDive=llm" +
         "&mode=manual"
 
       const res = await fetch(pipelineUrl, { method: "POST" })

@@ -391,18 +391,42 @@ function buildItemPayload(
   }
 }
 
-function defaultDimensions(hasSource: boolean): ScoreDimensions {
-  const base = hasSource ? 65 : 35
+/**
+ * Build rule-based dimension scores for a newly ingested RSS item.
+ *
+ * For an AI news radar, items from known reputable sources are inherently:
+ * - AI-relevant (this is an AI-specific feed)
+ * - Novel (published news)
+ * - Credible (proportional to source tier)
+ *
+ * providerTrustScore maps to tier: S≈90, A≈82, B≈70, C≈60, D≈55.
+ * These defaults are replaced by AI scoring if/when it runs.
+ */
+function defaultDimensions(hasSource: boolean, providerTrustScore = 65): ScoreDimensions {
+  if (!hasSource) {
+    return {
+      ai_relevance_score:      45,
+      source_score:            35,
+      importance_score:        45,
+      novelty_score:           50,
+      momentum_score:          40,
+      credibility_score:       35,
+      actionability_score:     40,
+      content_potential_score: 45,
+      personal_fit_score:      40,
+    }
+  }
+  const t = Math.min(92, Math.max(52, providerTrustScore))
   return {
-    ai_relevance_score:      50,
-    source_score:            base,
-    importance_score:        50,
-    novelty_score:           50,
-    momentum_score:          50,
-    credibility_score:       base,
-    actionability_score:     50,
-    content_potential_score: 50,
-    personal_fit_score:      50,
+    ai_relevance_score:      75,                    // AI news radar = always AI-relevant
+    source_score:            t,                      // tier-based: 52–92
+    importance_score:        65,                    // published AI news = matters
+    novelty_score:           70,                    // published items = novel
+    momentum_score:          58,                    // news generates momentum
+    credibility_score:       Math.round(t * 0.90), // tier-based: 47–83
+    actionability_score:     62,                    // creates insight / next steps
+    content_potential_score: 65,                    // reputable news = content potential
+    personal_fit_score:      65,                    // if in AI radar = fits interest
   }
 }
 
@@ -453,7 +477,7 @@ async function writeItems(
       featured:           item.featured,
       mentionCount:       1,
     })
-    const dims = defaultDimensions(sourceId !== null)
+    const dims = defaultDimensions(sourceId !== null, item.providerTrustScore ?? 65)
     const { finalScore } = calculateFinalScore(dims, item.publishedAt ?? new Date().toISOString())
     const row = buildItemPayload(item, sourceId, providerSignal, finalScore, dims)
 

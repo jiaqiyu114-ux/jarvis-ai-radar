@@ -105,8 +105,8 @@ function parseParams(req: NextRequest): PipelineParams {
   return {
     ingest:             sp.get('ingest')  !== 'false',
     refresh:            sp.get('refresh') !== 'false',
-    maxSources:         clamp(Number.isFinite(rawMaxSources)  && rawMaxSources  > 0 ? rawMaxSources  : 8,   1, 20),
-    ingestTimeoutMs:    clamp(Number.isFinite(rawIngestMs)    && rawIngestMs    > 0 ? rawIngestMs    : 55_000, 10_000, 80_000),
+    maxSources:         clamp(Number.isFinite(rawMaxSources)  && rawMaxSources  > 0 ? rawMaxSources  : 12,  1, 40),
+    ingestTimeoutMs:    clamp(Number.isFinite(rawIngestMs)    && rawIngestMs    > 0 ? rawIngestMs    : 55_000, 10_000, 300_000),
     refreshWindowHours: clamp(Number.isFinite(rawWindowHours) && rawWindowHours > 0 ? rawWindowHours : 72,  1, 168),
     refreshLimit:       clamp(Number.isFinite(rawLimit)       && rawLimit        > 0 ? rawLimit       : 50, 1, 100),
     mode,

@@ -207,11 +207,15 @@ const ENGINE_SELECT = [
   'sources!items_source_id_fkey(name, url, source_tier, is_user_curated, is_official)',
 ].join(', ')
 
+// Candidate pool pre-filter — intentionally loose.
+// The in-memory engine handles strict quality classification.
+// final_score >= 50 captures items from reputable sources scored by ingest defaults.
+// Items with final_score < 50 are genuine low-quality and excluded early.
 const RECOMMENDATION_OR = [
   'should_enter_daily_report.eq.true',
-  'final_score.gte.65',
+  'final_score.gte.50',
   'analysis_tier.in.(standard,deep,cluster)',
-  'ev_score.gte.50',
+  'ev_score.gte.40',
 ].join(',')
 
 const MAX_POOL = 300

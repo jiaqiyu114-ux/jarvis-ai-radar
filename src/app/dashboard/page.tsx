@@ -22,6 +22,7 @@ import {
 import {
   getPipelineAutomationStatus,
 } from "@/lib/recommendations/pipeline-automation"
+import { todayKey, JARVIS_TIMEZONE } from "@/lib/recommendations/daily-gate"
 import { cn } from "@/lib/utils"
 import type { RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import type { DailyRecommendationSnapshotItem } from "@/lib/data/daily-recommendation-snapshot"
@@ -148,6 +149,92 @@ function EngineSectionBlock({ title, items, empty, enableDetail = false }: {
       </div>
       {items.map(item => <EngineRecommendationCard key={item.id} item={item} enableDetail={enableDetail} />)}
     </section>
+  )
+}
+
+// ── Daily Push Status Bar ─────────────────────────────────────────────────────
+
+function MetricCell({ label, value, sub, accent, warn }: {
+  label: string
+  value: string | number
+  sub?: string
+  accent?: boolean
+  warn?: boolean
+}) {
+  return (
+    <div className="px-4 py-3 flex flex-col gap-0.5">
+      <span className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">{label}</span>
+      <span className={cn(
+        "text-lg font-bold tabular-nums leading-none",
+        accent ? "text-primary" : warn ? "text-warning" : "text-foreground",
+      )}>{value}</span>
+      {sub && <span className="text-[10px] text-muted-foreground/50 leading-tight">{sub}</span>}
+    </div>
+  )
+}
+
+function DailyPushBar({
+  dateKey, engineSnapshot, coverage, freshness,
+  todayMR, todayHV, observeBacklogCount,
+}: {
+  dateKey:             string
+  engineSnapshot:      RecommendationSnapshotView | null
+  coverage:            SourceCoverageStats | null
+  freshness:           RecommendationFreshness | null
+  todayMR:             number
+  todayHV:             number
+  observeBacklogCount: number
+}) {
+  const todayTotal   = todayMR + todayHV
+  const snapshotAge  = freshness?.ageMinutes !== null && freshness?.ageMinutes !== undefined
+    ? formatSnapshotAge(freshness.ageMinutes)
+    : '—'
+  const healthySrc   = coverage?.healthySources ?? 0
+  const activeSrc    = coverage?.totalActiveRss ?? 0
+  const failingSrc   = coverage?.failingSources ?? 0
+  const hasFailing   = failingSrc > 0
+
+  return (
+    <div className="mb-4 rounded-lg border border-border bg-card overflow-hidden">
+      <div className="grid grid-cols-6 divide-x divide-border">
+        <MetricCell label="今日日期" value={dateKey} sub={JARVIS_TIMEZONE} />
+        <MetricCell
+          label="健康信源"
+          value={`${healthySrc}/${activeSrc}`}
+          sub={hasFailing ? `${failingSrc} failing` : 'active sources'}
+          warn={hasFailing}
+        />
+        <MetricCell
+          label="今日推荐"
+          value={todayTotal}
+          sub={`MR:${todayMR} HV:${todayHV}`}
+          accent={todayTotal > 0}
+        />
+        <MetricCell
+          label="观察榜"
+          value={observeBacklogCount}
+          sub="近72h未推送"
+        />
+        <MetricCell
+          label="快照候选"
+          value={engineSnapshot?.captured_total ?? 0}
+          sub="72h窗口"
+        />
+        <MetricCell
+          label="快照时效"
+          value={snapshotAge}
+          sub={freshness?.severity ?? '—'}
+          warn={freshness?.severity === 'stale' || freshness?.severity === 'missing'}
+        />
+      </div>
+      {hasFailing && (
+        <div className="border-t border-border px-4 py-1.5 text-[10px] text-warning/80 bg-warning/5">
+          {failingSrc} 个信源最近持续失败，已进入冷却期。
+          {coverage?.neverFetchedSources ? ` ${coverage.neverFetchedSources} 个从未抓取。` : ''}
+          {' '}<Link href="/sources" className="underline hover:text-warning">管理信源 →</Link>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -319,19 +406,27 @@ export default async function DashboardPage() {
   // ── Determine data source ────────────────────────────────────────────────────
   const hasEngineSnapshot = engineSnapshot !== null
   const hasLegacySnapshot = legacySnapshot.hasSnapshot
+  const currentDateKey    = todayKey(JARVIS_TIMEZONE)
 
   // Engine snapshot items
   const engineItems = engineSnapshot?.items ?? []
   const engineMustRead  = engineItems.filter(i => i.recommendationTier === 'must_read')
   const engineHighValue = engineItems.filter(i => i.recommendationTier === 'high_value')
-  // observeBacklog: items demoted from must_read/high_value by daily gate
+  // observeBacklog: items demoted from must_read/high_value by daily gate OR genuine observe with backlog bucket
   const engineObserveBacklog = engineItems.filter(
     i => i.recommendationTier === 'observe' && i.recommendationBucket === 'observe_backlog',
   )
-  // Genuine observe-tier (not demoted by gate)
+  // Genuine observe-tier (not demoted by gate — scored below must_read/high_value but above archive)
   const engineObserve = engineItems.filter(
     i => i.recommendationTier === 'observe' && i.recommendationBucket !== 'observe_backlog',
   )
+  // Today-only recommendations (today_recommendation bucket)
+  const engineTodayItems = engineItems.filter(
+    i => (i.recommendationTier === 'must_read' || i.recommendationTier === 'high_value') &&
+         i.recommendationBucket === 'today_recommendation',
+  )
+  const todayMRCount = engineTodayItems.filter(i => i.recommendationTier === 'must_read').length
+  const todayHVCount = engineTodayItems.filter(i => i.recommendationTier === 'high_value').length
 
   // Legacy snapshot items
   const snapshotItems = hasLegacySnapshot ? legacySnapshot.items : []
@@ -472,6 +567,17 @@ export default async function DashboardPage() {
           )}
         </header>
 
+        {/* ── Daily Push Status Bar ── */}
+        <DailyPushBar
+          dateKey={currentDateKey}
+          engineSnapshot={engineSnapshot}
+          coverage={coverage}
+          freshness={freshness}
+          todayMR={todayMRCount}
+          todayHV={todayHVCount}
+          observeBacklogCount={engineObserveBacklog.length}
+        />
+
         {/* ── Run status strip + refresh button ── */}
         <RunStatusStrip run={latestRun} engineSnapshot={engineSnapshot} coverage={coverage} freshness={freshness} />
 
@@ -578,21 +684,29 @@ export default async function DashboardPage() {
               </span>
             </div>
 
-            {/* Zero today-recommendation notice */}
+            {/* Zero today-recommendation: structured empty state */}
             {hasEngineSnapshot && engineMustRead.length + engineHighValue.length === 0 && (
-              <div className="mb-2 rounded border border-warning/25 bg-warning/5 px-3 py-2 text-[11px] text-warning/80">
-                今日暂无达到阈值的新推荐。系统仍在观察近期高分信息，可查看观察榜。
+              <div className="mb-2 rounded-lg border border-border bg-muted/20 px-4 py-4 space-y-2">
+                <p className="text-sm font-medium text-muted-foreground">今日暂无达到阈值的新推荐</p>
+                <div className="text-[11px] text-muted-foreground/70 space-y-1">
+                  {stats.captureTotal === 0 && <p>· 当前快照无捕获信息，请点击「刷新推荐」触发抓取。</p>}
+                  {stats.captureTotal > 0 && stats.recommendationCount === 0 && (
+                    <p>· 捕获 {stats.captureTotal} 条，均低于评分候选阈值（低于 50 分），请检查信源质量。</p>
+                  )}
+                  {stats.recommendationCount > 0 && <p>· {stats.recommendationCount} 条进入引擎评分，但未达到 high_value 阈值（≥ 65）。</p>}
+                  {engineObserveBacklog.length > 0 && <p>· {engineObserveBacklog.length} 条近期信息进入观察榜（非今日内容）。</p>}
+                  {engineObserve.length > 0 && <p>· {engineObserve.length} 条评分属于 observe 层（50-65 分），可在全量流查看。</p>}
+                </div>
+                <div className="flex gap-2 pt-1">
+                  {engineObserveBacklog.length > 0 && (
+                    <span className="text-[10px] text-sky-600 dark:text-sky-400">↓ 观察榜有 {engineObserveBacklog.length} 条</span>
+                  )}
+                  <Link href="/feed" className="text-[10px] text-primary/70 hover:text-primary underline">查看全量流 →</Link>
+                </div>
               </div>
             )}
 
-            {/* Low today-count notice */}
-            {hasEngineSnapshot && engineMustRead.length + engineHighValue.length > 0 &&
-             (engineObserveBacklog.length > 0 || engineObserve.length > 0) && (
-              <div className="mb-2 rounded border border-border/60 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground/70">
-                今日推荐已按阈值筛选，近期高分但未推送信息进入观察榜。
-              </div>
-            )}
-
+            {/* Main recommendations */}
             <div className="overflow-hidden rounded-lg border border-border bg-card">
               {hasEngineSnapshot ? (
                 <>
@@ -600,10 +714,8 @@ export default async function DashboardPage() {
                     empty="今日暂无新的 must_read 推荐" />
                   <EngineSectionBlock title="High Value" items={engineHighValue} enableDetail
                     empty="今日暂无新的 high_value 推荐" />
-                  <EngineSectionBlock title="Observe" items={engineObserve}
-                    empty="当前无 observe 候选" />
-                  {engineObserveBacklog.length > 0 && (
-                    <EngineSectionBlock title="观察榜 · 近期回溯" items={engineObserveBacklog}
+                  {engineObserve.length > 0 && (
+                    <EngineSectionBlock title="Observe" items={engineObserve}
                       empty="" />
                   )}
                 </>
@@ -617,18 +729,34 @@ export default async function DashboardPage() {
                     empty="本次快照没有 observe 内容" />
                 </>
               ) : (
-                <div className="px-6 py-12 text-center space-y-3">
+                <div className="px-6 py-10 text-center space-y-3">
                   <p className="text-sm text-muted-foreground">当前暂无推荐快照</p>
                   <p className="text-xs text-muted-foreground/60">
-                    请先触发 RSS 抓取（<Link href="/sources" className="underline">信源管理</Link>），
-                    再点击上方「刷新推荐」生成首个快照。
-                  </p>
-                  <p className="text-[10px] text-muted-foreground/50">
-                    诊断：<a href="/api/recommendations/health" target="_blank" className="underline">GET /api/recommendations/health</a>
+                    点击上方「刷新推荐」生成首个快照。如首次使用，请先在{' '}
+                    <Link href="/sources" className="underline">信源管理</Link> 中导入信源。
                   </p>
                 </div>
               )}
             </div>
+
+            {/* ── Observe Backlog section — separate from today recommendations ── */}
+            {engineObserveBacklog.length > 0 && (
+              <div className="mt-4">
+                <div className="mb-1.5 flex items-center gap-2">
+                  <div className="h-1.5 w-1.5 rounded-full bg-sky-500/60" />
+                  <h2 className="section-title text-sky-600/80 dark:text-sky-400/80">
+                    观察榜 · 近72小时未推送
+                  </h2>
+                  <span className="meta-text">{engineObserveBacklog.length} 条</span>
+                  <span className="ml-2 text-[10px] text-muted-foreground/50">
+                    （非今日内容 · 分数接近推荐阈值 · 供参考）
+                  </span>
+                </div>
+                <div className="overflow-hidden rounded-lg border border-sky-500/20 bg-card">
+                  <EngineSectionBlock title="" items={engineObserveBacklog} empty="" />
+                </div>
+              </div>
+            )}
           </main>
 
           <aside className="col-span-1 space-y-4">
