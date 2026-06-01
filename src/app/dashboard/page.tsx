@@ -41,7 +41,7 @@ function LegacySectionBlock({ title, items, empty }: {
 }) {
   if (items.length === 0) {
     return (
-      <section className="border-b border-border last:border-b-0">
+      <section className="border-b border-white/[0.06] last:border-b-0">
         <div className="px-4 py-2.5">
           <h2 className="section-title">{title}</h2>
           <p className="mt-2 text-xs text-muted-foreground">{empty}</p>
@@ -50,8 +50,8 @@ function LegacySectionBlock({ title, items, empty }: {
     )
   }
   return (
-    <section className="border-b border-border last:border-b-0">
-      <div className="flex items-center gap-2 px-4 py-2.5 bg-muted/20 border-b border-border">
+    <section className="border-b border-white/[0.06] last:border-b-0">
+      <div className="flex items-center gap-2 px-4 py-2.5 bg-white/[0.03] border-b border-white/[0.06]">
         <h2 className="section-title">{title}</h2>
         <span className="meta-text">{items.length} 条</span>
       </div>
@@ -69,7 +69,7 @@ function EngineSectionBlock({ title, items, empty, enableDetail = false }: {
   if (items.length === 0) {
     if (!empty) return null
     return (
-      <section className="border-b border-border last:border-b-0">
+      <section className="border-b border-white/[0.06] last:border-b-0">
         <div className="px-4 py-2.5">
           <h2 className="section-title">{title}</h2>
           <p className="mt-2 text-xs text-muted-foreground">{empty}</p>
@@ -78,9 +78,9 @@ function EngineSectionBlock({ title, items, empty, enableDetail = false }: {
     )
   }
   return (
-    <section className="border-b border-border last:border-b-0">
+    <section className="border-b border-white/[0.06] last:border-b-0">
       {title && (
-        <div className="flex items-center gap-2 px-4 py-2 bg-muted/15 border-b border-border">
+        <div className="flex items-center gap-2 px-4 py-2 bg-white/[0.03] border-b border-white/[0.06]">
           <h2 className="section-title">{title}</h2>
           <span className="meta-text">{items.length} 条</span>
         </div>
@@ -90,28 +90,7 @@ function EngineSectionBlock({ title, items, empty, enableDetail = false }: {
   )
 }
 
-// ── Compact stat pill ─────────────────────────────────────────────────────────
-
-function StatPill({ label, value, sub, accent, warn }: {
-  label:   string
-  value:   string
-  sub?:    string
-  accent?: boolean
-  warn?:   boolean
-}) {
-  return (
-    <div className="flex items-baseline gap-1.5 shrink-0">
-      <span className="text-[10px] text-muted-foreground/60">{label}</span>
-      <span className={cn(
-        "text-base font-bold tabular-nums leading-none",
-        accent ? "text-primary" : warn ? "text-warning" : "text-foreground",
-      )}>{value}</span>
-      {sub && <span className="text-[10px] text-muted-foreground/40">{sub}</span>}
-    </div>
-  )
-}
-
-// ── Status bar ────────────────────────────────────────────────────────────────
+// ── Status cards ─────────────────────────────────────────────────────────────
 
 function StatusBar({
   todayCount, capturedTotal, healthySrc, activeSrc, freshness, hasFailing,
@@ -129,29 +108,22 @@ function StatusBar({
   const isStale = freshness?.severity === 'stale' || freshness?.severity === 'missing'
 
   return (
-    <div className="mb-4 flex items-center gap-5 rounded-lg border border-border bg-card px-4 py-2.5">
-      <StatPill
-        label="今日推荐"
-        value={String(todayCount)}
-        accent={todayCount > 0}
-        sub="今天筛出"
-      />
-      <div className="w-px h-6 bg-border/50" />
-      <StatPill label="近72h捕捉" value={String(capturedTotal)} sub="系统抓取" />
-      <div className="w-px h-6 bg-border/50" />
-      <StatPill
-        label="可用信源"
-        value={`${healthySrc}/${activeSrc}`}
-        warn={hasFailing}
-        sub={hasFailing ? '部分失败' : '参与抓取'}
-      />
-      <div className="w-px h-6 bg-border/50" />
-      <StatPill
-        label="快照"
-        value={snapshotAge}
-        warn={isStale}
-        sub={isStale ? '建议刷新' : '状态正常'}
-      />
+    <div className="mb-5 grid grid-cols-4 gap-3">
+      {[
+        { label: "今日推荐", value: String(todayCount), sub: "条重点信息", accent: todayCount > 0, warn: false },
+        { label: "近72h捕捉", value: String(capturedTotal), sub: "条抓取", accent: false, warn: false },
+        { label: "可用信源", value: `${healthySrc}/${activeSrc}`, sub: hasFailing ? "部分失败" : "参与抓取", accent: false, warn: hasFailing },
+        { label: "快照状态", value: snapshotAge, sub: isStale ? "建议刷新" : "状态正常", accent: false, warn: isStale },
+      ].map(({ label, value, sub, accent, warn }) => (
+        <div key={label} className="rounded-xl border border-white/[0.07] bg-white/[0.03] px-4 py-3 flex flex-col gap-1">
+          <span className="text-[10px] text-muted-foreground/60 font-mono tracking-widest uppercase">{label}</span>
+          <span className={cn(
+            "text-2xl font-bold tabular-nums leading-none",
+            accent ? "text-primary" : warn ? "text-warning" : "text-foreground",
+          )}>{value}</span>
+          <span className="text-[10px] text-muted-foreground/40">{sub}</span>
+        </div>
+      ))}
     </div>
   )
 }
@@ -176,17 +148,6 @@ function formatTime(value: string | null | undefined): string {
   return new Date(value).toLocaleString("zh-CN", {
     month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
   })
-}
-
-function timeAgo(iso: string | null | undefined): string {
-  if (!iso) return '—'
-  const diffMs  = Date.now() - new Date(iso).getTime()
-  const diffMin = Math.floor(diffMs / 60_000)
-  if (diffMin < 1)   return '刚刚'
-  if (diffMin < 60)  return `${diffMin}m 前`
-  const diffHr = Math.floor(diffMin / 60)
-  if (diffHr  < 24)  return `${diffHr}h 前`
-  return `${Math.floor(diffHr / 24)}d 前`
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
@@ -417,7 +378,7 @@ export default async function DashboardPage() {
             )}
 
             {/* Today's recommendations */}
-            <div className="overflow-hidden rounded-lg border border-border bg-card">
+            <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-card">
               {hasEngineSnapshot ? (
                 <>
                   {(engineMustRead.length > 0 || engineHighValue.length > 0) ? (
@@ -468,7 +429,7 @@ export default async function DashboardPage() {
                     <span className="ml-auto text-[10px] text-muted-foreground/40">显示前 30 条</span>
                   )}
                 </div>
-                <div className="overflow-hidden rounded-lg border border-sky-500/15 bg-card">
+                <div className="overflow-hidden rounded-xl border border-sky-500/20 bg-card">
                   <EngineSectionBlock title="" items={engineObserveBacklog.slice(0, 30)} empty="" />
                   {engineObserveBacklog.length > 30 && (
                     <div className="px-4 py-2 border-t border-border/50 text-center">
@@ -487,7 +448,7 @@ export default async function DashboardPage() {
 
             {/* Candidate reference — items below today threshold, clearly labeled */}
             {candidateRef.length > 0 && (
-              <section className="border border-border rounded-lg bg-card px-3 py-2.5">
+              <section className="border border-white/[0.07] rounded-xl bg-card/80 px-3 py-2.5">
                 <h2 className="text-[10px] font-semibold text-foreground/70 uppercase tracking-wider mb-0.5">候选参考</h2>
                 <p className="text-[10px] text-muted-foreground mb-2">
                   未进入今日推荐（分数 {thresholds.observe}–{thresholds.highValue - 1}），仅供排查和比对。
@@ -510,14 +471,14 @@ export default async function DashboardPage() {
 
             {/* Clusters */}
             {eventClusters.length > 0 && (
-              <section className="border border-border/60 rounded-lg bg-card/80 px-3 py-2.5">
+              <section className="border border-white/[0.06] rounded-xl bg-card/60 px-3 py-2.5">
                 <h2 className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider mb-1.5">多源追踪</h2>
                 {eventClusters.map(c => <MiniCluster key={c.id} cluster={c} />)}
               </section>
             )}
 
             {/* Feed shortcut */}
-            <section className="border border-border/40 rounded-lg bg-card/50 px-3 py-2.5">
+            <section className="border border-white/[0.06] rounded-xl bg-card/40 px-3 py-2.5">
               <p className="text-[11px] text-muted-foreground/70 mb-1.5">查看系统原始捕捉的所有内容（不代表推荐）</p>
               <Link href="/feed" className="text-[10px] text-primary/70 hover:text-primary border border-primary/20 bg-primary/5 rounded px-2 py-1 transition-colors inline-flex">
                 打开全量流 →
@@ -527,13 +488,13 @@ export default async function DashboardPage() {
         </div>
 
         {/* ── System debug fold ── */}
-        <details className="mt-8 border border-border/30 rounded-lg overflow-hidden">
-          <summary className="px-4 py-2 text-[11px] text-muted-foreground/50 cursor-pointer select-none hover:text-muted-foreground/70 transition-colors list-none flex items-center gap-2">
-            <span>▶ 系统状态</span>
-            <span className="text-[10px]">（调试信息，默认折叠）</span>
+        <details className="mt-8 border border-white/[0.05] rounded-xl overflow-hidden">
+          <summary className="px-4 py-2 text-[10px] text-muted-foreground/30 cursor-pointer select-none hover:text-muted-foreground/50 transition-colors list-none flex items-center gap-2 font-mono tracking-widest">
+            <span>▸ SYSTEM STATUS</span>
+            <span className="text-[9px] opacity-50">（默认折叠）</span>
           </summary>
-          <div className="px-4 py-3 bg-muted/10 border-t border-border/30 text-[11px] text-muted-foreground/60 space-y-1 font-mono">
-            <p>快照生成于：{formatTime(engineSnapshot?.generated_at)} （{timeAgo(engineSnapshot?.generated_at)} 前）</p>
+          <div className="px-4 py-3 bg-white/[0.02] border-t border-white/[0.05] text-[11px] text-muted-foreground/50 space-y-1 font-mono">
+            <p>快照生成于：{formatTime(engineSnapshot?.generated_at)}</p>
             <p>近72h捕捉：{capturedTotal} 条 / 引擎候选：{engineSnapshot?.recommendation_candidates ?? 0} 条</p>
             <p>今日推荐：MR={todayMRCount} HV={todayHVCount} / 观察榜：{engineObserveBacklog.length} 条</p>
             <p>信源：{healthySrc} healthy / {failingSrc} failing / {activeSrc} active</p>

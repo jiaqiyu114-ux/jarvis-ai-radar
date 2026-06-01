@@ -71,7 +71,12 @@ const FETCH_STATUS_LABEL: Record<string, string> = {
 
 function HealthCell({ source }: { source: SourceWithHealth }) {
   if (source.platform !== "rss") {
-    return <span className="text-[10px] text-muted-foreground/40">—</span>
+    const isPendingWeb = source.userSourceNote?.includes("pendingWeb:true")
+    return (
+      <span className="text-[10px] text-muted-foreground/40">
+        {isPendingWeb ? "待网页抓取" : "非RSS"}
+      </span>
+    )
   }
   const status = source.healthStatus
   return (

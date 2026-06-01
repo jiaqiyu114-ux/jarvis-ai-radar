@@ -36,9 +36,16 @@ function matchSmartFilter(item: InformationItem, f: SmartFilterId): boolean {
   }
 }
 
-// ── Legacy category/tier filters kept for "更多筛选" ─────────────────────────
+// ── Category filter kept for "更多筛选"; tier shown in primary bar ────────────
 const ALL_CATEGORIES: Category[] = ['AI技术', '商业动态', '产品发布', '监管政策', '融资并购', '行业趋势', '开源项目', '研究报告']
 const ALL_TIERS: SourceTier[] = ['S', 'A', 'B', 'C']
+
+const TIER_TOOLTIP: Record<string, string> = {
+  S: '信源等级 S：官方博客/文档/论文（不是内容评分）',
+  A: '信源等级 A：官方社媒/创始人/顶级机构（不是内容评分）',
+  B: '信源等级 B：高质量媒体/分析师/垂直 KOL（不是内容评分）',
+  C: '信源等级 C：普通 KOL/综合资讯站（不是内容评分）',
+}
 
 export default function FeedClient({
   items,
@@ -113,7 +120,7 @@ export default function FeedClient({
             </div>
 
             {/* Sort */}
-            <div className="flex items-center gap-px border border-border rounded-md overflow-hidden h-7">
+            <div className="flex items-center gap-px border border-white/[0.08] rounded-lg overflow-hidden h-7">
               {(['time', 'score'] as const).map(s => (
                 <button
                   key={s}
@@ -121,8 +128,8 @@ export default function FeedClient({
                   className={cn(
                     "px-2.5 text-xs h-full transition-colors",
                     sortBy === s
-                      ? "bg-primary text-primary-foreground font-medium"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                      ? "bg-primary/15 text-primary font-medium"
+                      : "text-muted-foreground hover:text-foreground hover:bg-white/[0.05]"
                   )}
                 >
                   {s === 'score' ? '分数' : '时间'}
@@ -138,10 +145,10 @@ export default function FeedClient({
                   title={f.desc}
                   onClick={() => setSmartFilter(smartFilter === f.id ? 'all' : f.id)}
                   className={cn(
-                    "text-[10px] px-2.5 py-1 rounded-md border transition-colors",
+                    "text-[10px] px-2.5 py-1 rounded-lg border transition-colors",
                     smartFilter === f.id
-                      ? "bg-primary/10 text-primary border-primary/20 font-medium"
-                      : "text-muted-foreground border-border/50 hover:border-border hover:text-foreground"
+                      ? "bg-primary/15 text-primary border-primary/25 font-medium"
+                      : "text-muted-foreground border-white/[0.06] hover:border-white/[0.12] hover:text-foreground"
                   )}
                 >
                   {f.label}
@@ -153,20 +160,40 @@ export default function FeedClient({
             <button
               onClick={() => setShowAdvanced(v => !v)}
               className={cn(
-                "text-[10px] px-2 py-1 rounded border transition-colors ml-auto",
+                "text-[10px] px-2 py-1 rounded-lg border transition-colors ml-auto",
                 hasAdvancedFilter
                   ? "text-primary border-primary/20 bg-primary/5"
-                  : "text-muted-foreground/60 border-border/30 hover:text-muted-foreground",
+                  : "text-muted-foreground/40 border-white/[0.05] hover:text-muted-foreground",
               )}
             >
-              {showAdvanced ? '收起筛选' : '更多筛选'}
+              {showAdvanced ? '收起' : '分类'}
               {hasAdvancedFilter && ' ·'}
             </button>
           </div>
 
-          {/* Advanced filters — category + tier */}
+          {/* Tier filter — primary (always visible) */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] text-muted-foreground/40 font-mono tracking-widest uppercase shrink-0">信源</span>
+            {ALL_TIERS.map(tier => (
+              <button
+                key={tier}
+                title={TIER_TOOLTIP[tier]}
+                onClick={() => setSelectedTier(selectedTier === tier ? null : tier)}
+                className={cn(
+                  "text-[10px] px-2 py-0.5 rounded border font-mono font-medium transition-colors",
+                  selectedTier === tier
+                    ? "bg-primary/15 text-primary border-primary/25"
+                    : "text-muted-foreground/50 border-white/[0.06] hover:border-white/[0.12] hover:text-foreground"
+                )}
+              >
+                {tier}
+              </button>
+            ))}
+          </div>
+
+          {/* Advanced filters — category only */}
           {showAdvanced && (
-            <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-border/50">
+            <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-white/[0.06]">
               <span className="text-[10px] text-muted-foreground/60">分类：</span>
               {ALL_CATEGORIES.map(cat => (
                 <button
@@ -176,27 +203,10 @@ export default function FeedClient({
                     "text-[10px] px-2 py-0.5 rounded border transition-colors",
                     selectedCategory === cat
                       ? "bg-primary/10 text-primary border-primary/20 font-medium"
-                      : "text-muted-foreground border-border/50 hover:border-border"
+                      : "text-muted-foreground border-white/[0.06] hover:border-white/[0.12]"
                   )}
                 >
                   {cat}
-                </button>
-              ))}
-              <span className="text-muted-foreground/30 mx-1">|</span>
-              <span className="text-[10px] text-muted-foreground/60">信源等级：</span>
-              {ALL_TIERS.map(tier => (
-                <button
-                  key={tier}
-                  title={`仅显示信源等级 ${tier} 的内容（这是信源可信度评级，不是内容评分）`}
-                  onClick={() => setSelectedTier(selectedTier === tier ? null : tier)}
-                  className={cn(
-                    "text-[10px] px-2 py-0.5 rounded border font-medium transition-colors",
-                    selectedTier === tier
-                      ? "bg-primary/10 text-primary border-primary/20"
-                      : "text-muted-foreground border-border/50 hover:border-border"
-                  )}
-                >
-                  信源{tier}
                 </button>
               ))}
             </div>
@@ -214,8 +224,8 @@ export default function FeedClient({
           )}
         </div>
 
-        {/* ── Feed list ── */}
-        <div className="bg-card rounded-lg overflow-hidden border border-border/60">
+        {/* ── Feed list — no heavy blur, lightweight rows ── */}
+        <div className="bg-card rounded-xl overflow-hidden border border-white/[0.07]">
           {filtered.length > 0
             ? filtered.map(item => <InformationCard key={item.id} item={item} contextPage="feed" />)
             : (

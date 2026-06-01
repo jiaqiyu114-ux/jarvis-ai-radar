@@ -23,7 +23,7 @@ export function SidebarNav() {
   const pathname = usePathname()
 
   return (
-    <aside className="fixed left-0 top-10 h-[calc(100vh-40px)] w-[220px] border-r border-border bg-sidebar flex flex-col">
+    <aside className="fixed left-0 top-10 h-[calc(100vh-40px)] w-[220px] border-r border-white/[0.07] bg-sidebar/90 backdrop-blur-xl flex flex-col z-40">
       <nav className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto">
         {navItems.map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(href + '/')
@@ -32,22 +32,23 @@ export function SidebarNav() {
               key={href}
               href={href}
               className={cn(
-                "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors",
+                "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-150",
                 active
-                  ? "bg-primary text-primary-foreground font-medium"
-                  : "text-muted-foreground hover:bg-primary/10 hover:text-foreground"
+                  ? "bg-primary/15 text-primary font-medium"
+                  : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground"
               )}
             >
-              <Icon className="h-4 w-4 shrink-0" />
+              <Icon className={cn("h-4 w-4 shrink-0", active ? "opacity-100" : "opacity-60")} />
               <span>{label}</span>
+              {active && <span className="ml-auto w-1 h-3.5 rounded-full bg-primary/60" />}
             </Link>
           )
         })}
       </nav>
 
-      <div className="px-4 py-3 border-t border-border">
-        <span className="text-[10px] tracking-widest text-muted-foreground/50 uppercase">
-          Jarvis v0.1
+      <div className="px-4 py-3 border-t border-white/[0.05]">
+        <span className="text-[9px] tracking-[0.18em] text-muted-foreground/30 uppercase font-mono">
+          J.A.R.V.I.S v0.1
         </span>
       </div>
     </aside>
