@@ -491,7 +491,7 @@ Write-Host ""
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
-Write-Host "── Summary ───────────────────────────────────────────────────────────" -ForegroundColor Cyan
+Write-Host "-- Summary ---------------------------------------------------------------" -ForegroundColor Cyan
 Write-Host ("sourcesSelected:              " + $script:sourcesSelected)
 Write-Host ("sourcesHealthy:               " + $script:sourcesHealthy)
 Write-Host ("rawItemsFetched:              " + $script:rawItemsFetched)
@@ -517,7 +517,7 @@ if ($MaxSources -le 5) {
 }
 
 # ── Score distribution (from recommendations API) ─────────────────────────────
-Write-Host "── Score Distribution ────────────────────────────────────────────────" -ForegroundColor Cyan
+Write-Host "-- Score Distribution ----------------------------------------------------" -ForegroundColor Cyan
 try {
   $distResp = Invoke-RestMethod -Method Get -Uri ($Base + "/api/recommendations?windowHours=72&limit=200") -TimeoutSec 20 -ErrorAction Stop
   $distItems = @()
@@ -530,17 +530,17 @@ try {
   $dist50_54 = @($distItems | Where-Object { $_.recommendationScore -ge 50 -and $_.recommendationScore -lt 55 }).Count
   $distBelow = @($distItems | Where-Object { $_.recommendationScore -lt 50 }).Count
 
-  Write-Host ("  80+    : " + $dist80p   + " 条") -ForegroundColor Green
-  Write-Host ("  72-79  : " + $dist72_79 + " 条") -ForegroundColor Cyan
-  Write-Host ("  65-71  : " + $dist65_71 + " 条") -ForegroundColor Cyan
-  Write-Host ("  55-64  : " + $dist55_64 + " 条") -ForegroundColor Gray
-  Write-Host ("  50-54  : " + $dist50_54 + " 条") -ForegroundColor Gray
-  Write-Host ("  <50    : " + $distBelow + " 条") -ForegroundColor DarkGray
+  Write-Host ("  80+    : " + $dist80p)   -ForegroundColor Green
+  Write-Host ("  72-79  : " + $dist72_79) -ForegroundColor Cyan
+  Write-Host ("  65-71  : " + $dist65_71) -ForegroundColor Cyan
+  Write-Host ("  55-64  : " + $dist55_64) -ForegroundColor Gray
+  Write-Host ("  50-54  : " + $dist50_54) -ForegroundColor Gray
+  Write-Host ("  <50    : " + $distBelow) -ForegroundColor DarkGray
   Write-Host ""
 
   # Explain gap if exists
   $todayHV = $snapshotThresholds.highValue
-  $gapRange = "(" + $dist55_64 + " 条在 55-" + ($todayHV - 1) + " 区间，进入近期观察)"
+  $gapRange = "(" + $dist55_64 + " items in 55-" + ($todayHV - 1) + " observe_backlog range)"
   if ($todayHV -gt 65) {
     Write-Host ("  Note: today_recommendation threshold=" + $todayHV + ". Items 65-" + ($todayHV-1) + " go to observe_backlog.") -ForegroundColor Gray
     Write-Host ("  Gap between today and observe: " + $gapRange) -ForegroundColor DarkGray
@@ -552,7 +552,7 @@ try {
 }
 
 if ($warnings.Count -gt 0) {
-  Write-Host "── Warnings ──────────────────────────────────────────────────────────" -ForegroundColor Yellow
+  Write-Host "-- Warnings --------------------------------------------------------------" -ForegroundColor Yellow
   $warnings | ForEach-Object { Write-Host ("  * " + $_) -ForegroundColor Yellow }
   Write-Host ""
 }
@@ -656,21 +656,26 @@ $broadHV = $profileThresholds["broad"].highValue
 if ($conservativeHV -ne $broadHV) {
   Mark-Ok ("Profile thresholds are distinct: conservative.highValue=" + $conservativeHV + " broad.highValue=" + $broadHV)
 } else {
-  Mark-Fail "Profile thresholds are identical — settings have no effect!"
+  Mark-Fail "Profile thresholds are identical -- settings have no effect!"
   $thresholdFail = $true
 }
 
 if ($thresholdFail) { $script:allOk = $false }
 Write-Host ""
 
-Write-Host "── Daily Push Core Criteria ──────────────────────────────────────────" -ForegroundColor Cyan
+Write-Host "-- Daily Push Core Criteria ----------------------------------------------" -ForegroundColor Cyan
 $criteriaColor = if ($corePasses) { "Green" } else { "Red" }
-Write-Host ("  todayRecommendations >= 1:       " + $script:todayRecommendationsCount + " -- " + (if ($script:todayRecommendationsCount -ge 1) { "PASS" } else { "FAIL" })) -ForegroundColor $criteriaColor
-Write-Host ("  previousDayInTodayCount == 0:    " + $script:previousDayInTodayCount + " -- " + (if ($script:previousDayInTodayCount -eq 0) { "PASS" } else { "FAIL" })) -ForegroundColor $criteriaColor
-Write-Host ("  hiddenDueToDeepDiveBudget == 0:  " + $script:hiddenDueToDeepDiveBudgetCount + " -- " + (if ($script:hiddenDueToDeepDiveBudgetCount -eq 0) { "PASS" } else { "FAIL" })) -ForegroundColor $criteriaColor
-Write-Host ("  threshold violations == 0:        " + (if ($thresholdFail) { "FAIL (see above)" } else { "PASS" })) -ForegroundColor (if ($thresholdFail) { "Red" } else { "Green" })
+$todayPass   = if ($script:todayRecommendationsCount -ge 1)      { "PASS" } else { "FAIL" }
+$prevPass    = if ($script:previousDayInTodayCount -eq 0)        { "PASS" } else { "FAIL" }
+$hiddenPass  = if ($script:hiddenDueToDeepDiveBudgetCount -eq 0) { "PASS" } else { "FAIL" }
+$threshPass  = if ($thresholdFail) { "FAIL (see above)" } else { "PASS" }
+$threshColor = if ($thresholdFail) { "Red" } else { "Green" }
+Write-Host ("  todayRecommendations >= 1:       " + $script:todayRecommendationsCount + " -- " + $todayPass)  -ForegroundColor $criteriaColor
+Write-Host ("  previousDayInTodayCount == 0:    " + $script:previousDayInTodayCount   + " -- " + $prevPass)   -ForegroundColor $criteriaColor
+Write-Host ("  hiddenDueToDeepDiveBudget == 0:  " + $script:hiddenDueToDeepDiveBudgetCount + " -- " + $hiddenPass) -ForegroundColor $criteriaColor
+Write-Host ("  threshold violations == 0:        " + $threshPass) -ForegroundColor $threshColor
 Write-Host ""
-Write-Host "── Structural Guarantees ─────────────────────────────────────────────" -ForegroundColor Gray
+Write-Host "-- Structural Guarantees -------------------------------------------------" -ForegroundColor Gray
 Write-Host "  Today recommendations are threshold-based, not fixed top-5" -ForegroundColor DarkGray
 Write-Host "  Observe backlog is separated from today recommendations" -ForegroundColor DarkGray
 Write-Host "  Previous-day items are excluded from today recommendations" -ForegroundColor DarkGray
