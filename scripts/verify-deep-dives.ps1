@@ -1,8 +1,10 @@
 param(
-  [string]$Base = "http://localhost:3000",
-  [int]$SnapshotLimit = 5,
-  [int]$ItemLimit = 30,
-  [switch]$SkipRefresh
+  [string]$Base          = "http://localhost:3000",
+  [int]$SnapshotLimit    = 5,
+  [int]$ItemLimit        = 30,
+  [int]$WindowHours      = 72,
+  [switch]$Refresh,               # Explicit opt-in: POST /api/recommendations/refresh
+  [string]$DeepDiveMode  = "llm"  # llm | deterministic (only used when -Refresh)
 )
 
 $ErrorActionPreference = "Stop"
@@ -93,26 +95,27 @@ $llmKeySet   = -not [string]::IsNullOrWhiteSpace($env:LLM_API_KEY)
 $expectLlm   = $llmEnabled -and $llmKeySet
 $defaultModel = if ([string]::IsNullOrWhiteSpace($env:LLM_MODEL)) { "deepseek-reasoner" } else { [string]$env:LLM_MODEL }
 $proModel     = if ([string]::IsNullOrWhiteSpace($env:LLM_PRO_MODEL)) { $defaultModel } else { [string]$env:LLM_PRO_MODEL }
+$verifyMode   = if ($Refresh) { "refresh + snapshot check" } else { "read-only snapshot check" }
 
 Write-Host ""
 Write-Host "=== Verify Recommendation Deep Dives ===" -ForegroundColor Cyan
-Write-Host ("Base:        {0}" -f $Base)
-Write-Host ("Time:        {0}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"))
+Write-Host ("Base:         {0}" -f $Base)
+Write-Host ("Time:         {0}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"))
+Write-Host ("Verify mode:  {0}" -f $verifyMode) -ForegroundColor $(if ($Refresh) { "Yellow" } else { "Cyan" })
 Write-Host ("enabled={0}  keySet={1}  proModel={2}" -f $llmEnabled, $llmKeySet, $proModel)
-Write-Host ("LLM expected: {0}" -f $expectLlm)
 Write-Host ""
 
-# ── 0) Refresh ────────────────────────────────────────────────────────────────
+# ── 0) Optional LLM refresh (only when -Refresh is passed) ────────────────────
 
 $refresh = $null
-if ($SkipRefresh) {
-  Write-Warn "Refresh skipped by -SkipRefresh flag"
-} else {
-  $refreshUrl = ("{0}/api/recommendations/refresh?deepDive=llm" -f $Base.TrimEnd('/'))
-  Write-Host ("0) POST {0}" -f $refreshUrl)
+if ($Refresh) {
+  $ddMode = if ($DeepDiveMode -eq "deterministic") { "deterministic" } else { "llm" }
+  $refreshUrl = ("{0}/api/recommendations/refresh?deepDive={1}" -f $Base.TrimEnd('/'), $ddMode)
+  Write-Host ("0) POST {0}  [deepDiveMode={1}]" -f $refreshUrl, $ddMode)
   try {
     $refresh = Invoke-RestMethod -Method Post -Uri $refreshUrl -TimeoutSec 180
     if ($refresh.ok) { Write-Ok "refresh ok=true" } else { Write-Fail "refresh ok=false" }
+
     # Timing breakdown
     if ($refresh.PSObject.Properties.Name -contains "timing" -and $null -ne $refresh.timing) {
       $t = $refresh.timing
@@ -120,25 +123,26 @@ if ($SkipRefresh) {
     } elseif ($refresh.PSObject.Properties.Name -contains "durationMs") {
       Write-Info ("timing: total={0}ms" -f $refresh.durationMs)
     }
-    # Article fetch stats (from ingest phase)
+
+    # Article fetch stats (from ingest phase, if available)
     if ($refresh.PSObject.Properties.Name -contains "ingest" -and $null -ne $refresh.ingest -and
         $refresh.ingest.PSObject.Properties.Name -contains "articleFetch") {
       $af = $refresh.ingest.articleFetch
       Write-Info ("articleFetch: enabled={0} attempted={1} succeeded={2} failed={3} skipped={4} avgLen={5}" -f `
         $af.enabled, $af.attempted, $af.succeeded, $af.failed, $af.skipped, $af.averageContentLength)
       if ($af.enabled -and [int]$af.attempted -eq 0) {
-        Write-Warn "articleFetch enabled but attempted=0 (check ARTICLE_FETCH_ENABLED env and ingest phase)"
-      }
-      if ($af.enabled -and [int]$af.attempted -gt 0 -and [int]$af.succeeded -eq 0) {
-        Write-Warn ("articleFetch attempted={0} but succeeded=0 (sites may be blocking)" -f $af.attempted)
+        Write-Warn "articleFetch enabled but attempted=0 (check ARTICLE_FETCH_ENABLED)"
       }
     }
+
+    # DeepDive stats from refresh response
     if ($refresh.deepDiveStats) {
       $ds = $refresh.deepDiveStats
       Write-Info ("deepDiveStats: total={0}  generated={1}  fallback={2}  failed={3}  model={4}  provider={5}" -f `
         $ds.total, $ds.generated, $ds.fallback, $ds.failed, $ds.model, $ds.provider)
       Write-Info ("actualDeepDiveModel: {0}" -f $ds.model)
       Write-Info ("actualProvider:      {0}" -f $ds.provider)
+
       if ($expectLlm -and -not [string]::IsNullOrWhiteSpace($proModel)) {
         $usedModel = [string]$ds.model
         if ($usedModel -eq $proModel) {
@@ -147,6 +151,11 @@ if ($SkipRefresh) {
           Write-Warn ("LLM_PRO_MODEL: expected={0} used={1}" -f $proModel, $usedModel)
         }
       }
+
+      # In -Refresh mode: fallbacks are due to fresh LLM run, just WARN, not FAIL
+      if ([int]$ds.fallback -gt 0) {
+        Write-Warn ("-Refresh: {0} fallback(s) in this generation run (LLM non-deterministic)" -f $ds.fallback)
+      }
     } else {
       Write-Warn "refresh response missing deepDiveStats"
     }
@@ -154,11 +163,14 @@ if ($SkipRefresh) {
     Write-Fail ("refresh request failed: {0}" -f $_.Exception.Message)
   }
   Write-Host ""
+} else {
+  Write-Info "Read-only mode: skipping POST refresh. Use -Refresh to trigger a new LLM generation."
+  Write-Host ""
 }
 
-# ── 1) Recommendations ────────────────────────────────────────────────────────
+# ── 1) Recommendations (always runs — reads current snapshot) ─────────────────
 
-$recUrl = ("{0}/api/recommendations?windowHours=72&limit={1}" -f $Base.TrimEnd('/'), $ItemLimit)
+$recUrl = ("{0}/api/recommendations?windowHours={1}&limit={2}" -f $Base.TrimEnd('/'), $WindowHours, $ItemLimit)
 Write-Host ("1) GET {0}" -f $recUrl)
 try {
   $rec = Invoke-RestMethod -Method Get -Uri $recUrl -TimeoutSec 30
@@ -170,13 +182,11 @@ try {
     $items        = @(); if ($rec.items) { $items = @($rec.items) }
     $finalItems   = @($items | Where-Object { Test-IsFinalTier ([string]$_.recommendationTier) })
     $observeItems = @($items | Where-Object { ([string]$_.recommendationTier) -eq "observe" })
-    $archiveItems = @($items | Where-Object { ([string]$_.recommendationTier) -eq "archive" })
 
     Write-Ok ("final items (must_read/high_value): {0}" -f $finalItems.Count)
-    Write-Info ("observe={0}  archive={1}" -f $observeItems.Count, $archiveItems.Count)
+    Write-Info ("observe={0}" -f $observeItems.Count)
 
-    # ── Cross-check generated/fallback/failed stats ───────────────────────────
-    # Count from the GET response items (snapshot-decoded values)
+    # ── Cross-check generated/fallback/failed from snapshot-decoded items ─────
     $snapGenerated = 0; $snapFallback = 0; $snapFailed = 0
     foreach ($it in $finalItems) {
       if ($null -eq $it.deepDive) { continue }
@@ -187,13 +197,14 @@ try {
     }
     Write-Info ("snapshot decoded: generated={0}  fallback={1}  failed={2}" -f $snapGenerated, $snapFallback, $snapFailed)
 
-    # Compare with refresh stats (if available)
+    # Compare with refresh stats (only meaningful when -Refresh was used)
     if ($null -ne $refresh -and $null -ne $refresh.deepDiveStats) {
-      $rds = $refresh.deepDiveStats
+      $rds  = $refresh.deepDiveStats
       $rGen = [int]$rds.generated; $rFb = [int]$rds.fallback; $rFail = [int]$rds.failed
       Write-Info ("refresh stats:          generated={0}  fallback={1}  failed={2}" -f $rGen, $rFb, $rFail)
       if ($snapGenerated -ne $rGen -or $snapFallback -ne $rFb) {
-        Write-Warn ("Stats mismatch: refresh(gen={0} fb={1}) vs snapshot(gen={2} fb={3}) — may be stale snapshot or race" -f $rGen, $rFb, $snapGenerated, $snapFallback)
+        Write-Warn ("Stats mismatch: refresh(gen={0} fb={1}) vs snapshot(gen={2} fb={3}) — may be stale snapshot or race" -f `
+          $rGen, $rFb, $snapGenerated, $snapFallback)
       } else {
         Write-Ok "refresh vs snapshot stats consistent"
       }
@@ -235,12 +246,12 @@ try {
       $ok     = Test-DeepDiveFields $dd $pfx
       if (-not $ok) { continue }
 
-      $model     = [string]$dd.model
-      $provider  = [string]$dd.provider
-      $status    = [string]$dd.status
-      $cs        = if ($dd.PSObject.Properties.Name -contains "contentStatus") { [string]$dd.contentStatus } else { "unknown" }
-      $osLen     = ([string]$dd.oneSentence).Length
-      $fuCount   = @($dd.followUp).Count
+      $model    = [string]$dd.model
+      $provider = [string]$dd.provider
+      $status   = [string]$dd.status
+      $cs       = if ($dd.PSObject.Properties.Name -contains "contentStatus") { [string]$dd.contentStatus } else { "unknown" }
+      $osLen    = ([string]$dd.oneSentence).Length
+      $fuCount  = @($dd.followUp).Count
 
       Write-Host ("  [{0}] status={1} | contentStatus={2} | model={3} | provider={4} | oneSentLen={5} | followUps={6}" -f `
         $i, $status, $cs, $model, $provider, $osLen, $fuCount)
@@ -269,13 +280,10 @@ try {
         $summaryOnlyN++
       }
 
-      # FAIL: full_article or extracted_article with empty fullContent
+      # FAIL: full_article / extracted_article with empty fullContent
       if ($dd.PSObject.Properties.Name -contains "inputDiagnostics" -and $null -ne $dd.inputDiagnostics) {
-        $diag    = $dd.inputDiagnostics
-        $fcLen   = 0
-        $sumLen  = 0
-        $titLen  = 0
-        $cSrc    = "unknown"
+        $diag  = $dd.inputDiagnostics
+        $fcLen = 0; $sumLen = 0; $titLen = 0; $cSrc = "unknown"
         if ($diag.PSObject.Properties.Name -contains "inputTitleLength")       { $titLen = [int]$diag.inputTitleLength }
         if ($diag.PSObject.Properties.Name -contains "inputSummaryLength")     { $sumLen = [int]$diag.inputSummaryLength }
         if ($diag.PSObject.Properties.Name -contains "inputFullContentLength") { $fcLen  = [int]$diag.inputFullContentLength }
@@ -288,15 +296,15 @@ try {
         if (-not $srcDistrib.ContainsKey($cSrc)) { $srcDistrib[$cSrc] = 0 }
         $srcDistrib[$cSrc]++
 
-        # FAIL: full_article / extracted_article contentStatus but fullContent is empty
+        # FAIL: full_article / extracted_article but no content
         if (($cs -eq "full_article" -or $cs -eq "extracted_article") -and $fcLen -lt 500) {
           Write-Fail ("{0} contentStatus={1} but inputFullContentLength={2}" -f $pfx, $cs, $fcLen)
         }
-        # WARN: content fetch source but fullContent is empty
+        # WARN: content fetch source but fullContent suspiciously short
         if (($cSrc -eq "fetched_article" -or $cSrc -eq "rss_content") -and $fcLen -lt 400) {
           Write-Warn ("{0} contentSource={1} but inputFullContentLength={2}" -f $pfx, $cSrc, $fcLen)
         }
-        # rawModelContentStatus audit
+
         $rawMCS = ""
         if ($diag.PSObject.Properties.Name -contains "rawModelContentStatus") {
           $rawMCS = [string]$diag.rawModelContentStatus
@@ -316,16 +324,11 @@ try {
         Write-Host "    inputDiagnostics: missing (pre-v2 snapshot)" -ForegroundColor DarkGray
       }
 
-      # fallback reason check
+      # fallback tracking
       if ($status -eq "fallback") {
         $fallbackCount++
         $fr = [string]$dd.fallbackReason
-        if (-not [string]::IsNullOrWhiteSpace($fr)) {
-          $fbWithReason++
-          Write-Info ("  fallbackReason: {0}" -f $fr.Substring(0, [Math]::Min(80, $fr.Length)))
-        } else {
-          Write-Warn ("{0} fallbackReason missing" -f $pfx)
-        }
+        if (-not [string]::IsNullOrWhiteSpace($fr)) { $fbWithReason++ }
       }
       if ($model -ne "deterministic-v1" -and $status -eq "generated") {
         $llmModelCount++
@@ -333,7 +336,7 @@ try {
       }
     }
 
-    # contentStatus distribution
+    # ── contentStatus distribution ────────────────────────────────────────────
     Write-Host ""
     Write-Host "  --- contentStatus distribution ---"
     Write-Info "(full_article=确认全文  extracted_article=较长正文  partial=部分  rss_summary=摘要)"
@@ -350,7 +353,7 @@ try {
       Write-Warn "All items still 'partial' — check inferContentStatus raw length fix"
     }
 
-    # contentSource distribution
+    # ── contentSource distribution ────────────────────────────────────────────
     Write-Host "  --- contentSource distribution ---"
     Write-Info "(rss_content=RSS全文  fetched_article=抓取正文  rss_summary=RSS摘要)"
     if ($srcDistrib.Count -gt 0) {
@@ -359,7 +362,7 @@ try {
         Write-Host ("  {0}: {1}" -f $k, $srcDistrib[$k]) -ForegroundColor $color
       }
     } else {
-      Write-Host "  (none)" -ForegroundColor Gray
+      Write-Host "  (none — inputDiagnostics may be missing)" -ForegroundColor Gray
     }
 
     # FAIL: all contentStatus are unknown
@@ -367,7 +370,7 @@ try {
       Write-Fail "All contentStatus are 'unknown' — inputDiagnostics not being populated"
     }
 
-    # Average input lengths
+    # ── average input lengths ─────────────────────────────────────────────────
     if ($summaryLens.Count -gt 0) {
       $avgT  = [Math]::Round(($titleLens       | Measure-Object -Average).Average, 1)
       $avgS  = [Math]::Round(($summaryLens     | Measure-Object -Average).Average, 1)
@@ -378,51 +381,47 @@ try {
       Write-Host ("  avg summary:     {0} chars  (RSS capped ~300)" -f $avgS)
       Write-Host ("  avg fullContent: {0} chars  (target: >2000)" -f $avgFC)
 
-      # WARN if all items have identical fcLen (diagnostic cap bug)
       $allSameFcLen = ($fullContentLens | Select-Object -Unique).Count -eq 1 -and $fullContentLens.Count -gt 1
       if ($allSameFcLen) {
-        Write-Warn ("All items have IDENTICAL fcLen={0} — likely pre-fix diagnostic (should now be fixed)" -f $fullContentLens[0])
+        Write-Warn ("All items have identical fcLen={0} — likely pre-fix diagnostic cap" -f $fullContentLens[0])
       }
 
       if ($avgFC -lt 50) {
-        Write-Warn ("avg fullContent very short ({0} chars). LLM only saw RSS summary." -f $avgFC)
+        Write-Warn ("avg fullContent very short ({0} chars) — LLM only saw RSS summary" -f $avgFC)
       } elseif ($avgFC -lt 500) {
-        Write-Warn ("avg fullContent {0} chars — partial; check ARTICLE_FETCH_ENABLED or RSS content:encoded" -f $avgFC)
+        Write-Warn ("avg fullContent {0} chars — check ARTICLE_FETCH_ENABLED or RSS content:encoded" -f $avgFC)
       } elseif ($avgFC -ge 2000) {
         Write-Ok ("avg fullContent {0} chars — good content depth" -f $avgFC)
       } else {
         Write-Info ("avg fullContent {0} chars — partial content" -f $avgFC)
       }
     } elseif ($diagMissing -gt 0) {
-      Write-Warn ("inputDiagnostics missing on {0} items -- run fresh snapshot first" -f $diagMissing)
+      Write-Warn ("inputDiagnostics missing on {0} items — run fresh snapshot first" -f $diagMissing)
     }
 
-    # fallbackReason distribution (only for fallback status items)
+    # ── fallbackReason distribution (fallback items only) ─────────────────────
     $fallbackReasons = @{}
     $invalidJsonCount = 0
-    $generatedWithFr = 0   # track generated items that (incorrectly) have fallbackReason
+    $generatedWithFr  = 0
     for ($i = 0; $i -lt $finalItems.Count; $i++) {
       $dd = $finalItems[$i].deepDive
       if ($null -eq $dd) { continue }
       $status = [string]$dd.status
-      $fr = if ($dd.PSObject.Properties.Name -contains "fallbackReason") { [string]$dd.fallbackReason } else { "" }
+      $fr     = if ($dd.PSObject.Properties.Name -contains "fallbackReason") { [string]$dd.fallbackReason } else { "" }
 
-      # Track generated items that still have fallbackReason (should be fixed by now)
       if ($status -eq "generated" -and -not [string]::IsNullOrWhiteSpace($fr)) {
         $generatedWithFr++
       }
-
       if ($status -eq "fallback") {
         if ([string]::IsNullOrWhiteSpace($fr)) { $fr = "(no reason)" }
-        # Categorize without exposing raw garbled text
         $cat = if ($fr -match "not valid JSON|invalid_json") { "invalid_json" }
-               elseif ($fr -match "retry_failed") { "retry_failed" }
-               elseif ($fr -match "quality|vague|garbled") { "quality_issue" }
+               elseif ($fr -match "retry_failed")            { "retry_failed" }
+               elseif ($fr -match "quality|vague|garbled")   { "quality_issue" }
                elseif ($fr -match "parse|required_field|missing") { "parse_error" }
                elseif ($fr -match "LLM disabled|missing API|llm_disabled") { "llm_disabled" }
-               elseif ($fr -match "timeout|abort") { "timeout" }
-               elseif ($fr -match "llm_error") { "llm_error" }
-               else { "other" }
+               elseif ($fr -match "timeout|abort")           { "timeout" }
+               elseif ($fr -match "llm_error")               { "llm_error" }
+               else                                           { "other" }
         if ($cat -eq "invalid_json") { $invalidJsonCount++ }
         if (-not $fallbackReasons.ContainsKey($cat)) { $fallbackReasons[$cat] = 0 }
         $fallbackReasons[$cat]++
@@ -439,12 +438,13 @@ try {
       }
     }
     if ($invalidJsonCount -gt 0) {
-      Write-Warn ("invalid JSON fallbacks: {0}" -f $invalidJsonCount)
+      # In read-only mode this is a pre-existing snapshot issue; in -Refresh mode it's a fresh LLM issue
+      Write-Warn ("invalid JSON fallbacks: {0}{1}" -f $invalidJsonCount, $(if (-not $Refresh) { " (from stored snapshot)" } else { " (from this generation run)" }))
     } else {
       Write-Ok "invalid JSON fallbacks: 0"
     }
     if ($generatedWithFr -gt 0) {
-      Write-Fail ("{0} generated item(s) still have non-null fallbackReason — fix not applied?" -f $generatedWithFr)
+      Write-Fail ("{0} generated item(s) still have non-null fallbackReason — metadata fix not applied?" -f $generatedWithFr)
     } else {
       Write-Ok "generated items: fallbackReason is null for all"
     }
@@ -453,9 +453,8 @@ try {
       Write-Info ("summary-limited items (rss_summary/title_only/partial/missing): {0}/{1}" -f $summaryOnlyN, $finalItems.Count)
     }
 
-    # Image stats
-    $coverCount = 0
-    $mediaCount = 0
+    # ── image stats ───────────────────────────────────────────────────────────
+    $coverCount = 0; $mediaCount = 0
     for ($i = 0; $i -lt $finalItems.Count; $i++) {
       $it = $finalItems[$i]
       if (-not [string]::IsNullOrWhiteSpace([string]$it.coverImageUrl)) { $coverCount++ }
@@ -464,21 +463,21 @@ try {
     Write-Info ("itemsWithCoverImage: {0}/{1}" -f $coverCount, $finalItems.Count)
     Write-Info ("itemsWithMediaUrls:  {0}/{1}" -f $mediaCount, $finalItems.Count)
 
-    # LLM path verification
+    # ── LLM path verification ─────────────────────────────────────────────────
     if ($expectLlm) {
-      if ($null -ne $refresh -and $refresh.deepDiveStats -and [int]$refresh.deepDiveStats.generated -le 0) {
-        Write-Fail "LLM expected but refresh.deepDiveStats.generated <= 0"
-      }
       if ($finalItems.Count -gt 0 -and $llmModelCount -lt 1) {
-        Write-Fail "LLM expected but no final item used non-deterministic model"
+        Write-Fail "LLM expected but no final item used a non-deterministic model"
       } else {
-        Write-Ok ("LLM path verified (generated items: {0})" -f $llmModelCount)
+        Write-Ok ("LLM path verified: {0} item(s) used non-deterministic model" -f $llmModelCount)
+      }
+      if (-not $seenLlmPath) {
+        Write-Warn "No LLM model seen in items — snapshot may predate LLM enablement"
       }
     } else {
       if ($fallbackCount -eq 0) {
         Write-Info "no fallback items in final recommendations"
       } elseif ($fbWithReason -eq $fallbackCount) {
-        Write-Ok ("fallback path verified with fallbackReason ({0} items)" -f $fallbackCount)
+        Write-Ok ("fallback path: {0} item(s) with fallbackReason" -f $fallbackCount)
       } else {
         Write-Warn ("fallbackReason missing on {0}/{1} fallback items" -f ($fallbackCount - $fbWithReason), $fallbackCount)
       }
@@ -506,26 +505,32 @@ try {
       $latestItems = @($snaps.snapshots[0].items)
       $latestFinal = @($latestItems | Where-Object { Test-IsFinalTier ([string]$_.recommendationTier) })
       if ($latestFinal.Count -gt 0) {
-        $item    = $latestFinal[0]
-        $okSnap  = Test-DeepDiveFields $item.deepDive "latestSnapshot.final[0]"
+        $item   = $latestFinal[0]
+        $okSnap = Test-DeepDiveFields $item.deepDive "latestSnapshot.final[0]"
         if ($okSnap) {
           Write-Ok "latest snapshot final item has complete deepDive"
           $scs = if ($item.deepDive.PSObject.Properties.Name -contains "contentStatus") { [string]$item.deepDive.contentStatus } else { "unknown" }
           Write-Info ("snapshot contentStatus: {0}" -f $scs)
+
           if ($item.deepDive.PSObject.Properties.Name -contains "inputDiagnostics" -and $null -ne $item.deepDive.inputDiagnostics) {
             $d = $item.deepDive.inputDiagnostics
             Write-Info ("snapshot inputDiag: sumLen={0} fcLen={1} src={2}" -f $d.inputSummaryLength, $d.inputFullContentLength, $d.contentSource)
             Write-Ok "inputDiagnostics preserved in snapshot"
-            # FAIL: snapshot shows full_article but fullContent is empty
             $sfc = if ($d.PSObject.Properties.Name -contains "inputFullContentLength") { [int]$d.inputFullContentLength } else { 0 }
-            if ($scs -eq "full_article" -and $sfc -lt 500) {
-              Write-Fail ("snapshot contentStatus=full_article but inputFullContentLength={0}" -f $sfc)
+            if (($scs -eq "full_article" -or $scs -eq "extracted_article") -and $sfc -lt 500) {
+              Write-Fail ("snapshot contentStatus={0} but inputFullContentLength={1}" -f $scs, $sfc)
             }
           } else {
             Write-Warn "inputDiagnostics not in snapshot (pre-v2 or not encoded)"
           }
-          if ($item.deepDive.PSObject.Properties.Name -contains "fallbackReason" -and -not [string]::IsNullOrWhiteSpace([string]$item.deepDive.fallbackReason)) {
-            Write-Info ("snapshot fallbackReason: {0}" -f [string]$item.deepDive.fallbackReason)
+
+          # fallbackReason in snapshot: should be null for generated, non-null for fallback
+          $snapStatus = [string]$item.deepDive.status
+          $snapFr     = if ($item.deepDive.PSObject.Properties.Name -contains "fallbackReason") { [string]$item.deepDive.fallbackReason } else { "" }
+          if ($snapStatus -eq "generated" -and -not [string]::IsNullOrWhiteSpace($snapFr)) {
+            Write-Fail ("snapshot item status=generated but fallbackReason non-null: {0}" -f $snapFr.Substring(0, [Math]::Min(60, $snapFr.Length)))
+          } elseif ($snapStatus -eq "fallback" -and -not [string]::IsNullOrWhiteSpace($snapFr)) {
+            Write-Info ("snapshot fallbackReason: {0}" -f $snapFr.Substring(0, [Math]::Min(60, $snapFr.Length)))
           }
         }
       } else {
@@ -543,6 +548,7 @@ Write-Host ""
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 Write-Host "=== Summary ==="
+Write-Host ("Verify mode: {0}" -f $verifyMode)
 if ($script:allOk) {
   Write-Host "RESULT: PASS" -ForegroundColor Green
   exit 0

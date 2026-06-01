@@ -51,6 +51,9 @@ Write-Host ("Mode:             {0}" -f $Mode)
 Write-Host ("enabled={0}  keySet={1}  fastModel={2}  proModel={3}" -f $enabled, $keySet, $fastModel, $proModel)
 Write-Host ("expectGenerated:  {0}" -f $expectGenerated)
 Write-Host ""
+Write-Host "NOTE: This script triggers a new LLM refresh (POST /api/recommendations/refresh)." -ForegroundColor Yellow
+Write-Host "      Use verify-deep-dives.ps1 (read-only by default) for stable snapshot checks." -ForegroundColor DarkGray
+Write-Host ""
 
 $url = ("{0}/api/recommendations/refresh?deepDive={1}" -f $Base.TrimEnd('/'), $Mode)
 Write-Host ("POST {0}" -f $url)
