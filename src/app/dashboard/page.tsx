@@ -420,13 +420,11 @@ export default async function DashboardPage() {
   const engineObserve = engineItems.filter(
     i => i.recommendationTier === 'observe' && i.recommendationBucket !== 'observe_backlog',
   )
-  // Today-only recommendations (today_recommendation bucket)
-  const engineTodayItems = engineItems.filter(
-    i => (i.recommendationTier === 'must_read' || i.recommendationTier === 'high_value') &&
-         i.recommendationBucket === 'today_recommendation',
-  )
-  const todayMRCount = engineTodayItems.filter(i => i.recommendationTier === 'must_read').length
-  const todayHVCount = engineTodayItems.filter(i => i.recommendationTier === 'high_value').length
+  // Today's recommendation counts.
+  // engineMustRead / engineHighValue already exclude backlog items (gate demotes them to observe tier),
+  // so these tier-based counts are reliable even when recommendationBucket is null (old snapshots).
+  const todayMRCount = engineMustRead.length
+  const todayHVCount = engineHighValue.length
 
   // Legacy snapshot items
   const snapshotItems = hasLegacySnapshot ? legacySnapshot.items : []
@@ -675,13 +673,18 @@ export default async function DashboardPage() {
             <div className="mb-2 flex items-center gap-2">
               <div className="h-1.5 w-1.5 rounded-full bg-primary" />
               <h2 className="section-title text-primary/80">
-                {hasEngineSnapshot ? "稳定推荐快照" : hasLegacySnapshot ? "快照推荐" : "暂无推荐"}
+                {hasEngineSnapshot
+                  ? (todayMRCount + todayHVCount > 0 ? '今日推荐' : '今日推荐（暂无）')
+                  : hasLegacySnapshot ? '快照推荐' : '暂无推荐'}
               </h2>
-              <span className="meta-text">
-                {hasEngineSnapshot ? engineItems.filter(i => i.recommendationTier !== 'archive').length
-                  : hasLegacySnapshot ? snapshotItems.length
-                  : 0} 条
-              </span>
+              {hasEngineSnapshot && todayMRCount + todayHVCount > 0 && (
+                <span className="meta-text">{todayMRCount + todayHVCount} 条</span>
+              )}
+              {hasEngineSnapshot && todayMRCount + todayHVCount > 0 && (
+                <span className="text-[10px] text-muted-foreground/40">
+                  · 阈值筛选，非固定 Top 5
+                </span>
+              )}
             </div>
 
             {/* Zero today-recommendation: structured empty state */}
@@ -710,10 +713,19 @@ export default async function DashboardPage() {
             <div className="overflow-hidden rounded-lg border border-border bg-card">
               {hasEngineSnapshot ? (
                 <>
-                  <EngineSectionBlock title="Must Read" items={engineMustRead} enableDetail
-                    empty="今日暂无新的 must_read 推荐" />
-                  <EngineSectionBlock title="High Value" items={engineHighValue} enableDetail
-                    empty="今日暂无新的 high_value 推荐" />
+                  {engineMustRead.length > 0 && (
+                    <EngineSectionBlock title="Must Read" items={engineMustRead} enableDetail
+                      empty="" />
+                  )}
+                  {engineHighValue.length > 0 && (
+                    <EngineSectionBlock title="High Value" items={engineHighValue} enableDetail
+                      empty="" />
+                  )}
+                  {engineMustRead.length === 0 && engineHighValue.length === 0 && (
+                    <div className="px-4 py-6 text-center text-xs text-muted-foreground">
+                      今日暂无达到阈值的推荐内容
+                    </div>
+                  )}
                   {engineObserve.length > 0 && (
                     <EngineSectionBlock title="Observe" items={engineObserve}
                       empty="" />
@@ -739,21 +751,37 @@ export default async function DashboardPage() {
               )}
             </div>
 
-            {/* ── Observe Backlog section — separate from today recommendations ── */}
+            {/* ── Observe Backlog — separate from today, limited to first 30 ── */}
             {engineObserveBacklog.length > 0 && (
               <div className="mt-4">
-                <div className="mb-1.5 flex items-center gap-2">
-                  <div className="h-1.5 w-1.5 rounded-full bg-sky-500/60" />
+                <div className="mb-1.5 flex items-center gap-2 flex-wrap">
+                  <div className="h-1.5 w-1.5 rounded-full bg-sky-500/60 shrink-0" />
                   <h2 className="section-title text-sky-600/80 dark:text-sky-400/80">
-                    观察榜 · 近72小时未推送
+                    观察榜
                   </h2>
                   <span className="meta-text">{engineObserveBacklog.length} 条</span>
-                  <span className="ml-2 text-[10px] text-muted-foreground/50">
-                    （非今日内容 · 分数接近推荐阈值 · 供参考）
+                  <span className="text-[10px] text-muted-foreground/40">
+                    · 近72h捕获 · 非今日内容 · 未达今日推荐阈值
                   </span>
+                  {engineObserveBacklog.length > 30 && (
+                    <span className="text-[10px] text-muted-foreground/50 ml-auto">
+                      显示前 30 条
+                    </span>
+                  )}
                 </div>
                 <div className="overflow-hidden rounded-lg border border-sky-500/20 bg-card">
-                  <EngineSectionBlock title="" items={engineObserveBacklog} empty="" />
+                  <EngineSectionBlock
+                    title=""
+                    items={engineObserveBacklog.slice(0, 30)}
+                    empty=""
+                  />
+                  {engineObserveBacklog.length > 30 && (
+                    <div className="px-4 py-2.5 border-t border-border bg-muted/20 text-center">
+                      <Link href="/feed" className="text-[10px] text-primary/70 hover:text-primary">
+                        还有 {engineObserveBacklog.length - 30} 条 · 查看全量流 →
+                      </Link>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
