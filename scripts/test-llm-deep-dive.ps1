@@ -258,7 +258,7 @@ if ($fullArtBadCount -eq 0 -and $final.Count -gt 0) {
 
 Write-Host ""
 Write-Host "--- Content Status Distribution ---"
-Write-Host "  (full_article=确认全文  extracted_article=较长正文  partial=部分  rss_summary=摘要)" -ForegroundColor DarkGray
+Write-Host "  (full_article=confirmed-full  extracted_article=long-partial  partial=partial  rss_summary=rss-only)" -ForegroundColor DarkGray
 foreach ($k in ($csDistrib.Keys | Sort-Object)) {
   $cnt   = $csDistrib[$k]
   $color = if ($k -eq "full_article") { "Green" } `
@@ -269,11 +269,11 @@ foreach ($k in ($csDistrib.Keys | Sort-Object)) {
   Write-Host ("  {0}: {1}" -f $k, $cnt) -ForegroundColor $color
 }
 if ($csDistrib.Count -eq 1 -and $csDistrib.ContainsKey("partial") -and $final.Count -gt 0) {
-  Write-Host "  [WARN] All items still 'partial' — check inferContentStatus raw length fix" -ForegroundColor Yellow
+  Write-Host "  [WARN] All items contentStatus=partial — check inferContentStatus raw length fix" -ForegroundColor Yellow
 }
 
 Write-Host "--- Content Source Distribution ---"
-Write-Host "  (rss_content=RSS全文  fetched_article=抓取正文  rss_summary=RSS摘要)" -ForegroundColor DarkGray
+Write-Host "  (rss_content=rss-full-text  fetched_article=fetched-article  rss_summary=rss-summary)" -ForegroundColor DarkGray
 if ($srcDistrib.Count -gt 0) {
   foreach ($k in ($srcDistrib.Keys | Sort-Object)) {
     $color = if ($k -eq "rss_content" -or $k -eq "fetched_article") { "Cyan" } else { "Gray" }
@@ -305,13 +305,13 @@ if ($titleLens.Count -gt 0) {
   }
 
   if ($avgFC -lt 50) {
-    Write-Host ("  [WARN] avg fullContent very short ({0} chars). No full text — LLM only saw RSS summary." -f $avgFC) -ForegroundColor Yellow
+    Write-Host ("  [WARN] avg fullContent very short ({0} chars) — LLM saw only RSS summary" -f $avgFC) -ForegroundColor Yellow
   } elseif ($avgFC -lt 500) {
-    Write-Host ("  [WARN] avg fullContent {0} chars — partial content, check article fetch / RSS content:encoded" -f $avgFC) -ForegroundColor Yellow
+    Write-Host ("  [WARN] avg fullContent {0} chars — partial content, check article fetch / RSS content:encoded field" -f $avgFC) -ForegroundColor Yellow
   } elseif ($avgFC -lt 2000) {
     Write-Host ("  [INFO] avg fullContent {0} chars — partial, consider enabling ARTICLE_FETCH_ENABLED" -f $avgFC) -ForegroundColor Gray
   } else {
-    Write-Host ("  [OK]   avg fullContent {0} chars — good content depth" -f $avgFC) -ForegroundColor Green
+    Write-Host ("  [OK]   avg fullContent {0} chars - good content depth" -f $avgFC) -ForegroundColor Green
   }
 } else {
   Write-Host "  [WARN] inputDiagnostics not present on any item -- run a fresh snapshot" -ForegroundColor Yellow
@@ -373,7 +373,10 @@ if ($res.deepDiveStats -and -not [string]::IsNullOrWhiteSpace([string]$res.deepD
 
 Write-Host ""
 Write-Host "--- Related Signals ---"
-$rsWithSig = 0; $rsTotal = 0; $rsBad = 0
+$rsWithSig     = 0; $rsTotal = 0; $rsBad = 0
+$rsRelTypeDist = @{}; $rsCoDistrib = @{}; $rsTopicDist = @{}
+$rsTopReasons  = @()
+
 for ($i = 0; $i -lt $final.Count; $i++) {
   $it = $final[$i]
   if (-not ($it.PSObject.Properties.Name -contains "relatedSignals")) { continue }
@@ -383,31 +386,97 @@ for ($i = 0; $i -lt $final.Count; $i++) {
   $rsTotal += $sigs.Count
   Write-Host ("  final[{0}] relatedSignals: {1}" -f $i, $sigs.Count) -ForegroundColor Cyan
 
-  # FAIL checks
-  if ($sigs.Count -gt 5) {
-    Write-Host ("[FAIL] final[{0}] relatedSignals.Count={1} > 5" -f $i, $sigs.Count) -ForegroundColor Red
-    $rsBad++
-  }
   foreach ($sig in $sigs) {
+    # FAIL: self-reference by URL
     if (-not [string]::IsNullOrWhiteSpace([string]$sig.url) -and [string]$sig.url -eq [string]$it.originalUrl) {
       Write-Host ("[FAIL] final[{0}] relatedSignal url matches self" -f $i) -ForegroundColor Red
       $rsBad++
     }
+    # FAIL: self-reference by id
     if (-not [string]::IsNullOrWhiteSpace([string]$sig.id) -and [string]$sig.id -eq [string]$it.id) {
       Write-Host ("[FAIL] final[{0}] relatedSignal id matches self" -f $i) -ForegroundColor Red
       $rsBad++
     }
+    # FAIL: count > 5
+    if ($sigs.Count -gt 5) {
+      Write-Host ("[FAIL] final[{0}] relatedSignals.Count={1} > 5" -f $i, $sigs.Count) -ForegroundColor Red
+      $rsBad++
+    }
+    # Relation type distribution
+    if ($sig.PSObject.Properties.Name -contains "relationTypes") {
+      foreach ($rt in @($sig.relationTypes)) {
+        $rtStr = [string]$rt
+        if (-not $rsRelTypeDist.ContainsKey($rtStr)) { $rsRelTypeDist[$rtStr] = 0 }
+        $rsRelTypeDist[$rtStr]++
+      }
+    }
+    # Company distribution
+    if ($sig.PSObject.Properties.Name -contains "matchedCompanies") {
+      foreach ($co in @($sig.matchedCompanies)) {
+        $coStr = [string]$co
+        if (-not $rsCoDistrib.ContainsKey($coStr)) { $rsCoDistrib[$coStr] = 0 }
+        $rsCoDistrib[$coStr]++
+      }
+    }
+    # Topic distribution
+    if ($sig.PSObject.Properties.Name -contains "matchedTopics") {
+      foreach ($t in @($sig.matchedTopics)) {
+        $tStr = [string]$t
+        if (-not $rsTopicDist.ContainsKey($tStr)) { $rsTopicDist[$tStr] = 0 }
+        $rsTopicDist[$tStr]++
+      }
+    }
+    # Collect sample reasons
+    $sigReason = [string]$sig.reason
+    if (-not [string]::IsNullOrWhiteSpace($sigReason)) {
+      $rsTopReasons += $sigReason.Substring(0, [Math]::Min(70, $sigReason.Length))
+    }
+    # Per-signal score info
+    $coList = if ($sig.PSObject.Properties.Name -contains "matchedCompanies") { ($sig.matchedCompanies -join ",") } else { "" }
+    $toList = if ($sig.PSObject.Properties.Name -contains "matchedTopics")    { ($sig.matchedTopics    -join ",") } else { "" }
+    Write-Host ("       score={0}  co=[{1}]  topics=[{2}]" -f $sig.score, $coList, $toList) -ForegroundColor DarkGray
   }
 }
 
 $avgRS2 = if ($final.Count -gt 0) { [Math]::Round($rsTotal / $final.Count, 1) } else { 0 }
 Write-Host ("  itemsWithRelatedSignals: {0}/{1}" -f $rsWithSig, $final.Count)
 Write-Host ("  avgRelatedSignals:       {0}" -f $avgRS2)
+Write-Host ("  totalRelatedSignals:     {0}" -f $rsTotal)
+
 if ($rsBad -eq 0 -and $final.Count -gt 0) {
   Write-Host "  relatedSignals integrity: OK" -ForegroundColor Green
 }
 if ($rsWithSig -eq 0 -and $final.Count -gt 0) {
-  Write-Host "  [WARN] No items have relatedSignals — run -Refresh to compute" -ForegroundColor Yellow
+  Write-Host "  [WARN] No items have relatedSignals — check if refresh produced final items" -ForegroundColor Yellow
+}
+
+# RelationType distribution
+if ($rsRelTypeDist.Count -gt 0) {
+  Write-Host "  --- relationTypes distribution ---"
+  foreach ($k in ($rsRelTypeDist.Keys | Sort-Object)) {
+    Write-Host ("    {0}: {1}" -f $k, $rsRelTypeDist[$k])
+  }
+}
+# Top companies
+if ($rsCoDistrib.Count -gt 0) {
+  Write-Host "  --- top matchedCompanies ---"
+  $rsCoDistrib.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 5 | ForEach-Object {
+    Write-Host ("    {0}: {1}" -f $_.Key, $_.Value) -ForegroundColor Cyan
+  }
+}
+# Top topics
+if ($rsTopicDist.Count -gt 0) {
+  Write-Host "  --- top matchedTopics ---"
+  $rsTopicDist.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 5 | ForEach-Object {
+    Write-Host ("    {0}: {1}" -f $_.Key, $_.Value) -ForegroundColor Cyan
+  }
+}
+# Sample reasons
+if ($rsTopReasons.Count -gt 0) {
+  Write-Host "  --- sample relation reasons ---"
+  $rsTopReasons | Select-Object -Unique -First 3 | ForEach-Object {
+    Write-Host ("    reason: {0}" -f $_) -ForegroundColor Gray
+  }
 }
 
 Write-Host ""

@@ -107,27 +107,27 @@ Write-Host ""
 
 # ── 0) Optional LLM refresh (only when -Refresh is passed) ────────────────────
 
-$refresh = $null
+$refreshResult = $null
 if ($Refresh) {
   $ddMode = if ($DeepDiveMode -eq "deterministic") { "deterministic" } else { "llm" }
   $refreshUrl = ("{0}/api/recommendations/refresh?deepDive={1}" -f $Base.TrimEnd('/'), $ddMode)
   Write-Host ("0) POST {0}  [deepDiveMode={1}]" -f $refreshUrl, $ddMode)
   try {
-    $refresh = Invoke-RestMethod -Method Post -Uri $refreshUrl -TimeoutSec 180
-    if ($refresh.ok) { Write-Ok "refresh ok=true" } else { Write-Fail "refresh ok=false" }
+    $refreshResult = Invoke-RestMethod -Method Post -Uri $refreshUrl -TimeoutSec 180
+    if ($refreshResult.ok) { Write-Ok "refresh ok=true" } else { Write-Fail "refresh ok=false" }
 
     # Timing breakdown
-    if ($refresh.PSObject.Properties.Name -contains "timing" -and $null -ne $refresh.timing) {
-      $t = $refresh.timing
+    if ($refreshResult.PSObject.Properties.Name -contains "timing" -and $null -ne $refreshResult.timing) {
+      $t = $refreshResult.timing
       Write-Info ("timing: total={0}ms  query={1}ms  deepDive={2}ms" -f $t.totalMs, $t.queryMs, $t.deepDiveMs)
-    } elseif ($refresh.PSObject.Properties.Name -contains "durationMs") {
-      Write-Info ("timing: total={0}ms" -f $refresh.durationMs)
+    } elseif ($refreshResult.PSObject.Properties.Name -contains "durationMs") {
+      Write-Info ("timing: total={0}ms" -f $refreshResult.durationMs)
     }
 
     # Article fetch stats (from ingest phase, if available)
-    if ($refresh.PSObject.Properties.Name -contains "ingest" -and $null -ne $refresh.ingest -and
-        $refresh.ingest.PSObject.Properties.Name -contains "articleFetch") {
-      $af = $refresh.ingest.articleFetch
+    if ($refreshResult.PSObject.Properties.Name -contains "ingest" -and $null -ne $refreshResult.ingest -and
+        $refreshResult.ingest.PSObject.Properties.Name -contains "articleFetch") {
+      $af = $refreshResult.ingest.articleFetch
       Write-Info ("articleFetch: enabled={0} attempted={1} succeeded={2} failed={3} skipped={4} avgLen={5}" -f `
         $af.enabled, $af.attempted, $af.succeeded, $af.failed, $af.skipped, $af.averageContentLength)
       if ($af.enabled -and [int]$af.attempted -eq 0) {
@@ -136,8 +136,8 @@ if ($Refresh) {
     }
 
     # DeepDive stats from refresh response
-    if ($refresh.deepDiveStats) {
-      $ds = $refresh.deepDiveStats
+    if ($refreshResult.deepDiveStats) {
+      $ds = $refreshResult.deepDiveStats
       Write-Info ("deepDiveStats: total={0}  generated={1}  fallback={2}  failed={3}  model={4}  provider={5}" -f `
         $ds.total, $ds.generated, $ds.fallback, $ds.failed, $ds.model, $ds.provider)
       Write-Info ("actualDeepDiveModel: {0}" -f $ds.model)
@@ -161,8 +161,8 @@ if ($Refresh) {
     }
 
     # relatedSignals stats from refresh (if available)
-    if ($refresh.PSObject.Properties.Name -contains "relatedSignals" -and $null -ne $refresh.relatedSignals) {
-      $rs = $refresh.relatedSignals
+    if ($refreshResult.PSObject.Properties.Name -contains "relatedSignals" -and $null -ne $refreshResult.relatedSignals) {
+      $rs = $refreshResult.relatedSignals
       Write-Info ("relatedSignals: ms={0}ms  pool={1}  itemsWithSignals={2}  avgSignals={3}" -f `
         $rs.ms, $rs.candidatePoolSize, $rs.itemsWithSignals, $rs.avgSignals)
     }
@@ -205,12 +205,12 @@ try {
     Write-Info ("snapshot decoded: generated={0}  fallback={1}  failed={2}" -f $snapGenerated, $snapFallback, $snapFailed)
 
     # Compare with refresh stats (only meaningful when -Refresh was used)
-    if ($null -ne $refresh -and $null -ne $refresh.deepDiveStats) {
-      $rds  = $refresh.deepDiveStats
+    if ($null -ne $refreshResult -and $null -ne $refreshResult.deepDiveStats) {
+      $rds  = $refreshResult.deepDiveStats
       $rGen = [int]$rds.generated; $rFb = [int]$rds.fallback; $rFail = [int]$rds.failed
       Write-Info ("refresh stats:          generated={0}  fallback={1}  failed={2}" -f $rGen, $rFb, $rFail)
       if ($snapGenerated -ne $rGen -or $snapFallback -ne $rFb) {
-        Write-Warn ("Stats mismatch: refresh(gen={0} fb={1}) vs snapshot(gen={2} fb={3}) — may be stale snapshot or race" -f `
+        Write-Warn ("Stats mismatch: refresh(gen={0} fb={1}) vs snapshot(gen={2} fb={3}) - may be stale snapshot or race" -f `
           $rGen, $rFb, $snapGenerated, $snapFallback)
       } else {
         Write-Ok "refresh vs snapshot stats consistent"
@@ -346,7 +346,7 @@ try {
     # ── contentStatus distribution ────────────────────────────────────────────
     Write-Host ""
     Write-Host "  --- contentStatus distribution ---"
-    Write-Info "(full_article=确认全文  extracted_article=较长正文  partial=部分  rss_summary=摘要)"
+    Write-Info "(full_article=confirmed-full  extracted_article=long-partial  partial=partial  rss_summary=rss-only)"
     foreach ($k in ($csDistrib.Keys | Sort-Object)) {
       $cnt   = $csDistrib[$k]
       $color = if ($k -eq "full_article") { "Green" } `
@@ -357,12 +357,12 @@ try {
       Write-Host ("  {0}: {1}" -f $k, $cnt) -ForegroundColor $color
     }
     if ($csDistrib.Count -eq 1 -and $csDistrib.ContainsKey("partial") -and $finalItems.Count -gt 0) {
-      Write-Warn "All items still 'partial' — check inferContentStatus raw length fix"
+      Write-Warn "All items contentStatus=partial — check inferContentStatus raw length fix"
     }
 
     # ── contentSource distribution ────────────────────────────────────────────
     Write-Host "  --- contentSource distribution ---"
-    Write-Info "(rss_content=RSS全文  fetched_article=抓取正文  rss_summary=RSS摘要)"
+    Write-Info "(rss_content=rss-full-text  fetched_article=fetched-article  rss_summary=rss-summary)"
     if ($srcDistrib.Count -gt 0) {
       foreach ($k in ($srcDistrib.Keys | Sort-Object)) {
         $color = if ($k -eq "rss_content" -or $k -eq "fetched_article") { "Cyan" } else { "Gray" }
@@ -385,8 +385,8 @@ try {
       Write-Host ""
       Write-Host "  --- average input lengths ---"
       Write-Host ("  avg title:       {0} chars" -f $avgT)
-      Write-Host ("  avg summary:     {0} chars  (RSS capped ~300)" -f $avgS)
-      Write-Host ("  avg fullContent: {0} chars  (target: >2000)" -f $avgFC)
+      Write-Host ("  avg summary:     {0} chars  (RSS capped ~300 chars)" -f $avgS)
+      Write-Host ("  avg fullContent: {0} chars  (target: >2000 chars)" -f $avgFC)
 
       $allSameFcLen = ($fullContentLens | Select-Object -Unique).Count -eq 1 -and $fullContentLens.Count -gt 1
       if ($allSameFcLen) {
@@ -394,13 +394,13 @@ try {
       }
 
       if ($avgFC -lt 50) {
-        Write-Warn ("avg fullContent very short ({0} chars) — LLM only saw RSS summary" -f $avgFC)
+        Write-Warn ("avg fullContent very short ({0} chars) — LLM saw only RSS summary" -f $avgFC)
       } elseif ($avgFC -lt 500) {
-        Write-Warn ("avg fullContent {0} chars — check ARTICLE_FETCH_ENABLED or RSS content:encoded" -f $avgFC)
+        Write-Warn ("avg fullContent {0} chars — check ARTICLE_FETCH_ENABLED or RSS content:encoded field" -f $avgFC)
       } elseif ($avgFC -ge 2000) {
-        Write-Ok ("avg fullContent {0} chars — good content depth" -f $avgFC)
+        Write-Ok ("avg fullContent {0} chars - good content depth" -f $avgFC)
       } else {
-        Write-Info ("avg fullContent {0} chars — partial content" -f $avgFC)
+        Write-Info ("avg fullContent {0} chars — partial content depth" -f $avgFC)
       }
     } elseif ($diagMissing -gt 0) {
       Write-Warn ("inputDiagnostics missing on {0} items — run fresh snapshot first" -f $diagMissing)
@@ -437,7 +437,7 @@ try {
     Write-Host ""
     Write-Host "  --- fallbackReason distribution (fallback items only) ---"
     if ($fallbackReasons.Count -eq 0) {
-      Write-Ok "(no fallback items — all generated)"
+      Write-Ok "(no fallback items - all generated)"
     } else {
       foreach ($k in ($fallbackReasons.Keys | Sort-Object)) {
         $color = if ($k -eq "invalid_json" -or $k -eq "retry_failed") { "Yellow" } else { "Gray" }
@@ -471,7 +471,12 @@ try {
     Write-Info ("itemsWithMediaUrls:  {0}/{1}" -f $mediaCount, $finalItems.Count)
 
     # ── Related Signals checks ────────────────────────────────────────────────
-    $rsWithSignals = 0; $rsTotalCount = 0; $rsMaxCount = 0; $rsNoReason = 0
+    $rsWithSignals   = 0; $rsTotalCount = 0; $rsMaxCount = 0
+    $rsNoReason      = 0; $rsEmptyTypes = 0; $rsSameSourceOnly = 0
+    $rsTopReasons    = @()
+    $rsRelTypeDist   = @{}
+    $rsCoDistrib     = @{}
+
     for ($i = 0; $i -lt $finalItems.Count; $i++) {
       $it = $finalItems[$i]
       if (-not ($it.PSObject.Properties.Name -contains "relatedSignals")) { continue }
@@ -496,9 +501,38 @@ try {
           Write-Fail ("final[{0}] relatedSignal id matches item's own id" -f $i)
         }
         # WARN: reason is empty
-        if ([string]::IsNullOrWhiteSpace([string]$sig.reason)) { $rsNoReason++ }
+        $sigReason = [string]$sig.reason
+        if ([string]::IsNullOrWhiteSpace($sigReason)) {
+          $rsNoReason++
+        } else {
+          $rsTopReasons += $sigReason.Substring(0, [Math]::Min(60, $sigReason.Length))
+        }
+        # Check relationTypes
+        if ($sig.PSObject.Properties.Name -contains "relationTypes") {
+          $rtArr = @($sig.relationTypes)
+          if ($rtArr.Count -eq 0) {
+            $rsEmptyTypes++
+          }
+          foreach ($rt in $rtArr) {
+            $rtStr = [string]$rt
+            if (-not $rsRelTypeDist.ContainsKey($rtStr)) { $rsRelTypeDist[$rtStr] = 0 }
+            $rsRelTypeDist[$rtStr]++
+            # WARN: same_source is the only relation type (weak semantic match)
+            if ($rtArr.Count -eq 1 -and $rtStr -eq "same_source") {
+              $rsSameSourceOnly++
+            }
+          }
+        }
+        # Track matched companies
+        if ($sig.PSObject.Properties.Name -contains "matchedCompanies") {
+          foreach ($co in @($sig.matchedCompanies)) {
+            $coStr = [string]$co
+            if (-not $rsCoDistrib.ContainsKey($coStr)) { $rsCoDistrib[$coStr] = 0 }
+            $rsCoDistrib[$coStr]++
+          }
+        }
       }
-      Write-Info ("  final[{0}] relatedSignals: {1} signals" -f $i, $sigs.Count)
+      Write-Info ("  final[{0}] relatedSignals: {1}" -f $i, $sigs.Count)
     }
 
     $avgRS = if ($finalItems.Count -gt 0) { [Math]::Round($rsTotalCount / $finalItems.Count, 1) } else { 0 }
@@ -514,6 +548,34 @@ try {
     }
     if ($rsNoReason -gt 0) {
       Write-Warn ("{0} relatedSignal(s) have empty reason" -f $rsNoReason)
+    }
+    if ($rsEmptyTypes -gt 0) {
+      Write-Warn ("{0} relatedSignal(s) have empty relationTypes" -f $rsEmptyTypes)
+    }
+    if ($rsSameSourceOnly -gt 0) {
+      Write-Warn ("{0} relatedSignal(s) have same_source as only relation type (weak semantic match)" -f $rsSameSourceOnly)
+    }
+    # relationTypes distribution
+    if ($rsRelTypeDist.Count -gt 0) {
+      Write-Host "  --- relatedSignals relationTypes distribution ---"
+      foreach ($k in ($rsRelTypeDist.Keys | Sort-Object)) {
+        Write-Info ("  {0}: {1}" -f $k, $rsRelTypeDist[$k])
+      }
+    }
+    # Top matched companies
+    if ($rsCoDistrib.Count -gt 0) {
+      Write-Host "  --- top matchedCompanies ---"
+      $topCos = $rsCoDistrib.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 5
+      foreach ($entry in $topCos) {
+        Write-Info ("  {0}: {1}" -f $entry.Key, $entry.Value)
+      }
+    }
+    # Sample reasons (up to 3)
+    if ($rsTopReasons.Count -gt 0) {
+      Write-Host "  --- sample relation reasons ---"
+      $rsTopReasons | Select-Object -First 3 | ForEach-Object {
+        Write-Info ("  reason: {0}" -f $_)
+      }
     }
 
     # ── LLM path verification ─────────────────────────────────────────────────

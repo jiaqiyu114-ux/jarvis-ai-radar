@@ -8,7 +8,7 @@ import { TIER_LABELS, TIER_COLORS } from "@/lib/recommendations/recommendation-e
 import type { RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import type { RecommendationDeepDive } from "@/lib/recommendations/deep-dive"
 import type { RelatedSignal } from "@/lib/recommendations/related-signals"
-import { RELATION_TYPE_LABELS } from "@/lib/recommendations/related-signals"
+import { RELATION_TYPE_LABELS, TOPIC_DISPLAY_ZH } from "@/lib/recommendations/related-signals"
 
 // ── Image filtering ───────────────────────────────────────────────────────────
 
@@ -297,6 +297,24 @@ const RELATION_LABELS_ZH: Partial<Record<string, string>> = {
   time_proximity: '时间近',
 }
 
+/** Build display tags from rich match metadata, falling back to relation types. */
+function buildSignalTags(signal: RelatedSignal): string[] {
+  const tags: string[] = []
+  // Prefer specific company/product/topic labels over generic relation types
+  for (const co of signal.matchedCompanies ?? []) { tags.push(co) }
+  for (const pr of signal.matchedProducts  ?? []) { if (!tags.includes(pr)) tags.push(pr) }
+  for (const t  of signal.matchedTopics    ?? []) { tags.push(TOPIC_DISPLAY_ZH[t] ?? t) }
+  // If nothing specific, fall back to relation type labels
+  if (tags.length === 0) {
+    for (const rt of signal.relationTypes) {
+      const label = RELATION_LABELS_ZH[rt] ?? RELATION_TYPE_LABELS[rt]
+      if (label) tags.push(label)
+    }
+  }
+  // Deduplicate and cap at 3
+  return [...new Set(tags)].slice(0, 3)
+}
+
 function formatRelAge(dateStr: string | null | undefined): string {
   if (!dateStr) return ''
   try {
@@ -311,12 +329,9 @@ function formatRelAge(dateStr: string | null | undefined): string {
 }
 
 function RelatedSignalRow({ signal, currentItemUrl }: { signal: RelatedSignal; currentItemUrl: string }) {
-  // Extra guard: never render a signal that matches the current item
   if (signal.url && signal.url === currentItemUrl) return null
-  const age = formatRelAge(signal.publishedAt)
-  const labels = signal.relationTypes
-    .slice(0, 3)
-    .map(t => RELATION_LABELS_ZH[t] ?? RELATION_TYPE_LABELS[t] ?? t)
+  const age    = formatRelAge(signal.publishedAt)
+  const labels = buildSignalTags(signal)
 
   return (
     <div className="py-2.5 border-b border-border/40 last:border-b-0">
@@ -475,6 +490,38 @@ function AuditDrawer({
             <div>
               <p className="text-muted-foreground/40 uppercase tracking-wider mb-1.5">Quality flags</p>
               <p className="text-foreground/65 font-mono">{item.qualityFlags.join(" · ")}</p>
+            </div>
+          )}
+          {item.relatedSignals && item.relatedSignals.length > 0 && (
+            <div>
+              <p className="text-muted-foreground/40 uppercase tracking-wider mb-1.5">
+                Related Signals ({item.relatedSignals.length})
+              </p>
+              <div className="space-y-2">
+                {item.relatedSignals.map((sig, idx) => (
+                  <div key={sig.id ?? idx} className="rounded border border-border/40 bg-muted/20 px-2.5 py-1.5 space-y-0.5">
+                    <p className="text-foreground/75 font-mono text-[10px] truncate">{sig.title}</p>
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] font-mono text-foreground/50">
+                      <span>score={sig.score}</span>
+                      {(sig.matchedCompanies ?? []).length > 0 &&
+                        <span>co={sig.matchedCompanies!.join(",")}</span>}
+                      {(sig.matchedProducts ?? []).length > 0 &&
+                        <span>pr={sig.matchedProducts!.join(",")}</span>}
+                      {(sig.matchedTopics ?? []).length > 0 &&
+                        <span>topics={sig.matchedTopics!.join(",")}</span>}
+                      {(sig.matchedKeywords ?? []).length > 0 &&
+                        <span>kw={sig.matchedKeywords!.join(",")}</span>}
+                      {sig.sourceName && <span>src={sig.sourceName}</span>}
+                      {sig.contentStatus && <span>cs={sig.contentStatus}</span>}
+                    </div>
+                    {sig.debug?.scoreBreakdown && Object.keys(sig.debug.scoreBreakdown).length > 0 && (
+                      <p className="text-[10px] font-mono text-muted-foreground/40 truncate">
+                        {Object.entries(sig.debug.scoreBreakdown).map(([k, v]) => `${k}:${v}`).join(" ")}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
