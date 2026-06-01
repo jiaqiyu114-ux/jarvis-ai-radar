@@ -565,15 +565,23 @@ export default async function DashboardPage() {
               </span>
             </div>
 
+            {/* Low today-count notice — shown when daily gate left fewer than 5 today-items */}
+            {hasEngineSnapshot && engineMustRead.length + engineHighValue.length < 5 &&
+             engineObserve.length > 0 && (
+              <div className="mb-2 rounded border border-border/60 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground/70">
+                今日新推荐较少，部分近期高分但未推送信息已进入观察榜（Observe）。
+              </div>
+            )}
+
             <div className="overflow-hidden rounded-lg border border-border bg-card">
               {hasEngineSnapshot ? (
                 <>
                   <EngineSectionBlock title="Must Read" items={engineMustRead} enableDetail
-                    empty="当前无 must_read 级推荐（需 recommendationScore ≥ 80）" />
+                    empty="今日暂无新的 must_read 推荐" />
                   <EngineSectionBlock title="High Value" items={engineHighValue} enableDetail
-                    empty="当前无 high_value 级推荐（需 recommendationScore ≥ 65）" />
+                    empty="今日暂无新的 high_value 推荐" />
                   <EngineSectionBlock title="Observe" items={engineObserve}
-                    empty="当前无 observe 级候选" />
+                    empty="当前无 observe 候选" />
                 </>
               ) : hasLegacySnapshot ? (
                 <>

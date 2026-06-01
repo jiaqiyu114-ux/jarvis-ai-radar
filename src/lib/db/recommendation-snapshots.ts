@@ -21,6 +21,10 @@ import type {
   RecommendationTier,
   EngineSourceStatus,
   EngineEvidenceLevel,
+  RecommendationBucket,
+  DeliveryStatus,
+  DailyGateResult,
+  PreviousDeliveryInfo,
 } from '@/lib/recommendations/recommendation-engine'
 
 export type SnapshotStatus = 'success' | 'partial_success' | 'failed'
@@ -171,6 +175,13 @@ function encodeDeepDivePayload(
   deepDive: RecommendationDeepDive,
   media?: { coverImageUrl?: string | null; mediaUrls?: string[] | null },
   relatedSignals?: RelatedSignal[] | null,
+  itemMeta?: {
+    recommendationBucket?: RecommendationBucket
+    deliveryStatus?: DeliveryStatus
+    dailyGate?: DailyGateResult
+    previousDelivery?: PreviousDeliveryInfo
+    observeReason?: string
+  },
 ): string {
   const payload = {
     provider: deepDive.provider,
@@ -189,6 +200,12 @@ function encodeDeepDivePayload(
     coverImageUrl: media?.coverImageUrl ?? null,
     mediaUrls: media?.mediaUrls ?? null,
     relatedSignals: relatedSignals ?? null,
+    // Daily gate metadata (optional — only present on items processed through refresh pipeline)
+    recommendationBucket: itemMeta?.recommendationBucket ?? null,
+    deliveryStatus: itemMeta?.deliveryStatus ?? null,
+    dailyGate: itemMeta?.dailyGate ?? null,
+    previousDelivery: itemMeta?.previousDelivery ?? null,
+    observeReason: itemMeta?.observeReason ?? null,
   }
   return `${DEEP_DIVE_JSON_PREFIX}${JSON.stringify(payload)}`
 }
@@ -242,7 +259,13 @@ function itemToRow(item: RecommendedItem, snapshotId: string, rank: number) {
   const encodedPayload = deepDive ? encodeDeepDivePayload(deepDive, {
     coverImageUrl: item.coverImageUrl,
     mediaUrls: item.mediaUrls,
-  }, item.relatedSignals) : null
+  }, item.relatedSignals, {
+    recommendationBucket: item.recommendationBucket,
+    deliveryStatus: item.deliveryStatus,
+    dailyGate: item.dailyGate,
+    previousDelivery: item.previousDelivery,
+    observeReason: item.observeReason,
+  }) : null
   return {
     snapshot_id: snapshotId,
     item_id: item.id || null,
@@ -393,7 +416,7 @@ function rowToItem(row: any): RecommendedItem {
     nextStep: sanitizeDisplayText(row.next_step, FALLBACK_STEP),
   }
 
-  // Decode cover image, media URLs, and relatedSignals from encoded deepDive JSON payload
+  // Decode cover image, media URLs, relatedSignals, and daily gate metadata
   const decodedMedia = decodeDeepDivePayload(row.source_reading_guide)
   if (decodedMedia) {
     if (typeof decodedMedia.coverImageUrl === 'string' && decodedMedia.coverImageUrl) {
@@ -406,6 +429,22 @@ function rowToItem(row: any): RecommendedItem {
     }
     if (Array.isArray(decodedMedia.relatedSignals) && decodedMedia.relatedSignals.length > 0) {
       item.relatedSignals = decodedMedia.relatedSignals as RelatedSignal[]
+    }
+    // Daily gate metadata — optional, absent on pre-gate snapshots
+    if (typeof decodedMedia.recommendationBucket === 'string') {
+      item.recommendationBucket = decodedMedia.recommendationBucket as RecommendationBucket
+    }
+    if (typeof decodedMedia.deliveryStatus === 'string') {
+      item.deliveryStatus = decodedMedia.deliveryStatus as DeliveryStatus
+    }
+    if (decodedMedia.dailyGate && typeof decodedMedia.dailyGate === 'object') {
+      item.dailyGate = decodedMedia.dailyGate as DailyGateResult
+    }
+    if (decodedMedia.previousDelivery && typeof decodedMedia.previousDelivery === 'object') {
+      item.previousDelivery = decodedMedia.previousDelivery as PreviousDeliveryInfo
+    }
+    if (typeof decodedMedia.observeReason === 'string') {
+      item.observeReason = decodedMedia.observeReason
     }
   }
 
@@ -624,22 +663,23 @@ export async function listRecommendationSnapshots(limit = 20): Promise<Recommend
 
 /**
  * Returns the set of item_ids that appeared as must_read or high_value
- * in snapshots generated between olderThanHours and withinHours ago.
+ * in recent snapshots (within the lookback window, excluding very recent ones).
  *
- * The `olderThanHours` lower bound prevents same-session refreshes (< 6h apart)
- * from suppressing each other. The `withinHours` upper bound caps the lookback.
+ * lookbackDays: how far back to search (default 3 days = 72h)
+ * olderThanHours: grace period — ignore snapshots newer than this (default 4h),
+ *   to allow same-session refreshes without immediately suppressing each other.
  *
- * Used by the refresh pipeline to avoid re-promoting the same items.
+ * Used by the daily gate to detect previously delivered items.
  * Returns an empty set on any error (graceful degradation).
  */
 export async function getPreviouslyRecommendedItemIds(
-  olderThanHours = 6,
-  withinHours    = 48,
+  lookbackDays   = 3,
+  olderThanHours = 4,
 ): Promise<Set<string>> {
   if (!isServerSupabaseConfigured || !supabaseServer) return new Set()
   try {
     const now    = Date.now()
-    const since  = new Date(now - withinHours    * 3_600_000).toISOString()
+    const since  = new Date(now - lookbackDays * 24 * 3_600_000).toISOString()
     const before = new Date(now - olderThanHours * 3_600_000).toISOString()
 
     const { data: snaps, error: snapErr } = await db()

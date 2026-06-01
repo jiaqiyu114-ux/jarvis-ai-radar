@@ -84,6 +84,27 @@ if ($res.PSObject.Properties.Name -contains "relatedSignals" -and $null -ne $res
     $rs.ms, $rs.candidatePoolSize, $rs.itemsWithSignals, $rs.avgSignals)
 }
 
+# ── Daily Gate stats ──────────────────────────────────────────────────────────
+if ($res.PSObject.Properties.Name -contains "dailyGate" -and $null -ne $res.dailyGate) {
+  $dg = $res.dailyGate
+  Write-Host "--- Daily Gate ---"
+  Write-Host ("  timezone:             {0}" -f $dg.timezone)
+  Write-Host ("  todayKey:             {0}" -f $dg.todayKey)
+  Write-Host ("  todayRecommendations: {0}  (new items in must_read/high_value)" -f $dg.todayRecommendationCount)
+  Write-Host ("  observeBacklog:       {0}  (demoted from must_read/high_value to observe)" -f $dg.observeBacklogCount)
+  Write-Host ("  suppressedPrevDay:    {0}  (captured yesterday or older)" -f $dg.suppressedPreviousDayCount)
+  Write-Host ("  prevDeliveredExcl:    {0}  (already in a recent snapshot)" -f $dg.previousDeliveredExcludedCount)
+  Write-Host ("  updateCandidates:     {0}  (title suggests new development)" -f $dg.updateCandidateCount)
+  Write-Host ("  recentUnpushedObs:    {0}  (recent but not today)" -f $dg.recentUnpushedObserveCount)
+  if ([int]$dg.todayRecommendationCount -eq 0) {
+    Write-Host "  [WARN] todayRecommendationCount=0 (no items captured today in configured timezone)" -ForegroundColor Yellow
+  } elseif ([int]$dg.todayRecommendationCount -lt 5) {
+    Write-Host ("  [INFO] todayRecommendationCount={0} (< 5 is expected if limited new content today)" -f $dg.todayRecommendationCount)
+  } else {
+    Write-Host ("  [OK]   todayRecommendationCount={0}" -f $dg.todayRecommendationCount) -ForegroundColor Green
+  }
+}
+
 # ── Article fetch stats (from ingest phase of pipeline, if available) ──────────
 if ($res.PSObject.Properties.Name -contains "ingest" -and $null -ne $res.ingest -and
     $res.ingest.PSObject.Properties.Name -contains "articleFetch") {
@@ -183,9 +204,20 @@ for ($i = 0; $i -lt $final.Count; $i++) {
     }
   }
 
+  # Daily gate info
+  $dgEligible = "n/a"; $dgReason = "n/a"; $dgBucket = "n/a"; $dgDelivery = "n/a"
+  if ($it.PSObject.Properties.Name -contains "dailyGate" -and $null -ne $it.dailyGate) {
+    $dgEligible = [string]$it.dailyGate.eligibleForToday
+    $dgReason   = [string]$it.dailyGate.reason
+  }
+  if ($it.PSObject.Properties.Name -contains "recommendationBucket") { $dgBucket   = [string]$it.recommendationBucket }
+  if ($it.PSObject.Properties.Name -contains "deliveryStatus")        { $dgDelivery = [string]$it.deliveryStatus }
+
   Write-Host ("  [{0}] status={1} | cs={2} | model={3} | provider={4} | osLen={5} | fu={6}" -f `
     $i, $status, $cs, $model, $prov, $osLen, $fuCnt)
   Write-Host ("       {0}" -f $diagLine)
+  Write-Host ("       gate: eligible={0} reason={1} | bucket={2} deliveryStatus={3}" -f `
+    $dgEligible, $dgReason, $dgBucket, $dgDelivery) -ForegroundColor DarkGray
 
   # WARN: generated status but non-null fallbackReason
   # FAIL: generated must have null fallbackReason

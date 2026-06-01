@@ -166,6 +166,17 @@ if ($Refresh) {
       Write-Info ("relatedSignals: ms={0}ms  pool={1}  itemsWithSignals={2}  avgSignals={3}" -f `
         $rs.ms, $rs.candidatePoolSize, $rs.itemsWithSignals, $rs.avgSignals)
     }
+    # Daily gate stats from refresh
+    if ($refreshResult.PSObject.Properties.Name -contains "dailyGate" -and $null -ne $refreshResult.dailyGate) {
+      $dg = $refreshResult.dailyGate
+      Write-Info ("dailyGate: tz={0}  today={1}  todayRec={2}  observeBacklog={3}  prevDay={4}  prevDelivered={5}  updateCandidate={6}" -f `
+        $dg.timezone, $dg.todayKey, $dg.todayRecommendationCount,
+        $dg.observeBacklogCount, $dg.suppressedPreviousDayCount,
+        $dg.previousDeliveredExcludedCount, $dg.updateCandidateCount)
+      if ([int]$dg.todayRecommendationCount -eq 0) {
+        Write-Warn "dailyGate: todayRecommendationCount=0 (no items captured today in configured timezone)"
+      }
+    }
   } catch {
     Write-Fail ("refresh request failed: {0}" -f $_.Exception.Message)
   }
@@ -369,7 +380,7 @@ try {
         Write-Host ("  {0}: {1}" -f $k, $srcDistrib[$k]) -ForegroundColor $color
       }
     } else {
-      Write-Host "  (none — inputDiagnostics may be missing)" -ForegroundColor Gray
+      Write-Host "  (none - inputDiagnostics may be missing)" -ForegroundColor Gray
     }
 
     # FAIL: all contentStatus are unknown
@@ -578,6 +589,65 @@ try {
       }
     }
 
+    # ── Daily gate checks ────────────────────────────────────────────────────
+    $dgTodayCount         = 0
+    $dgObserveCount       = 0
+    $oldInTodayRec        = 0   # FAIL: non-today item in must_read/high_value
+    $prevDelivInFinal     = 0   # FAIL: previously_delivered in must_read/high_value
+    $recentUnpushedObs    = 0
+
+    for ($i = 0; $i -lt $finalItems.Count; $i++) {
+      $it   = $finalItems[$i]
+      $tier = [string]$it.recommendationTier
+
+      # Check dailyGate metadata (only present on post-gate snapshots)
+      if ($it.PSObject.Properties.Name -contains "dailyGate" -and $null -ne $it.dailyGate) {
+        $dg = $it.dailyGate
+        $eligible = $false
+        if ($dg.PSObject.Properties.Name -contains "eligibleForToday") {
+          $eligible = [bool]$dg.eligibleForToday
+        }
+        $reason = if ($dg.PSObject.Properties.Name -contains "reason") { [string]$dg.reason } else { "" }
+
+        if ($eligible -and ($tier -eq "must_read" -or $tier -eq "high_value")) {
+          $dgTodayCount++
+        }
+        if (-not $eligible -and ($tier -eq "must_read" -or $tier -eq "high_value")) {
+          $oldInTodayRec++
+          Write-Fail ("final[{0}] tier={1} but dailyGate.eligibleForToday=false (reason={2})" -f $i, $tier, $reason)
+        }
+        if ($reason -eq "previously_delivered" -and ($tier -eq "must_read" -or $tier -eq "high_value")) {
+          $prevDelivInFinal++
+          Write-Fail ("final[{0}] previously_delivered item in must_read/high_value (no update_candidate bypass)" -f $i)
+        }
+      }
+      # Check deliveryStatus
+      if ($it.PSObject.Properties.Name -contains "deliveryStatus") {
+        $ds = [string]$it.deliveryStatus
+        if ($ds -eq "recent_unpushed") { $recentUnpushedObs++ }
+      }
+    }
+
+    Write-Host ""
+    Write-Host "  --- daily gate stats ---"
+    Write-Info ("todayRecommendationCount: {0}/{1}" -f $dgTodayCount, $finalItems.Count)
+    if ($oldInTodayRec -gt 0) {
+      Write-Fail ("{0} non-today item(s) in must_read/high_value" -f $oldInTodayRec)
+    } else {
+      Write-Ok "all must_read/high_value items passed daily gate"
+    }
+    if ($prevDelivInFinal -gt 0) {
+      Write-Fail ("{0} previously_delivered item(s) in must_read/high_value without update_candidate" -f $prevDelivInFinal)
+    }
+    if ($dgTodayCount -lt 5 -and $dgTodayCount -ge 0) {
+      Write-Info ("today recommendation count = {0} (< 5 is OK - no stale content used)" -f $dgTodayCount)
+    }
+    # Check for items without dailyGate (pre-gate snapshot)
+    $withGate = @($finalItems | Where-Object { $_.PSObject.Properties.Name -contains "dailyGate" -and $null -ne $_.dailyGate })
+    if ($withGate.Count -eq 0 -and $finalItems.Count -gt 0) {
+      Write-Warn "No items have dailyGate metadata (snapshot predates daily gate - run -Refresh)"
+    }
+
     # ── LLM path verification ─────────────────────────────────────────────────
     if ($expectLlm) {
       if ($finalItems.Count -gt 0 -and $llmModelCount -lt 1) {
@@ -724,8 +794,8 @@ try {
       Write-Ok ("No repeated items in must_read/high_value across last {0} snapshots" -f $allSnaps3.Count)
     } else {
       Write-Warn ("Repeated must_read/high_value items detected: {0} by id, {1} by title" -f $repeatCount, $repeatTitleCount)
-      Write-Warn "  Cause: high final_score keeps items in top tiers for full 72h window"
-      Write-Info "  Fix: freshness decay in recommendation-engine + getPreviouslyRecommendedItemIds suppression"
+      Write-Warn "  Cause: high final_score + no daily gate on old snapshot"
+      Write-Info "  Fix: run -Refresh to rebuild snapshot with daily hard gate applied"
       # Show examples
       $examples = $seenInFinal.GetEnumerator() | Where-Object { $_.Value.Count -ge 2 } | Select-Object -First 3
       foreach ($ex in $examples) {

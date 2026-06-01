@@ -492,6 +492,45 @@ function AuditDrawer({
               <p className="text-foreground/65 font-mono">{item.qualityFlags.join(" · ")}</p>
             </div>
           )}
+          {/* Daily gate metadata — only present when item was processed through refresh pipeline */}
+          {(item.dailyGate || item.deliveryStatus || item.recommendationBucket) && (
+            <div>
+              <p className="text-muted-foreground/40 uppercase tracking-wider mb-1.5">Recommendation Gate</p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-foreground/65">
+                {item.recommendationBucket && (
+                  <span>bucket <span className="font-semibold">{item.recommendationBucket}</span></span>
+                )}
+                {item.deliveryStatus && (
+                  <span className={
+                    item.deliveryStatus === 'new_today' ? 'text-success' :
+                    item.deliveryStatus === 'previously_delivered' ? 'text-warning/80' : ''
+                  }>
+                    status <span className="font-semibold">{item.deliveryStatus}</span>
+                  </span>
+                )}
+                {item.observeReason && (
+                  <span>observeReason <span className="font-semibold">{item.observeReason}</span></span>
+                )}
+              </div>
+              {item.dailyGate && (
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-foreground/50 text-[10px]">
+                  <span>tz={item.dailyGate.timezone}</span>
+                  <span>today={item.dailyGate.todayKey}</span>
+                  <span>captured={item.dailyGate.capturedDateKey ?? "?"}</span>
+                  <span>published={item.dailyGate.publishedDateKey ?? "?"}</span>
+                  <span className={item.dailyGate.eligibleForToday ? 'text-success' : 'text-warning/80'}>
+                    eligible={String(item.dailyGate.eligibleForToday)}
+                  </span>
+                  <span>reason={item.dailyGate.reason}</span>
+                </div>
+              )}
+              {item.previousDelivery?.previouslyRecommended && (
+                <p className="mt-0.5 text-warning/60 font-mono text-[10px]">
+                  previously_delivered matchedBy={item.previousDelivery.matchedBy}
+                </p>
+              )}
+            </div>
+          )}
           {item.relatedSignals && item.relatedSignals.length > 0 && (
             <div>
               <p className="text-muted-foreground/40 uppercase tracking-wider mb-1.5">

@@ -33,6 +33,44 @@ export type EngineSourceStatus =
 
 export type EngineEvidenceLevel = 'strong' | 'medium' | 'weak' | 'unknown'
 
+// ── Daily gate types ──────────────────────────────────────────────────────────
+// These types are defined here (not in daily-gate.ts) to avoid circular imports.
+
+export type RecommendationBucket =
+  | 'today_recommendation'   // captured today, not previously delivered → eligible for must_read/high_value
+  | 'observe_backlog'        // recent but not today, or previously delivered
+  | 'full_feed'              // all captured items regardless of tier
+  | 'related_signal'         // used as context for another item
+  | 'event_candidate'        // part of an event cluster
+
+export type DeliveryStatus =
+  | 'new_today'              // captured today, first time in must_read/high_value
+  | 'previously_delivered'   // was in must_read/high_value in a recent snapshot
+  | 'recent_unpushed'        // recent but not captured today, never delivered
+  | 'old_not_eligible'       // too old for today's recommendation
+  | 'update_candidate'       // title signals a new development on an existing story
+
+export type DailyGateReason =
+  | 'captured_today'
+  | 'captured_yesterday_or_older'
+  | 'captured_date_unknown'
+  | 'published_too_old'
+  | 'previously_delivered'
+
+export type DailyGateResult = {
+  timezone:         string
+  todayKey:         string
+  capturedDateKey:  string | null
+  publishedDateKey: string | null
+  eligibleForToday: boolean
+  reason:           DailyGateReason
+}
+
+export type PreviousDeliveryInfo = {
+  previouslyRecommended: boolean
+  matchedBy?: 'item_id' | 'url'
+}
+
 export type RecommendedItem = {
   // Core display fields
   id:            string
@@ -75,6 +113,12 @@ export type RecommendedItem = {
   nextStep:             string          // Next action suggestion
   deepDive?:            RecommendationDeepDive
   relatedSignals?:      RelatedSignal[] | null
+  // Daily gate metadata (populated by refresh pipeline; absent on live-query path)
+  recommendationBucket?:  RecommendationBucket
+  deliveryStatus?:        DeliveryStatus
+  dailyGate?:             DailyGateResult
+  previousDelivery?:      PreviousDeliveryInfo
+  observeReason?:         string
 }
 
 export type RecommendationEngineOptions = {
@@ -313,16 +357,10 @@ function computeRecommendationScore(
   if (hoursAgo < 24)      score += 4
   else if (hoursAgo < 72) score += 2
 
-  // Published-at age decay: reduce score for content older than 24h.
-  // Prevents high-scoring articles from dominating must_read for 72h straight.
-  // must_read threshold = 80; a typical top item scores ~90 before decay.
-  const pubMs = row.published_at ? new Date(row.published_at).getTime() : 0
-  if (pubMs > 0) {
-    const pubAgeH = (Date.now() - pubMs) / 3_600_000
-    if (pubAgeH > 48)      score -= 25   // very stale: push below must_read (80)
-    else if (pubAgeH > 36) score -= 15   // stale: hard to stay in must_read
-    else if (pubAgeH > 24) score -= 6    // one-day-old: mild decay
-  }
+  // NOTE: No score-based age decay here. Whether an item is eligible for today's
+  // recommendation is enforced by the daily hard gate in daily-gate.ts (applied
+  // during the refresh pipeline), not by penalising scores. Score reflects
+  // objective quality; the gate controls scheduling.
 
   // Signal flags
   if (b(row.should_enter_daily_report)) score += 5

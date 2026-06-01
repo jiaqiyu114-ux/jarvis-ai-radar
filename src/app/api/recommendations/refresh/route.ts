@@ -5,6 +5,7 @@ import {
   type FinalDeepDiveMode,
 } from '@/lib/recommendations/deep-dive'
 import { attachRelatedSignals } from '@/lib/recommendations/related-signals'
+import { deriveGateDecision, JARVIS_TIMEZONE, todayKey } from '@/lib/recommendations/daily-gate'
 import { getDeepDiveModel, getLlmConfig } from '@/lib/llm/deep-dive-client'
 import {
   insertRecommendationRun,
@@ -80,31 +81,67 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // Suppress items that were already in must_read/high_value in recent snapshots
-    // (6h–48h ago window). Prevents the same high-score item from dominating
-    // must_read for the full 72h retention window.
-    // Safety valve: only suppress when fresh items exist to replace the suppressed ones.
-    // If all candidates are stale (no data pipeline running), skip suppression gracefully.
-    const prevRecommendedIds = await getPreviouslyRecommendedItemIds()
-    const freshFinalCount = result.items.filter(i =>
-      !prevRecommendedIds.has(i.id) &&
-      (i.recommendationTier === 'must_read' || i.recommendationTier === 'high_value')
-    ).length
-    const applySuppression = prevRecommendedIds.size > 0 && freshFinalCount >= 1
+    // ── Daily hard gate ───────────────────────────────────────────────────────
+    // Rules: item must be (1) captured today in JARVIS_TIMEZONE, (2) not previously
+    // delivered in a recent must_read/high_value snapshot.
+    // Previously delivered or non-today items are demoted to 'observe' (backlog).
+    // No score-based decay: the gate enforces scheduling, scores reflect quality.
+    const prevDeliveredIds = await getPreviouslyRecommendedItemIds()
+    const today = todayKey(JARVIS_TIMEZONE)
 
-    let suppressedFromFinal = 0
+    const gateStats = {
+      timezone:                     JARVIS_TIMEZONE,
+      todayKey:                     today,
+      todayRecommendationCount:     0,
+      observeBacklogCount:          0,
+      suppressedPreviousDayCount:   0,
+      previousDeliveredExcludedCount: 0,
+      updateCandidateCount:         0,
+      recentUnpushedObserveCount:   0,
+    }
+
     const snapshotItemsBase = result.items
       .filter(i => i.recommendationTier !== 'archive')
       .map(i => {
-        if (
-          applySuppression &&
-          prevRecommendedIds.has(i.id) &&
-          (i.recommendationTier === 'must_read' || i.recommendationTier === 'high_value')
-        ) {
-          suppressedFromFinal++
-          return { ...i, recommendationTier: 'observe' as const }
+        const decision = deriveGateDecision(i, prevDeliveredIds, i.id, JARVIS_TIMEZONE)
+
+        // Track stats
+        if (decision.gate.reason === 'captured_yesterday_or_older' ||
+            decision.gate.reason === 'published_too_old') {
+          gateStats.suppressedPreviousDayCount++
         }
-        return i
+        if (decision.gate.reason === 'previously_delivered') {
+          gateStats.previousDeliveredExcludedCount++
+        }
+        if (decision.isUpdate) gateStats.updateCandidateCount++
+        if (decision.deliveryStatus === 'recent_unpushed') gateStats.recentUnpushedObserveCount++
+
+        if (decision.demoteFromFinal) {
+          gateStats.observeBacklogCount++
+          return {
+            ...i,
+            recommendationTier:   'observe' as const,
+            recommendationBucket: decision.bucket,
+            deliveryStatus:       decision.deliveryStatus,
+            dailyGate:            decision.gate,
+            previousDelivery:     decision.previousDelivery,
+            observeReason:        decision.observeReason,
+          }
+        }
+
+        const result_item = {
+          ...i,
+          recommendationBucket: decision.bucket,
+          deliveryStatus:       decision.deliveryStatus,
+          dailyGate:            decision.gate,
+          previousDelivery:     decision.previousDelivery,
+          observeReason:        decision.observeReason,
+        }
+        if (result_item.recommendationTier === 'must_read' ||
+            result_item.recommendationTier === 'high_value') {
+          gateStats.todayRecommendationCount++
+        }
+        return result_item
       })
 
     const deepDiveStart = Date.now()
@@ -147,7 +184,7 @@ export async function POST(req: NextRequest) {
           deepDiveMode,
           deepDiveStats,
           relatedSignals: relatedStats,
-          suppressedDuplicates: suppressedFromFinal,
+          dailyGate: gateStats,
         },
       },
       snapshotItemsFinal,
@@ -185,8 +222,8 @@ export async function POST(req: NextRequest) {
       },
       deepDiveMode,
       deepDiveStats,
-      relatedSignals:       relatedStats,
-      suppressedDuplicates: suppressedFromFinal,
+      relatedSignals: relatedStats,
+      dailyGate:      gateStats,
       run,
       snapshot,
       stats: result.stats,
