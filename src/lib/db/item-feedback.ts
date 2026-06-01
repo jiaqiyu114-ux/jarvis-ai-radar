@@ -61,7 +61,19 @@ export type ListRecentItemFeedbackParams = {
   contextPage?: string
 }
 
-const FEEDBACK_ITEM_SELECT = [
+// Light select — only fields needed for the feedback list display.
+// Avoids fetching clean_text, raw_payload, media_urls etc. (can be MBs per item).
+const FEEDBACK_ITEM_SELECT_LIGHT = [
+  'id', 'title', 'url', 'final_score', 'category',
+  'published_at', 'fetched_at', 'language',
+  'summary',
+  'sources!items_source_id_fkey(name, source_tier)',
+].join(', ')
+
+// Full select — kept for reference; currently unused since RECENT_FEEDBACK_SELECT
+// uses the light join. Re-enable if a detail modal requires full item data.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _FEEDBACK_ITEM_SELECT_FULL = [
   '*',
   'sources!items_source_id_fkey(name, source_tier)',
 ].join(', ')
@@ -75,7 +87,7 @@ const RECENT_FEEDBACK_SELECT = [
   'context_page',
   'created_at',
   'updated_at',
-  `items!inner(${FEEDBACK_ITEM_SELECT})`,
+  `items!inner(${FEEDBACK_ITEM_SELECT_LIGHT})`,  // light join — avoids large content fields
 ].join(', ')
 
 const VALID_CATEGORIES: readonly Category[] = [

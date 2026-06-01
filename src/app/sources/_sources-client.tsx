@@ -103,7 +103,7 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "my",      label: "我的源" },
   { key: "failing", label: "失败" },
   { key: "rss",     label: "RSS" },
-  { key: "blocked", label: "被屏蔽" },
+  { key: "blocked", label: "停用/移出" },
 ]
 
 function applyFilter(sources: SourceWithHealth[], filter: FilterKey): SourceWithHealth[] {
@@ -509,12 +509,13 @@ function SourceFormDialog({
 
 // ── Source row ────────────────────────────────────────────────────────────────
 
-function SourceRow({ source, onEdit, onToggleBlock, onMarkCurated, onCopyUrl, copiedId }: {
+function SourceRow({ source, onEdit, onToggleBlock, onMarkCurated, onCopyUrl, onRemove, copiedId }: {
   source:        SourceWithHealth
   onEdit:        (s: SourceWithHealth) => void
   onToggleBlock: (s: SourceWithHealth) => Promise<void>
   onMarkCurated: (s: SourceWithHealth) => Promise<void>
   onCopyUrl:     (s: SourceWithHealth) => void
+  onRemove:      (s: SourceWithHealth) => Promise<void>
   copiedId:      string | null
 }) {
   const isDemo  = source.dataOrigin === "demo"
@@ -636,6 +637,15 @@ function SourceRow({ source, onEdit, onToggleBlock, onMarkCurated, onCopyUrl, co
                 <Ban className="w-3.5 h-3.5" />
                 {source.isBlocked ? '取消屏蔽' : '屏蔽此源'}
               </DropdownMenuItem>
+              {!source.isBlocked && (
+                <DropdownMenuItem
+                  className="text-xs gap-2 cursor-pointer text-danger focus:text-danger"
+                  onSelect={() => onRemove(source)}
+                >
+                  <Ban className="w-3.5 h-3.5" />
+                  移出信源库
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -707,6 +717,26 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
     setBusyId(s.id)
     try {
       await fetch(`/api/sources/${s.id}/toggle-block`, { method: 'POST' })
+      await refresh()
+    } finally {
+      setBusyId(null)
+    }
+  }, [busyId, refresh])
+
+  const handleRemove = useCallback(async (s: SourceWithHealth) => {
+    if (busyId) return
+    if (!confirm(`将「${s.name}」移出信源库？该源将停止抓取，可在"停用/移出"筛选中恢复。`)) return
+    setBusyId(s.id)
+    try {
+      await fetch(`/api/sources/${s.id}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          is_blocked:        true,
+          user_source_label: '已移出',
+          user_source_note:  `removed_at:${new Date().toISOString()}`,
+        }),
+      })
       await refresh()
     } finally {
       setBusyId(null)
@@ -868,6 +898,7 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
                   onToggleBlock={handleToggleBlock}
                   onMarkCurated={handleMarkCurated}
                   onCopyUrl={handleCopyUrl}
+                  onRemove={handleRemove}
                   copiedId={copiedId}
                 />
               ))}
