@@ -14,6 +14,7 @@ import { supabaseServer, isServerSupabaseConfigured } from '@/lib/supabase/serve
 import { detectLowValueNoise } from '@/lib/scoring/noise'
 import { normalizeDisplayText } from '@/lib/text/normalize-display-text'
 import type { RecommendationDeepDive } from '@/lib/recommendations/deep-dive'
+import type { RelatedSignal } from '@/lib/recommendations/related-signals'
 
 // ── Output types ──────────────────────────────────────────────────────────────
 
@@ -73,6 +74,7 @@ export type RecommendedItem = {
   riskNote:             string          // Risk explanation (empty = no notable risk)
   nextStep:             string          // Next action suggestion
   deepDive?:            RecommendationDeepDive
+  relatedSignals?:      RelatedSignal[] | null
 }
 
 export type RecommendationEngineOptions = {

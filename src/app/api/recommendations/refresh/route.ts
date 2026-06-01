@@ -4,6 +4,7 @@ import {
   attachDeepDivesToRecommendations,
   type FinalDeepDiveMode,
 } from '@/lib/recommendations/deep-dive'
+import { attachRelatedSignals } from '@/lib/recommendations/related-signals'
 import { getDeepDiveModel, getLlmConfig } from '@/lib/llm/deep-dive-client'
 import {
   insertRecommendationRun,
@@ -88,6 +89,20 @@ export async function POST(req: NextRequest) {
       })
     const deepDiveDurationMs = Date.now() - deepDiveStart
 
+    // Compute related signals (rule-based, no LLM). Uses the full candidate pool
+    // (all tiers including archive) as the match space.
+    const relatedStart = Date.now()
+    const snapshotItemsFinal = attachRelatedSignals(snapshotItemsWithDeepDive, result.items)
+    const relatedSignalsMs = Date.now() - relatedStart
+    const relatedStats = {
+      ms: relatedSignalsMs,
+      candidatePoolSize: result.items.length,
+      itemsWithSignals: snapshotItemsFinal.filter(i => (i.relatedSignals?.length ?? 0) > 0).length,
+      avgSignals: snapshotItemsFinal.length > 0
+        ? Math.round(snapshotItemsFinal.reduce((s, i) => s + (i.relatedSignals?.length ?? 0), 0) / snapshotItemsFinal.length * 10) / 10
+        : 0,
+    }
+
     const snapshotId = await createRecommendationSnapshot(
       {
         run_id: runId ?? undefined,
@@ -104,9 +119,10 @@ export async function POST(req: NextRequest) {
         metadata: {
           deepDiveMode,
           deepDiveStats,
+          relatedSignals: relatedStats,
         },
       },
-      snapshotItemsWithDeepDive,
+      snapshotItemsFinal,
     )
 
     const run = runId
@@ -134,16 +150,18 @@ export async function POST(req: NextRequest) {
       runStatus,
       durationMs,
       timing: {
-        totalMs:        durationMs,
-        queryMs:        queryDurationMs,
-        deepDiveMs:     deepDiveDurationMs,
+        totalMs:          durationMs,
+        queryMs:          queryDurationMs,
+        deepDiveMs:       deepDiveDurationMs,
+        relatedSignalsMs,
       },
       deepDiveMode,
       deepDiveStats,
+      relatedSignals: relatedStats,
       run,
       snapshot,
       stats: result.stats,
-      items: snapshotItemsWithDeepDive,
+      items: snapshotItemsFinal,
     })
   } catch (err) {
     const durationMs = Date.now() - startMs

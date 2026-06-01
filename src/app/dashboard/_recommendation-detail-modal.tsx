@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils"
 import { TIER_LABELS, TIER_COLORS } from "@/lib/recommendations/recommendation-engine"
 import type { RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import type { RecommendationDeepDive } from "@/lib/recommendations/deep-dive"
+import type { RelatedSignal } from "@/lib/recommendations/related-signals"
+import { RELATION_TYPE_LABELS } from "@/lib/recommendations/related-signals"
 
 // ── Image filtering ───────────────────────────────────────────────────────────
 
@@ -283,6 +285,115 @@ function EvidenceNote({
   )
 }
 
+// ── Related Signals ───────────────────────────────────────────────────────────
+
+const RELATION_LABELS_ZH: Partial<Record<string, string>> = {
+  same_entity:    '同主体',
+  same_company:   '同公司',
+  same_product:   '同产品',
+  same_topic:     '同主题',
+  same_source:    '同信源',
+  shared_keyword: '关键词',
+  time_proximity: '时间近',
+}
+
+function formatRelAge(dateStr: string | null | undefined): string {
+  if (!dateStr) return ''
+  try {
+    const diff = Date.now() - new Date(dateStr).getTime()
+    if (isNaN(diff) || diff < 0) return ''
+    const h = diff / 3_600_000
+    if (h < 1) return `${Math.round(diff / 60_000)}m前`
+    if (h < 24) return `${Math.floor(h)}h前`
+    const d = Math.round(h / 24)
+    return d < 7 ? `${d}d前` : `${new Date(dateStr).getMonth()+1}/${new Date(dateStr).getDate()}`
+  } catch { return '' }
+}
+
+function RelatedSignalRow({ signal, currentItemUrl }: { signal: RelatedSignal; currentItemUrl: string }) {
+  // Extra guard: never render a signal that matches the current item
+  if (signal.url && signal.url === currentItemUrl) return null
+  const age = formatRelAge(signal.publishedAt)
+  const labels = signal.relationTypes
+    .slice(0, 3)
+    .map(t => RELATION_LABELS_ZH[t] ?? RELATION_TYPE_LABELS[t] ?? t)
+
+  return (
+    <div className="py-2.5 border-b border-border/40 last:border-b-0">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[12px] font-medium text-foreground/85 leading-snug line-clamp-2 flex-1">
+          {signal.title}
+        </p>
+        {signal.url && (
+          <a
+            href={signal.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 inline-flex items-center gap-0.5 rounded border border-primary/20 bg-primary/6 px-1.5 py-0.5 text-[10px] text-primary/70 hover:text-primary transition-colors"
+            onClick={e => e.stopPropagation()}
+          >
+            <ExternalLink className="h-2.5 w-2.5" />
+            原文
+          </a>
+        )}
+      </div>
+      <div className="mt-1 flex items-center flex-wrap gap-1.5">
+        {signal.sourceName && (
+          <span className="text-[10px] text-muted-foreground/70 truncate max-w-[120px]">
+            {signal.sourceName}
+          </span>
+        )}
+        {age && (
+          <span className="text-[10px] text-muted-foreground/50">{age}</span>
+        )}
+        {labels.map(l => (
+          <span key={l} className="text-[10px] px-1 py-0.5 rounded border border-border/60 bg-muted/30 text-muted-foreground/70">
+            {l}
+          </span>
+        ))}
+      </div>
+      {signal.reason && (
+        <p className="mt-1 text-[11px] text-muted-foreground/60 leading-relaxed italic line-clamp-2">
+          {signal.reason}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function RelatedSignalsSection({ signals, currentItemUrl }: { signals: RelatedSignal[]; currentItemUrl: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const valid = signals.filter(s => !s.url || s.url !== currentItemUrl)
+  if (valid.length === 0) return null
+  const displayed = expanded ? valid.slice(0, 5) : valid.slice(0, 3)
+  const hasMore = valid.length > 3 && !expanded
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+          相关信号
+        </h4>
+        <span className="text-[10px] text-muted-foreground/50">{valid.length} 条</span>
+      </div>
+      <div className="rounded-md border border-border/50 bg-muted/20 px-3">
+        {displayed.map(sig => (
+          <RelatedSignalRow key={sig.id} signal={sig} currentItemUrl={currentItemUrl} />
+        ))}
+      </div>
+      {hasMore && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="mt-1.5 w-full text-center text-[10px] text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+        >
+          展开更多 ({valid.length - 3} 条)
+        </button>
+      )}
+    </div>
+  )
+}
+
 function AuditDrawer({
   item,
   dd,
@@ -551,6 +662,14 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
                   sumLen={sumLen}
                   fcLen={fcLen}
                 />
+
+                {/* RELATED SIGNALS — rule-based, 0-5 items, no LLM */}
+                {item.relatedSignals && item.relatedSignals.length > 0 && (
+                  <RelatedSignalsSection
+                    signals={item.relatedSignals}
+                    currentItemUrl={item.originalUrl}
+                  />
+                )}
 
                 {/* AUDIT DRAWER — collapsed by default */}
                 <AuditDrawer item={item} dd={dd} />

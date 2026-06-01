@@ -15,6 +15,7 @@ import {
   type RecommendationDeepDive,
   type DeepDiveInputDiagnostics,
 } from '@/lib/recommendations/deep-dive'
+import type { RelatedSignal } from '@/lib/recommendations/related-signals'
 import type {
   RecommendedItem,
   RecommendationTier,
@@ -169,6 +170,7 @@ function normalizeFollowUp(value: unknown): string[] {
 function encodeDeepDivePayload(
   deepDive: RecommendationDeepDive,
   media?: { coverImageUrl?: string | null; mediaUrls?: string[] | null },
+  relatedSignals?: RelatedSignal[] | null,
 ): string {
   const payload = {
     provider: deepDive.provider,
@@ -186,6 +188,7 @@ function encodeDeepDivePayload(
     inputDiagnostics: deepDive.inputDiagnostics ?? null,
     coverImageUrl: media?.coverImageUrl ?? null,
     mediaUrls: media?.mediaUrls ?? null,
+    relatedSignals: relatedSignals ?? null,
   }
   return `${DEEP_DIVE_JSON_PREFIX}${JSON.stringify(payload)}`
 }
@@ -239,7 +242,7 @@ function itemToRow(item: RecommendedItem, snapshotId: string, rank: number) {
   const encodedPayload = deepDive ? encodeDeepDivePayload(deepDive, {
     coverImageUrl: item.coverImageUrl,
     mediaUrls: item.mediaUrls,
-  }) : null
+  }, item.relatedSignals) : null
   return {
     snapshot_id: snapshotId,
     item_id: item.id || null,
@@ -390,7 +393,7 @@ function rowToItem(row: any): RecommendedItem {
     nextStep: sanitizeDisplayText(row.next_step, FALLBACK_STEP),
   }
 
-  // Decode cover image and media URLs from encoded deepDive JSON payload
+  // Decode cover image, media URLs, and relatedSignals from encoded deepDive JSON payload
   const decodedMedia = decodeDeepDivePayload(row.source_reading_guide)
   if (decodedMedia) {
     if (typeof decodedMedia.coverImageUrl === 'string' && decodedMedia.coverImageUrl) {
@@ -400,6 +403,9 @@ function rowToItem(row: any): RecommendedItem {
       item.mediaUrls = (decodedMedia.mediaUrls as unknown[])
         .filter((u): u is string => typeof u === 'string' && u.length > 0)
         .slice(0, 8)
+    }
+    if (Array.isArray(decodedMedia.relatedSignals) && decodedMedia.relatedSignals.length > 0) {
+      item.relatedSignals = decodedMedia.relatedSignals as RelatedSignal[]
     }
   }
 

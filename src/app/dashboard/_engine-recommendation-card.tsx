@@ -152,6 +152,13 @@ export function EngineRecommendationCard({ item, enableDetail = false }: EngineR
           · {item.riskNote}
         </p>
       )}
+
+      {/* Related signals hint — very subtle */}
+      {(item.relatedSignals?.length ?? 0) > 0 && (
+        <p className="mt-0.5 text-[10px] text-muted-foreground/40 text-left">
+          相关信号 {item.relatedSignals!.length}
+        </p>
+      )}
     </>
   )
 

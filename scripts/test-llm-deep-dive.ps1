@@ -71,9 +71,17 @@ Write-Host ("runStatus: {0}" -f $res.runStatus)
 # ── Timing breakdown ──────────────────────────────────────────────────────────
 if ($res.PSObject.Properties.Name -contains "timing" -and $null -ne $res.timing) {
   $t = $res.timing
-  Write-Host ("timing: total={0}ms  query={1}ms  deepDive={2}ms" -f $t.totalMs, $t.queryMs, $t.deepDiveMs)
+  $relMs = if ($t.PSObject.Properties.Name -contains "relatedSignalsMs") { $t.relatedSignalsMs } else { "n/a" }
+  Write-Host ("timing: total={0}ms  query={1}ms  deepDive={2}ms  relatedSignals={3}ms" -f $t.totalMs, $t.queryMs, $t.deepDiveMs, $relMs)
 } elseif ($res.PSObject.Properties.Name -contains "durationMs") {
   Write-Host ("timing: total={0}ms" -f $res.durationMs)
+}
+
+# ── Related Signals stats ──────────────────────────────────────────────────────
+if ($res.PSObject.Properties.Name -contains "relatedSignals" -and $null -ne $res.relatedSignals) {
+  $rs = $res.relatedSignals
+  Write-Host ("relatedSignals: ms={0}ms  pool={1}  itemsWithSignals={2}  avgSignals={3}" -f `
+    $rs.ms, $rs.candidatePoolSize, $rs.itemsWithSignals, $rs.avgSignals)
 }
 
 # ── Article fetch stats (from ingest phase of pipeline, if available) ──────────
@@ -359,6 +367,47 @@ if ($res.deepDiveStats -and -not [string]::IsNullOrWhiteSpace([string]$res.deepD
   } elseif ($Mode -eq "llm") {
     Write-Host ("  LLM_PRO_MODEL: expected={0} actual={1}" -f $proModel, $usedModel) -ForegroundColor Yellow
   }
+}
+
+# ── Related Signals per-item check ──────────────────────────────────────────
+
+Write-Host ""
+Write-Host "--- Related Signals ---"
+$rsWithSig = 0; $rsTotal = 0; $rsBad = 0
+for ($i = 0; $i -lt $final.Count; $i++) {
+  $it = $final[$i]
+  if (-not ($it.PSObject.Properties.Name -contains "relatedSignals")) { continue }
+  $sigs = @($it.relatedSignals)
+  if ($sigs.Count -eq 0) { continue }
+  $rsWithSig++
+  $rsTotal += $sigs.Count
+  Write-Host ("  final[{0}] relatedSignals: {1}" -f $i, $sigs.Count) -ForegroundColor Cyan
+
+  # FAIL checks
+  if ($sigs.Count -gt 5) {
+    Write-Host ("[FAIL] final[{0}] relatedSignals.Count={1} > 5" -f $i, $sigs.Count) -ForegroundColor Red
+    $rsBad++
+  }
+  foreach ($sig in $sigs) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$sig.url) -and [string]$sig.url -eq [string]$it.originalUrl) {
+      Write-Host ("[FAIL] final[{0}] relatedSignal url matches self" -f $i) -ForegroundColor Red
+      $rsBad++
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$sig.id) -and [string]$sig.id -eq [string]$it.id) {
+      Write-Host ("[FAIL] final[{0}] relatedSignal id matches self" -f $i) -ForegroundColor Red
+      $rsBad++
+    }
+  }
+}
+
+$avgRS2 = if ($final.Count -gt 0) { [Math]::Round($rsTotal / $final.Count, 1) } else { 0 }
+Write-Host ("  itemsWithRelatedSignals: {0}/{1}" -f $rsWithSig, $final.Count)
+Write-Host ("  avgRelatedSignals:       {0}" -f $avgRS2)
+if ($rsBad -eq 0 -and $final.Count -gt 0) {
+  Write-Host "  relatedSignals integrity: OK" -ForegroundColor Green
+}
+if ($rsWithSig -eq 0 -and $final.Count -gt 0) {
+  Write-Host "  [WARN] No items have relatedSignals — run -Refresh to compute" -ForegroundColor Yellow
 }
 
 Write-Host ""

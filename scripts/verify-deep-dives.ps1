@@ -159,6 +159,13 @@ if ($Refresh) {
     } else {
       Write-Warn "refresh response missing deepDiveStats"
     }
+
+    # relatedSignals stats from refresh (if available)
+    if ($refresh.PSObject.Properties.Name -contains "relatedSignals" -and $null -ne $refresh.relatedSignals) {
+      $rs = $refresh.relatedSignals
+      Write-Info ("relatedSignals: ms={0}ms  pool={1}  itemsWithSignals={2}  avgSignals={3}" -f `
+        $rs.ms, $rs.candidatePoolSize, $rs.itemsWithSignals, $rs.avgSignals)
+    }
   } catch {
     Write-Fail ("refresh request failed: {0}" -f $_.Exception.Message)
   }
@@ -462,6 +469,52 @@ try {
     }
     Write-Info ("itemsWithCoverImage: {0}/{1}" -f $coverCount, $finalItems.Count)
     Write-Info ("itemsWithMediaUrls:  {0}/{1}" -f $mediaCount, $finalItems.Count)
+
+    # ── Related Signals checks ────────────────────────────────────────────────
+    $rsWithSignals = 0; $rsTotalCount = 0; $rsMaxCount = 0; $rsNoReason = 0
+    for ($i = 0; $i -lt $finalItems.Count; $i++) {
+      $it = $finalItems[$i]
+      if (-not ($it.PSObject.Properties.Name -contains "relatedSignals")) { continue }
+      $sigs = @($it.relatedSignals)
+      if ($sigs.Count -eq 0) { continue }
+      $rsWithSignals++
+      $rsTotalCount += $sigs.Count
+      if ($sigs.Count -gt $rsMaxCount) { $rsMaxCount = $sigs.Count }
+
+      # FAIL: relatedSignals exceeds 5
+      if ($sigs.Count -gt 5) {
+        Write-Fail ("final[{0}] relatedSignals.Count={1} exceeds max of 5" -f $i, $sigs.Count)
+      }
+
+      foreach ($sig in $sigs) {
+        # FAIL: signal contains self (same URL)
+        if (-not [string]::IsNullOrWhiteSpace([string]$sig.url) -and [string]$sig.url -eq [string]$it.originalUrl) {
+          Write-Fail ("final[{0}] relatedSignal url={1} matches item's own url" -f $i, $sig.url)
+        }
+        # FAIL: signal contains self (same id)
+        if (-not [string]::IsNullOrWhiteSpace([string]$sig.id) -and [string]$sig.id -eq [string]$it.id) {
+          Write-Fail ("final[{0}] relatedSignal id matches item's own id" -f $i)
+        }
+        # WARN: reason is empty
+        if ([string]::IsNullOrWhiteSpace([string]$sig.reason)) { $rsNoReason++ }
+      }
+      Write-Info ("  final[{0}] relatedSignals: {1} signals" -f $i, $sigs.Count)
+    }
+
+    $avgRS = if ($finalItems.Count -gt 0) { [Math]::Round($rsTotalCount / $finalItems.Count, 1) } else { 0 }
+    Write-Host ""
+    Write-Host "  --- relatedSignals stats ---"
+    Write-Info ("itemsWithRelatedSignals: {0}/{1}" -f $rsWithSignals, $finalItems.Count)
+    Write-Info ("avgRelatedSignals:       {0}" -f $avgRS)
+    Write-Info ("maxRelatedSignals:       {0}" -f $rsMaxCount)
+    if ($rsWithSignals -eq 0 -and $finalItems.Count -gt 0) {
+      Write-Warn "No items have relatedSignals (expected after -Refresh or with existing snapshot)"
+    } else {
+      Write-Ok ("relatedSignals present on {0}/{1} items" -f $rsWithSignals, $finalItems.Count)
+    }
+    if ($rsNoReason -gt 0) {
+      Write-Warn ("{0} relatedSignal(s) have empty reason" -f $rsNoReason)
+    }
 
     # ── LLM path verification ─────────────────────────────────────────────────
     if ($expectLlm) {
