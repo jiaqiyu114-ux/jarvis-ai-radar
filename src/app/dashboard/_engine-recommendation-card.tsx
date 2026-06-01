@@ -8,6 +8,7 @@ import { TIER_LABELS, TIER_COLORS } from "@/lib/recommendations/recommendation-e
 import type { RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import { RecommendationDetailModal } from "./_recommendation-detail-modal"
 import { cleanDisplayText, safeSourceName } from "@/lib/text/decode-html"
+import { ClientRelativeTime } from "@/components/time/client-relative-time"
 
 const SOURCE_STATUS_LABELS: Record<string, string> = {
   official:     "官方来源",
@@ -30,6 +31,15 @@ const TIER_TEXT: Record<string, string> = {
   A: "text-sky-600 dark:text-sky-400",
   B: "text-muted-foreground",
   C: "text-muted-foreground/60",
+  D: "text-muted-foreground/40",
+}
+
+const TIER_TOOLTIPS: Record<string, string> = {
+  S: "信源等级 S：官方博客 / 官方文档 / 论文原文 / GitHub 官方仓库（不是内容评分）",
+  A: "信源等级 A：官方社媒 / 创始人 / 核心员工 / 顶级研究机构（不是内容评分）",
+  B: "信源等级 B：高质量媒体 / 专业分析师 / 垂直 KOL（不是内容评分）",
+  C: "信源等级 C：普通 KOL / 综合资讯站（不是内容评分）",
+  D: "信源等级 D：搬运号 / 营销号 / 低质量来源（不是内容评分）",
 }
 
 function SmallBadge({ children, className }: { children: ReactNode; className?: string }) {
@@ -52,20 +62,6 @@ function ScoreBox({ score, tier }: { score: number; tier: string }) {
   )
 }
 
-function formatAge(dateStr: string | null | undefined): string {
-  if (!dateStr) return ""
-  try {
-    const diff = Date.now() - new Date(dateStr).getTime()
-    if (isNaN(diff) || diff < 0) return ""
-    const h = diff / 3_600_000
-    if (h < 1) return `${Math.round(diff / 60_000)}m前`
-    if (h < 24) return `${Math.floor(h)}h前`
-    const d = Math.round(h / 24)
-    if (d < 7) return `${d}d前`
-    const dt = new Date(dateStr)
-    return `${dt.getMonth() + 1}/${dt.getDate()}`
-  } catch { return "" }
-}
 
 /** Build a concise, specific recommendation reason from item signals. Max 24 chars. */
 function buildCleanReason(item: RecommendedItem): string {
@@ -103,7 +99,6 @@ export function EngineRecommendationCard({ item, enableDetail = false }: EngineR
   const tierText    = TIER_TEXT[item.sourceTier] ?? TIER_TEXT.C
   const deepDive    = item.deepDive
   const ddStatus    = deepDiveStatus(item)
-  const age         = formatAge(item.publishedAt)
   const title       = cleanDisplayText(item.title)
   const summary     = cleanDisplayText(item.summary)
   const sourceName  = safeSourceName(item.source, item.originalUrl)
@@ -120,7 +115,7 @@ export function EngineRecommendationCard({ item, enableDetail = false }: EngineR
       <div className="flex items-start gap-2">
         <span
           className={cn("text-[10px] font-medium shrink-0 mt-0.5 leading-none", tierText)}
-          title="信源等级（信源可信度评级，不是内容评分）"
+          title={TIER_TOOLTIPS[item.sourceTier] ?? "信源等级（信源可信度评级，不是内容评分）"}
         >
           信源{item.sourceTier}
         </span>
@@ -203,12 +198,12 @@ export function EngineRecommendationCard({ item, enableDetail = false }: EngineR
               <span className="text-[10px] text-muted-foreground truncate max-w-[160px]">
                 {sourceName}
               </span>
-              {age && (
-                <>
-                  <span className="text-muted-foreground/30 text-[10px]">·</span>
-                  <span className="text-[10px] text-muted-foreground/60">{age}</span>
-                </>
-              )}
+              <span className="text-muted-foreground/30 text-[10px]">·</span>
+              <ClientRelativeTime
+                value={item.publishedAt ?? item.fetchedAt}
+                className="text-[10px] text-muted-foreground/60"
+                fallback=""
+              />
               {item.isUserCurated && (
                 <span className="text-[10px] text-teal-600/70 dark:text-teal-400/60">
                   · 我的来源

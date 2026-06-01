@@ -62,10 +62,14 @@ export type SourceSelectionStats = {
   deferredCount:       number
   skippedBlocked:      number
   skippedCoolingDown:  number
+  skippedWebPlatform:  number   // platform != rss (web, pending)
+  skippedPendingWeb:   number   // pendingWeb:true in user_source_note (safety net)
   selectedUserCurated: number
   selectedTierSA:      number   // S or A tier
   selectedNeverFetched: number
   selectedStale24h:    number   // last fetched > 24h ago
+  selectedOfficialRss: number   // official:true in user_source_note
+  selectedByTier:      Record<string, number>
 }
 
 export type SourceSelectionResult = {
@@ -206,23 +210,24 @@ export async function selectSourcesForIngest(
     stats: {
       totalActive: 0, selectedCount: 0, deferredCount: 0,
       skippedBlocked: 0, skippedCoolingDown: 0,
+      skippedWebPlatform: 0, skippedPendingWeb: 0,
       selectedUserCurated: 0, selectedTierSA: 0,
       selectedNeverFetched: 0, selectedStale24h: 0,
+      selectedOfficialRss: 0, selectedByTier: {},
     },
   }
 
   if (!isServerSupabaseConfigured || !supabaseServer) return empty
 
-  // ── Query all non-blocked RSS sources ────────────────────────────────────
+  // ── Query all non-blocked sources (platform filter applied in code for diagnostics) ──
   const { data, error } = await supabaseServer
     .from('sources')
     .select(
       'id, name, url, source_tier, category, platform, is_blocked, data_origin, ' +
       'health_status, failure_count, last_fetch_at, last_error_at, last_success_at, ' +
       'last_fetch_status, last_error_message, ' +
-      'is_user_curated, user_source_priority',
+      'is_user_curated, user_source_priority, user_source_note',
     )
-    .eq('platform', 'rss')
     .neq('data_origin', 'demo')
     .order('source_tier', { ascending: true })
 
@@ -234,6 +239,8 @@ export async function selectSourcesForIngest(
   const all = data as unknown as DbSource[]
   let skippedBlocked     = 0
   let skippedCoolingDown = 0
+  let skippedWebPlatform = 0
+  let skippedPendingWeb  = 0
 
   const eligible: Array<{ source: DbSource; score: number; stalenessBucket: string; reason: string }> = []
   const excluded: DbSource[] = []
@@ -243,6 +250,23 @@ export async function selectSourcesForIngest(
     if (source.is_blocked || !source.url?.trim()) {
       skippedBlocked++
       reasonBySourceId[source.id] = 'blocked or missing URL'
+      excluded.push(source)
+      continue
+    }
+
+    // Skip non-RSS platforms (web / pending — not supported by current RSS ingest)
+    if (source.platform !== 'rss') {
+      skippedWebPlatform++
+      reasonBySourceId[source.id] = `platform=${source.platform}, not rss`
+      excluded.push(source)
+      continue
+    }
+
+    // Safety net: skip any source tagged pendingWeb:true in user_source_note
+    const srcNote = (source as DbSource & { user_source_note?: string | null }).user_source_note ?? ''
+    if (srcNote.includes('pendingWeb:true')) {
+      skippedPendingWeb++
+      reasonBySourceId[source.id] = 'pendingWeb:true in user_source_note'
       excluded.push(source)
       continue
     }
@@ -323,22 +347,37 @@ export async function selectSourcesForIngest(
   })
 
   // ── Stats ─────────────────────────────────────────────────────────────────
+  const selectedByTier = selectedEntries.reduce<Record<string, number>>((acc, e) => {
+    const t = e.source.source_tier ?? 'unknown'
+    acc[t] = (acc[t] ?? 0) + 1
+    return acc
+  }, {})
+
   const stats: SourceSelectionStats = {
-    totalActive:         all.filter(s => !s.is_blocked).length,
+    totalActive:         all.filter(s => !s.is_blocked && s.platform === 'rss').length,
     selectedCount:       selected.length,
     deferredCount:       deferredEntries.length,
     skippedBlocked,
     skippedCoolingDown,
+    skippedWebPlatform,
+    skippedPendingWeb,
     selectedUserCurated: selectedEntries.filter(e => e.source.is_user_curated).length,
     selectedTierSA:      selectedEntries.filter(e => e.source.source_tier === 'S' || e.source.source_tier === 'A').length,
     selectedNeverFetched: selectedEntries.filter(e => e.stalenessBucket === 'never_fetched').length,
     selectedStale24h:    selectedEntries.filter(e => e.stalenessBucket === 'stale_24h').length,
+    selectedOfficialRss: selectedEntries.filter(e => {
+      const n = (e.source as DbSource & { user_source_note?: string | null }).user_source_note ?? ''
+      return n.includes('official:true')
+    }).length,
+    selectedByTier,
   }
 
   console.log(
     `[source-selector] selected=${selected.length} deferred=${deferredEntries.length} ` +
     `coolingDown=${skippedCoolingDown} blocked=${skippedBlocked} ` +
-    `neverFetched=${stats.selectedNeverFetched} stale=${stats.selectedStale24h}`,
+    `webPlatform=${skippedWebPlatform} pendingWeb=${skippedPendingWeb} ` +
+    `neverFetched=${stats.selectedNeverFetched} stale=${stats.selectedStale24h} ` +
+    `officialRss=${stats.selectedOfficialRss}`,
   )
 
   return { selected, deferredSample, deferredCount: deferredEntries.length, reasonBySourceId, stats }

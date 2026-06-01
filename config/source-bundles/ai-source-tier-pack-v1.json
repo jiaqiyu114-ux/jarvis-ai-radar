@@ -1,0 +1,287 @@
+[
+  {
+    "name": "OpenAI News",
+    "url": "https://openai.com/news/rss.xml",
+    "platform": "rss",
+    "tier": "S",
+    "company": "OpenAI",
+    "role": "company_news",
+    "official": true,
+    "enabled": true,
+    "priority": 1
+  },
+  {
+    "name": "Google AI Blog",
+    "url": "https://blog.google/technology/ai/rss/",
+    "platform": "rss",
+    "tier": "S",
+    "company": "Google",
+    "role": "company_blog",
+    "official": true,
+    "enabled": true,
+    "priority": 1
+  },
+  {
+    "name": "Google DeepMind Blog",
+    "url": "https://deepmind.google/blog/rss.xml",
+    "platform": "rss",
+    "tier": "S",
+    "company": "Google DeepMind",
+    "role": "research_blog",
+    "official": true,
+    "enabled": true,
+    "priority": 1
+  },
+  {
+    "name": "Microsoft AI Blog",
+    "url": "https://blogs.microsoft.com/ai/feed/",
+    "platform": "rss",
+    "tier": "S",
+    "company": "Microsoft",
+    "role": "company_blog",
+    "official": true,
+    "enabled": true,
+    "priority": 1
+  },
+  {
+    "name": "Microsoft Research Blog",
+    "url": "https://www.microsoft.com/en-us/research/blog/feed/",
+    "platform": "rss",
+    "tier": "S",
+    "company": "Microsoft",
+    "role": "research_blog",
+    "official": true,
+    "enabled": true,
+    "priority": 1
+  },
+  {
+    "name": "NVIDIA Newsroom",
+    "url": "https://nvidianews.nvidia.com/rss",
+    "platform": "rss",
+    "tier": "S",
+    "company": "NVIDIA",
+    "role": "company_news",
+    "official": true,
+    "enabled": true,
+    "priority": 1
+  },
+  {
+    "name": "NVIDIA Blog",
+    "url": "https://blogs.nvidia.com/feed/",
+    "platform": "rss",
+    "tier": "S",
+    "company": "NVIDIA",
+    "role": "company_blog",
+    "official": true,
+    "enabled": true,
+    "priority": 1
+  },
+  {
+    "name": "Hugging Face Blog",
+    "url": "https://huggingface.co/blog/feed.xml",
+    "platform": "rss",
+    "tier": "S",
+    "company": "Hugging Face",
+    "role": "company_blog",
+    "official": true,
+    "enabled": true,
+    "priority": 1
+  },
+  {
+    "name": "GitHub Blog",
+    "url": "https://github.blog/feed/",
+    "platform": "rss",
+    "tier": "S",
+    "company": "GitHub",
+    "role": "company_blog",
+    "official": true,
+    "enabled": true,
+    "priority": 1
+  },
+
+  {
+    "name": "Anthropic News",
+    "url": "https://www.anthropic.com/news",
+    "platform": "web",
+    "tier": "A",
+    "company": "Anthropic",
+    "role": "company_news",
+    "official": true,
+    "enabled": false,
+    "pendingWeb": true,
+    "priority": 2
+  },
+  {
+    "name": "Anthropic Engineering",
+    "url": "https://www.anthropic.com/engineering",
+    "platform": "web",
+    "tier": "A",
+    "company": "Anthropic",
+    "role": "engineering_blog",
+    "official": true,
+    "enabled": false,
+    "pendingWeb": true,
+    "priority": 2
+  },
+  {
+    "name": "Meta AI Blog",
+    "url": "https://ai.meta.com/blog/",
+    "platform": "web",
+    "tier": "A",
+    "company": "Meta",
+    "role": "research_blog",
+    "official": true,
+    "enabled": false,
+    "pendingWeb": true,
+    "priority": 2
+  },
+  {
+    "name": "Mistral News",
+    "url": "https://mistral.ai/news/",
+    "platform": "web",
+    "tier": "A",
+    "company": "Mistral",
+    "role": "company_news",
+    "official": true,
+    "enabled": false,
+    "pendingWeb": true,
+    "priority": 2
+  },
+  {
+    "name": "xAI News",
+    "url": "https://x.ai/news",
+    "platform": "web",
+    "tier": "A",
+    "company": "xAI",
+    "role": "company_news",
+    "official": true,
+    "enabled": false,
+    "pendingWeb": true,
+    "priority": 2
+  },
+  {
+    "name": "Cohere Blog",
+    "url": "https://cohere.com/blog",
+    "platform": "web",
+    "tier": "A",
+    "company": "Cohere",
+    "role": "company_blog",
+    "official": true,
+    "enabled": false,
+    "pendingWeb": true,
+    "priority": 2
+  },
+  {
+    "name": "Cursor Changelog",
+    "url": "https://cursor.com/changelog",
+    "platform": "web",
+    "tier": "A",
+    "company": "Anysphere",
+    "role": "product_changelog",
+    "official": true,
+    "enabled": false,
+    "pendingWeb": true,
+    "priority": 2
+  },
+
+  {
+    "name": "TechCrunch AI",
+    "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+    "platform": "rss",
+    "tier": "B",
+    "company": "TechCrunch",
+    "role": "vertical_media",
+    "official": false,
+    "enabled": true,
+    "priority": 3
+  },
+  {
+    "name": "MIT Technology Review AI",
+    "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed",
+    "platform": "rss",
+    "tier": "B",
+    "company": "MIT Technology Review",
+    "role": "vertical_media",
+    "official": false,
+    "enabled": true,
+    "priority": 3
+  },
+  {
+    "name": "Ars Technica Tech Lab",
+    "url": "https://feeds.arstechnica.com/arstechnica/technology-lab",
+    "platform": "rss",
+    "tier": "B",
+    "company": "Ars Technica",
+    "role": "vertical_media",
+    "official": false,
+    "enabled": true,
+    "priority": 3
+  },
+  {
+    "name": "The Decoder",
+    "url": "https://the-decoder.com/feed/",
+    "platform": "rss",
+    "tier": "B",
+    "company": "The Decoder",
+    "role": "vertical_media",
+    "official": false,
+    "enabled": true,
+    "priority": 3
+  },
+  {
+    "name": "VentureBeat AI",
+    "url": "https://venturebeat.com/category/ai/feed/",
+    "platform": "rss",
+    "tier": "B",
+    "company": "VentureBeat",
+    "role": "vertical_media",
+    "official": false,
+    "enabled": true,
+    "priority": 3
+  },
+
+  {
+    "name": "Simon Willison",
+    "url": "https://simonwillison.net/atom/everything/",
+    "platform": "rss",
+    "tier": "C",
+    "company": "Simon Willison",
+    "role": "individual_kol",
+    "official": false,
+    "enabled": true,
+    "priority": 4
+  },
+  {
+    "name": "Latent Space",
+    "url": "https://www.latent.space/feed",
+    "platform": "rss",
+    "tier": "C",
+    "company": "Latent Space",
+    "role": "newsletter",
+    "official": false,
+    "enabled": true,
+    "priority": 4
+  },
+  {
+    "name": "Interconnects",
+    "url": "https://www.interconnects.ai/feed",
+    "platform": "rss",
+    "tier": "C",
+    "company": "Interconnects",
+    "role": "newsletter",
+    "official": false,
+    "enabled": true,
+    "priority": 4
+  },
+  {
+    "name": "One Useful Thing",
+    "url": "https://www.oneusefulthing.org/feed",
+    "platform": "rss",
+    "tier": "C",
+    "company": "One Useful Thing",
+    "role": "newsletter",
+    "official": false,
+    "enabled": true,
+    "priority": 4
+  }
+]
