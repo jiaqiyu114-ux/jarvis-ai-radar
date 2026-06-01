@@ -34,21 +34,26 @@ import type { DbSource } from '@/types/database'
 // ── Public types ──────────────────────────────────────────────────────────────
 
 export type SelectedFeed = {
-  id:          string
-  name:        string
-  feedUrl:     string
-  tier:        string
-  category:    string
-  healthStatus: string | null
-  reason:      string   // why this source was selected
+  id:              string
+  name:            string
+  feedUrl:         string
+  tier:            string
+  category:        string
+  healthStatus:    string | null
+  failureCount:    number
+  lastFetchStatus: string | null
+  urgencyScore:    number
+  reason:          string   // why this source was selected
 }
 
 export type DeferredFeedSummary = {
-  id:          string
-  name:        string
-  tier:        string
-  healthStatus: string | null
-  reason:      string   // why this source was deferred
+  id:              string
+  name:            string
+  tier:            string
+  healthStatus:    string | null
+  failureCount:    number
+  lastFetchStatus: string | null
+  reason:          string   // why this source was deferred
 }
 
 export type SourceSelectionStats = {
@@ -84,6 +89,7 @@ const COOLDOWN_HOURS: Array<[minFailures: number, hours: number]> = [
   [6, 72],
   [4, 24],
   [2, 6],
+  [1, 1],  // 1h cooldown after first failure — prevents immediate re-selection of timed-out sources
   [0, 0],
 ]
 
@@ -128,7 +134,10 @@ const HEALTH_MODIFIER: Record<string, number> = {
   healthy: 0, degraded: -20, unknown: 0, failing: -100,
 }
 
-function computeUrgencyScore(source: DbSource, now: Date): { score: number; stalenessBucket: string } {
+function computeUrgencyScore(
+  source: DbSource & { last_fetch_status?: string | null; last_error_message?: string | null },
+  now: Date,
+): { score: number; stalenessBucket: string } {
   let score = 0
   let stalenessBucket = 'fresh'
 
@@ -158,6 +167,19 @@ function computeUrgencyScore(source: DbSource, now: Date): { score: number; stal
 
   // ── Health modifier ───────────────────────────────────────────────────────
   score += HEALTH_MODIFIER[source.health_status ?? 'unknown'] ?? 0
+
+  // ── Last-fetch-failed penalty (production-readiness gate) ─────────────────
+  // A source that failed its last ingest attempt is less production-ready
+  // than a never-fetched source. Penalise it so newly-imported-but-failing
+  // sources don't keep getting selected ahead of known-good sources.
+  if (source.last_fetch_status === 'failed') {
+    score -= 200
+    // Extra penalty if the failure was a timeout — these slow the whole batch
+    const errMsg = source.last_error_message ?? ''
+    if (errMsg.toLowerCase().includes('timeout') || errMsg.toLowerCase().includes('abort')) {
+      score -= 100  // Total: -300 for timeout failures
+    }
+  }
 
   return { score, stalenessBucket }
 }
@@ -197,6 +219,7 @@ export async function selectSourcesForIngest(
     .select(
       'id, name, url, source_tier, category, platform, is_blocked, data_origin, ' +
       'health_status, failure_count, last_fetch_at, last_error_at, last_success_at, ' +
+      'last_fetch_status, last_error_message, ' +
       'is_user_curated, user_source_priority',
     )
     .eq('platform', 'rss')
@@ -245,7 +268,7 @@ export async function selectSourcesForIngest(
       }
     }
 
-    const { score, stalenessBucket } = computeUrgencyScore(source, now)
+    const { score, stalenessBucket } = computeUrgencyScore(source as DbSource & { last_fetch_status?: string | null; last_error_message?: string | null }, now)
     const reason = [
       stalenessBucket === 'never_fetched' ? 'never fetched (+1000)' :
       stalenessBucket === 'stale_24h' ? `stale >24h (+800)` :
@@ -253,6 +276,7 @@ export async function selectSourcesForIngest(
       source.is_user_curated ? 'user_curated (+200)' : null,
       `tier ${source.source_tier}`,
       source.health_status ? `health=${source.health_status}` : null,
+      (source as { last_fetch_status?: string | null }).last_fetch_status === 'failed' ? 'last_fetch_failed(-200)' : null,
     ].filter(Boolean).join(', ')
 
     eligible.push({ source, score, stalenessBucket, reason: `urgency=${score}: ${reason}` })
@@ -268,26 +292,33 @@ export async function selectSourcesForIngest(
   // ── Build selected feeds ──────────────────────────────────────────────────
   const selected: SelectedFeed[] = selectedEntries.map(e => {
     reasonBySourceId[e.source.id] = `selected: ${e.reason}`
+    const src = e.source as DbSource & { last_fetch_status?: string | null }
     return {
-      id:          e.source.id,
-      name:        e.source.name,
-      feedUrl:     e.source.url,
-      tier:        e.source.source_tier,
-      category:    e.source.category,
-      healthStatus: e.source.health_status ?? null,
-      reason:      e.reason,
+      id:              e.source.id,
+      name:            e.source.name,
+      feedUrl:         e.source.url,
+      tier:            e.source.source_tier,
+      category:        e.source.category,
+      healthStatus:    e.source.health_status ?? null,
+      failureCount:    e.source.failure_count ?? 0,
+      lastFetchStatus: src.last_fetch_status ?? null,
+      urgencyScore:    e.score,
+      reason:          e.reason,
     }
   })
 
   // ── Build deferred sample (top 10 for diagnostics) ────────────────────────
   const deferredSample: DeferredFeedSummary[] = deferredEntries.slice(0, 10).map(e => {
     reasonBySourceId[e.source.id] = `deferred: ${e.reason}`
+    const src = e.source as DbSource & { last_fetch_status?: string | null }
     return {
-      id:          e.source.id,
-      name:        e.source.name,
-      tier:        e.source.source_tier,
-      healthStatus: e.source.health_status ?? null,
-      reason:      `deferred (urgency=${e.score}): ${e.reason}`,
+      id:              e.source.id,
+      name:            e.source.name,
+      tier:            e.source.source_tier,
+      healthStatus:    e.source.health_status ?? null,
+      failureCount:    e.source.failure_count ?? 0,
+      lastFetchStatus: src.last_fetch_status ?? null,
+      reason:          `deferred (urgency=${e.score}): ${e.reason}`,
     }
   })
 
