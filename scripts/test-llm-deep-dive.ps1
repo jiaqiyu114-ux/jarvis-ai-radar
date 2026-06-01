@@ -65,6 +65,14 @@ if (-not $res.ok) {
 
 Write-Host ("runStatus: {0}" -f $res.runStatus)
 
+# ── Timing breakdown ──────────────────────────────────────────────────────────
+if ($res.PSObject.Properties.Name -contains "timing" -and $null -ne $res.timing) {
+  $t = $res.timing
+  Write-Host ("timing: total={0}ms  query={1}ms  deepDive={2}ms" -f $t.totalMs, $t.queryMs, $t.deepDiveMs)
+} elseif ($res.PSObject.Properties.Name -contains "durationMs") {
+  Write-Host ("timing: total={0}ms" -f $res.durationMs)
+}
+
 # ── Article fetch stats (from ingest phase of pipeline, if available) ──────────
 if ($res.PSObject.Properties.Name -contains "ingest" -and $null -ne $res.ingest -and
     $res.ingest.PSObject.Properties.Name -contains "articleFetch") {
@@ -75,7 +83,7 @@ if ($res.PSObject.Properties.Name -contains "ingest" -and $null -ne $res.ingest 
 
 if ($res.deepDiveStats) {
   $ds = $res.deepDiveStats
-  Write-Host ("deepDiveStats: total={0}, generated={1}, fallback={2}, failed={3}, model={4}, provider={5}, mode={6}" -f `
+  Write-Host ("deepDiveStats: total={0}  generated={1}  fallback={2}  failed={3}  model={4}  provider={5}  mode={6}" -f `
     $ds.total, $ds.generated, $ds.fallback, $ds.failed, $ds.model, $ds.provider, $ds.mode)
   Write-Host ("actualDeepDiveModel: {0}" -f $ds.model)
   Write-Host ("actualProvider:      {0}" -f $ds.provider)
@@ -147,13 +155,20 @@ for ($i = 0; $i -lt $final.Count; $i++) {
     $i, $status, $cs, $model, $prov, $osLen, $fuCnt)
   Write-Host ("       {0}" -f $diagLine)
 
-  # WARN/FAIL: full_article with empty fullContent
-  if ($cs -eq "full_article" -and $fcLen -lt 500) {
-    Write-Host ("[WARN] item[{0}] contentStatus=full_article but inputFullContentLength={1} -- likely incorrect" -f $i, $fcLen) -ForegroundColor Yellow
+  # WARN: generated status but non-null fallbackReason
+  if ($status -eq "generated" -and $dd.PSObject.Properties.Name -contains "fallbackReason") {
+    $fr = [string]$dd.fallbackReason
+    if (-not [string]::IsNullOrWhiteSpace($fr)) {
+      Write-Host ("[WARN] item[{0}] status=generated but fallbackReason non-null: {1}" -f $i, $fr.Substring(0, [Math]::Min(60, $fr.Length))) -ForegroundColor Yellow
+    }
   }
-  # WARN: fetched_article contentSource but fullContent empty
-  if ($cSrc -eq "fetched_article" -and $fcLen -lt 400) {
-    Write-Host ("[WARN] item[{0}] contentSource=fetched_article but inputFullContentLength={1}" -f $i, $fcLen) -ForegroundColor Yellow
+  # WARN/FAIL: full_article with empty fullContent
+  if (($cs -eq "full_article" -or $cs -eq "extracted_article") -and $fcLen -lt 500) {
+    Write-Host ("[WARN] item[{0}] contentStatus={1} but inputFullContentLength={2} -- likely incorrect" -f $i, $cs, $fcLen) -ForegroundColor Yellow
+  }
+  # WARN: fetched_article / rss_content source but fullContent empty
+  if (($cSrc -eq "fetched_article" -or $cSrc -eq "rss_content") -and $fcLen -lt 400) {
+    Write-Host ("[WARN] item[{0}] contentSource={1} but inputFullContentLength={2}" -f $i, $cSrc, $fcLen) -ForegroundColor Yellow
   }
 
   if (-not (Test-DeepDiveShape $dd ("final[{0}]" -f $i))) {
@@ -201,17 +216,29 @@ if ($fullArtBadCount -eq 0 -and $final.Count -gt 0) {
 
 Write-Host ""
 Write-Host "--- Content Status Distribution ---"
+Write-Host "  (full_article=确认全文  extracted_article=较长正文  partial=部分  rss_summary=摘要)" -ForegroundColor DarkGray
 foreach ($k in ($csDistrib.Keys | Sort-Object)) {
   $cnt   = $csDistrib[$k]
-  $color = if ($k -eq "full_article") { "Green" } elseif ($k -eq "unknown" -or $k -eq "missing") { "Red" } else { "Yellow" }
+  $color = if ($k -eq "full_article") { "Green" } `
+           elseif ($k -eq "extracted_article") { "Cyan" } `
+           elseif ($k -eq "partial") { "Yellow" } `
+           elseif ($k -eq "unknown" -or $k -eq "missing") { "Red" } `
+           else { "Gray" }
   Write-Host ("  {0}: {1}" -f $k, $cnt) -ForegroundColor $color
 }
+if ($csDistrib.Count -eq 1 -and $csDistrib.ContainsKey("partial") -and $final.Count -gt 0) {
+  Write-Host "  [WARN] All items still 'partial' — check inferContentStatus raw length fix" -ForegroundColor Yellow
+}
 
+Write-Host "--- Content Source Distribution ---"
+Write-Host "  (rss_content=RSS全文  fetched_article=抓取正文  rss_summary=RSS摘要)" -ForegroundColor DarkGray
 if ($srcDistrib.Count -gt 0) {
-  Write-Host "--- Content Source Distribution ---"
   foreach ($k in ($srcDistrib.Keys | Sort-Object)) {
-    Write-Host ("  {0}: {1}" -f $k, $srcDistrib[$k])
+    $color = if ($k -eq "rss_content" -or $k -eq "fetched_article") { "Cyan" } else { "Gray" }
+    Write-Host ("  {0}: {1}" -f $k, $srcDistrib[$k]) -ForegroundColor $color
   }
+} else {
+  Write-Host "  (none)" -ForegroundColor Gray
 }
 
 if ($csInconsistencies -gt 0) {

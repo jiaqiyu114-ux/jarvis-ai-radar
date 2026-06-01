@@ -13,14 +13,14 @@ import type {
 export type RecommendationDeepDiveStatus = 'generated' | 'fallback' | 'skipped' | 'error'
 export type RecommendationDeepDiveInputQuality = 'rss_summary_only' | 'partial' | 'full_text'
 export type FinalDeepDiveMode = 'llm' | 'deterministic'
-export type DeepDiveContentStatus = 'full_article' | 'partial' | 'rss_summary' | 'title_only' | 'missing' | 'unknown'
+export type DeepDiveContentStatus = 'full_article' | 'extracted_article' | 'partial' | 'rss_summary' | 'title_only' | 'missing' | 'unknown'
 export type DeepDiveQualityLevel = 'high' | 'medium' | 'low'
 
 export type DeepDiveInputDiagnostics = {
   inputTitleLength: number
   inputSummaryLength: number
   inputFullContentLength: number
-  contentSource: 'rss_summary' | 'fetched_article' | 'unknown'
+  contentSource: 'rss_content' | 'fetched_article' | 'rss_summary' | 'unknown'
   hasFullContent: boolean
   generationStatus: RecommendationDeepDiveStatus
   fallbackReason: string | null
@@ -97,6 +97,7 @@ export type RecommendationDeepDiveInput = {
   isSingleSource?: boolean | null
   hasFullContent?: boolean | null
   wordCount?: number | null
+  contentFetchStatus?: string | null  // DB content_fetch_status: 'fetched' | 'rss_content' | 'failed' | null
 }
 
 type DeepDiveBuildOptions = {
@@ -236,11 +237,15 @@ function computeInputDiagnostics(
   const summaryLen = input.summary?.length ?? 0
   const fullContentLen = input.fullContent?.length ?? 0
 
-  // contentSource and hasFullContent based ONLY on actual fullContent length —
-  // NOT the hasFullContent flag (which reflects DB wordCount, not model input).
+  // contentSource: prefer explicit DB content_fetch_status over inference.
+  const fetchStatus = (input.contentFetchStatus ?? '').toLowerCase()
   const hasFC = fullContentLen >= 400
   const contentSrc: DeepDiveInputDiagnostics['contentSource'] =
-    fullContentLen >= 400 ? 'fetched_article' : summaryLen > 0 ? 'rss_summary' : 'unknown'
+    fetchStatus === 'rss_content'                         ? 'rss_content'     :
+    fetchStatus === 'fetched' && fullContentLen >= 400    ? 'fetched_article'  :
+    fullContentLen >= 400                                 ? 'fetched_article'  :
+    summaryLen > 0                                        ? 'rss_summary'      :
+    'unknown'
 
   return {
     inputTitleLength: titleLen,
@@ -294,18 +299,29 @@ function inferInputQuality(input: RecommendationDeepDiveInput): RecommendationDe
 }
 
 function inferContentStatus(input: RecommendationDeepDiveInput): DeepDiveContentStatus {
-  // Determined ONLY from what was actually passed to the model.
-  // hasFullContent flag and wordCount are DB metadata — they do NOT mean
-  // the content was included in this input. Never return full_article when
-  // fullContent is absent.
-  const fullContent = safeText(input.fullContent, '')
-  const summary = safeText(input.summary, '')
+  // Use raw string length — safeText caps at 800 and would give wrong thresholds.
+  const fullContentLen = input.fullContent?.length ?? 0
+  const summaryLen = input.summary?.length ?? 0
+  const fetchStatus = (input.contentFetchStatus ?? '').toLowerCase()
 
-  if (fullContent.length >= 1500) return 'full_article'
-  if (fullContent.length >= 500) return 'partial'
-  if (summary.length >= 20) return 'rss_summary'
-  if (safeText(input.title, '').length > 0) return 'title_only'
-  return 'missing'
+  if (fullContentLen === 0) {
+    if (summaryLen >= 20) return 'rss_summary'
+    if ((input.title?.length ?? 0) > 0) return 'title_only'
+    return 'missing'
+  }
+
+  // RSS content:encoded is the authoritative full text for that feed — treat it as full_article
+  // when it has substantial length (the feed itself publishes the whole article this way).
+  if (fetchStatus === 'rss_content') {
+    return fullContentLen >= 1500 ? 'full_article' : 'partial'
+  }
+
+  // Article fetch: extracted from HTML, may be truncated even when long.
+  // Use 'extracted_article' for well-extracted content (5000+ chars) to signal
+  // "good extraction but not confirmed 100% complete original text".
+  if (fullContentLen >= 5000) return 'extracted_article'
+  if (fullContentLen >= 500)  return 'partial'
+  return 'rss_summary'
 }
 
 function tierLabel(tier: string | null | undefined): string {
@@ -661,7 +677,7 @@ function buildLlmUserPrompt(input: RecommendationDeepDiveInput, retryHint?: stri
     publishedAt: safeText(input.publishedAt, '', 40) || null,
     fetchedAt: safeText(input.fetchedAt, '', 40) || null,
     summary: safeText(input.summary, '', 1200) || null,
-    fullContent: safeText(input.fullContent, '', 4000) || null,
+    fullContent: safeText(input.fullContent, '', 10_000) || null,
     recommendationTier: safeText(input.recommendationTier, '', 20) || null,
     recommendationReason: safeText(input.recommendationReason, '', 400) || null,
     riskNote: safeText(input.riskNote, '', 320) || null,
@@ -860,6 +876,7 @@ export function buildDeepDiveInputFromRecommendedItem(item: RecommendedItem): Re
     fetchedAt: item.fetchedAt,
     originalUrl: item.originalUrl,
     fullContent: item.fullContent ?? null,
+    contentFetchStatus: item.contentFetchStatus ?? null,
     isSingleSource: item.sourceStatus === 'single_source',
     hasFullContent: ((item.fullContent?.length ?? 0) >= 500) || ((item.wordCount ?? 0) >= 500),
     wordCount: item.wordCount,

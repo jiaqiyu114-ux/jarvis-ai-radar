@@ -58,9 +58,10 @@ export type RecommendedItem = {
   analysisTier:           string | null
   wordCount:              number | null
   // Article content (populated when article fetch succeeds)
-  fullContent?:   string | null
-  coverImageUrl?: string | null
-  mediaUrls?:     string[] | null
+  fullContent?:       string | null
+  contentFetchStatus?: string | null   // DB content_fetch_status: 'fetched' | 'rss_content' | 'failed' | null
+  coverImageUrl?:     string | null
+  mediaUrls?:         string[] | null
   // Engine output
   signalScore:          number          // Pure rule-based signal (0-100)
   recommendationScore:  number          // Ranking score (0-100)
@@ -508,9 +509,10 @@ function mapRow(row: EngineRow): RecommendedItem {
     shouldDeepAnalyze:      b(row.should_deep_analyze),
     analysisTier:           row.analysis_tier,
     wordCount:              row.content_word_count,
-    fullContent:   row.clean_text ? row.clean_text.slice(0, 16_000) : null,
-    coverImageUrl: row.cover_image_url ?? null,
-    mediaUrls:     Array.isArray(row.media_urls) ? (row.media_urls as string[]).slice(0, 8) : null,
+    fullContent:        row.clean_text ? row.clean_text.slice(0, 16_000) : null,
+    contentFetchStatus: row.content_fetch_status ?? null,
+    coverImageUrl:      row.cover_image_url ?? null,
+    mediaUrls:          Array.isArray(row.media_urls) ? (row.media_urls as string[]).slice(0, 8) : null,
     signalScore,
     recommendationScore:  recScore,
     recommendationTier:   tier,

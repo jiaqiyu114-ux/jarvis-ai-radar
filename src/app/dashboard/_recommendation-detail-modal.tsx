@@ -88,12 +88,13 @@ function contentStatusBadge(
 ): { text: string; cls: string } | null {
   const safeCs = cs === "full_article" && (fcLen ?? 0) < 500 ? "rss_summary" : cs
   switch (safeCs) {
-    case "full_article": return { text: "原文正文", cls: "text-success border-success/35 bg-success/8" }
-    case "partial":      return { text: "部分正文", cls: "text-amber-600 border-amber-400/35 bg-amber-400/8 dark:text-amber-400" }
-    case "rss_summary":  return { text: "RSS 摘要", cls: "text-amber-700 border-amber-400/35 bg-amber-400/8 dark:text-amber-500" }
+    case "full_article":      return { text: "原文正文", cls: "text-success border-success/35 bg-success/8" }
+    case "extracted_article": return { text: "较长正文", cls: "text-emerald-600 border-emerald-400/35 bg-emerald-400/8 dark:text-emerald-400" }
+    case "partial":           return { text: "部分正文", cls: "text-amber-600 border-amber-400/35 bg-amber-400/8 dark:text-amber-400" }
+    case "rss_summary":       return { text: "RSS 摘要", cls: "text-amber-700 border-amber-400/35 bg-amber-400/8 dark:text-amber-500" }
     case "title_only":
-    case "missing":      return { text: "仅标题", cls: "text-muted-foreground border-border bg-muted/40" }
-    default:             return null
+    case "missing":           return { text: "仅标题", cls: "text-muted-foreground border-border bg-muted/40" }
+    default:                  return null
   }
 }
 

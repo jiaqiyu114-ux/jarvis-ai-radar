@@ -57,7 +57,10 @@ export async function POST(req: NextRequest) {
   })
 
   try {
+    const queryStart = Date.now()
     const result = await getRecommendations({ windowHours: WINDOW_HOURS, limit: LIMIT, includeArchive: true })
+    const queryDurationMs = Date.now() - queryStart
+
     const durationMs = Date.now() - startMs
     const runStatus = result.items.length > 0 ? 'success' : 'partial_success'
 
@@ -76,12 +79,14 @@ export async function POST(req: NextRequest) {
     }
 
     const snapshotItemsBase = result.items.filter(i => i.recommendationTier !== 'archive')
+    const deepDiveStart = Date.now()
     const { items: snapshotItemsWithDeepDive, deepDiveStats } =
       await attachDeepDivesToRecommendations(snapshotItemsBase, {
         mode: deepDiveMode,
         concurrency: 2,
         includeSkipped: false,
       })
+    const deepDiveDurationMs = Date.now() - deepDiveStart
 
     const snapshotId = await createRecommendationSnapshot(
       {
@@ -128,6 +133,11 @@ export async function POST(req: NextRequest) {
       ok: true,
       runStatus,
       durationMs,
+      timing: {
+        totalMs:        durationMs,
+        queryMs:        queryDurationMs,
+        deepDiveMs:     deepDiveDurationMs,
+      },
       deepDiveMode,
       deepDiveStats,
       run,

@@ -113,6 +113,13 @@ if ($SkipRefresh) {
   try {
     $refresh = Invoke-RestMethod -Method Post -Uri $refreshUrl -TimeoutSec 180
     if ($refresh.ok) { Write-Ok "refresh ok=true" } else { Write-Fail "refresh ok=false" }
+    # Timing breakdown
+    if ($refresh.PSObject.Properties.Name -contains "timing" -and $null -ne $refresh.timing) {
+      $t = $refresh.timing
+      Write-Info ("timing: total={0}ms  query={1}ms  deepDive={2}ms" -f $t.totalMs, $t.queryMs, $t.deepDiveMs)
+    } elseif ($refresh.PSObject.Properties.Name -contains "durationMs") {
+      Write-Info ("timing: total={0}ms" -f $refresh.durationMs)
+    }
     # Article fetch stats (from ingest phase)
     if ($refresh.PSObject.Properties.Name -contains "ingest" -and $null -ne $refresh.ingest -and
         $refresh.ingest.PSObject.Properties.Name -contains "articleFetch") {
@@ -128,7 +135,7 @@ if ($SkipRefresh) {
     }
     if ($refresh.deepDiveStats) {
       $ds = $refresh.deepDiveStats
-      Write-Info ("deepDiveStats: total={0} generated={1} fallback={2} failed={3} model={4} provider={5}" -f `
+      Write-Info ("deepDiveStats: total={0}  generated={1}  fallback={2}  failed={3}  model={4}  provider={5}" -f `
         $ds.total, $ds.generated, $ds.fallback, $ds.failed, $ds.model, $ds.provider)
       Write-Info ("actualDeepDiveModel: {0}" -f $ds.model)
       Write-Info ("actualProvider:      {0}" -f $ds.provider)
@@ -214,6 +221,14 @@ try {
       Write-Host ("  [{0}] status={1} | contentStatus={2} | model={3} | provider={4} | oneSentLen={5} | followUps={6}" -f `
         $i, $status, $cs, $model, $provider, $osLen, $fuCount)
 
+      # WARN: generated status but non-null fallbackReason (data integrity check)
+      if ($status -eq "generated" -and $dd.PSObject.Properties.Name -contains "fallbackReason") {
+        $fr = [string]$dd.fallbackReason
+        if (-not [string]::IsNullOrWhiteSpace($fr)) {
+          Write-Warn ("{0} status=generated but fallbackReason non-null: {1}" -f $pfx, $fr.Substring(0, [Math]::Min(60, $fr.Length)))
+        }
+      }
+
       # contentStatus distribution
       if (-not $csDistrib.ContainsKey($cs)) { $csDistrib[$cs] = 0 }
       $csDistrib[$cs]++
@@ -221,7 +236,7 @@ try {
         $summaryOnlyN++
       }
 
-      # FAIL: full_article with empty fullContent
+      # FAIL: full_article or extracted_article with empty fullContent
       if ($dd.PSObject.Properties.Name -contains "inputDiagnostics" -and $null -ne $dd.inputDiagnostics) {
         $diag    = $dd.inputDiagnostics
         $fcLen   = 0
@@ -240,13 +255,13 @@ try {
         if (-not $srcDistrib.ContainsKey($cSrc)) { $srcDistrib[$cSrc] = 0 }
         $srcDistrib[$cSrc]++
 
-        # FAIL: full_article contentStatus but fullContent is empty
-        if ($cs -eq "full_article" -and $fcLen -lt 500) {
-          Write-Fail ("{0} contentStatus=full_article but inputFullContentLength={1}" -f $pfx, $fcLen)
+        # FAIL: full_article / extracted_article contentStatus but fullContent is empty
+        if (($cs -eq "full_article" -or $cs -eq "extracted_article") -and $fcLen -lt 500) {
+          Write-Fail ("{0} contentStatus={1} but inputFullContentLength={2}" -f $pfx, $cs, $fcLen)
         }
-        # WARN: fetched_article contentSource but fullContent is empty
-        if ($cSrc -eq "fetched_article" -and $fcLen -lt 400) {
-          Write-Warn ("{0} contentSource=fetched_article but inputFullContentLength={1}" -f $pfx, $fcLen)
+        # WARN: content fetch source but fullContent is empty
+        if (($cSrc -eq "fetched_article" -or $cSrc -eq "rss_content") -and $fcLen -lt 400) {
+          Write-Warn ("{0} contentSource={1} but inputFullContentLength={2}" -f $pfx, $cSrc, $fcLen)
         }
         # rawModelContentStatus audit
         $rawMCS = ""
@@ -288,18 +303,30 @@ try {
     # contentStatus distribution
     Write-Host ""
     Write-Host "  --- contentStatus distribution ---"
+    Write-Info "(full_article=确认全文  extracted_article=较长正文  partial=部分  rss_summary=摘要)"
     foreach ($k in ($csDistrib.Keys | Sort-Object)) {
       $cnt   = $csDistrib[$k]
-      $color = if ($k -eq "full_article") { "Green" } elseif ($k -eq "unknown" -or $k -eq "missing") { "Red" } else { "Yellow" }
+      $color = if ($k -eq "full_article") { "Green" } `
+               elseif ($k -eq "extracted_article") { "Cyan" } `
+               elseif ($k -eq "partial") { "Yellow" } `
+               elseif ($k -eq "unknown" -or $k -eq "missing") { "Red" } `
+               else { "Gray" }
       Write-Host ("  {0}: {1}" -f $k, $cnt) -ForegroundColor $color
+    }
+    if ($csDistrib.Count -eq 1 -and $csDistrib.ContainsKey("partial") -and $finalItems.Count -gt 0) {
+      Write-Warn "All items still 'partial' — check inferContentStatus raw length fix"
     }
 
     # contentSource distribution
+    Write-Host "  --- contentSource distribution ---"
+    Write-Info "(rss_content=RSS全文  fetched_article=抓取正文  rss_summary=RSS摘要)"
     if ($srcDistrib.Count -gt 0) {
-      Write-Host "  --- contentSource distribution ---"
       foreach ($k in ($srcDistrib.Keys | Sort-Object)) {
-        Write-Host ("  {0}: {1}" -f $k, $srcDistrib[$k])
+        $color = if ($k -eq "rss_content" -or $k -eq "fetched_article") { "Cyan" } else { "Gray" }
+        Write-Host ("  {0}: {1}" -f $k, $srcDistrib[$k]) -ForegroundColor $color
       }
+    } else {
+      Write-Host "  (none)" -ForegroundColor Gray
     }
 
     # FAIL: all contentStatus are unknown
