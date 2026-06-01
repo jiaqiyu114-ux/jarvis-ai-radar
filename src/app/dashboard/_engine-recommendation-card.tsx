@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { TIER_LABELS, TIER_COLORS } from "@/lib/recommendations/recommendation-engine"
 import type { RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import { RecommendationDetailModal } from "./_recommendation-detail-modal"
+import { decodeHtmlEntities } from "@/lib/text/decode-html"
 
 const SOURCE_STATUS_LABELS: Record<string, string> = {
   official:     "官方来源",
@@ -66,12 +67,11 @@ function formatAge(dateStr: string | null | undefined): string {
   } catch { return "" }
 }
 
-function deepDiveLabel(item: RecommendedItem): string | null {
+function deepDiveStatus(item: RecommendedItem): 'ai' | 'rule' | 'pending' {
   const dd = item.deepDive
-  if (!dd) return null
-  if (dd.status === "generated" && dd.model !== "deterministic-v1") return "AI 解读"
-  if (dd.status === "fallback" || dd.model === "deterministic-v1") return "规则生成"
-  return null
+  if (!dd || dd.status === "skipped") return 'pending'
+  if (dd.status === "generated" && dd.model !== "deterministic-v1") return 'ai'
+  return 'rule'
 }
 
 type EngineRecommendationCardProps = {
@@ -87,9 +87,15 @@ export function EngineRecommendationCard({ item, enableDetail = false }: EngineR
   const statusColor = SOURCE_STATUS_COLORS[item.sourceStatus] ?? SOURCE_STATUS_COLORS.single_source
   const tierText    = TIER_TEXT[item.sourceTier] ?? TIER_TEXT.C
   const deepDive    = item.deepDive
-  const modelLabel  = deepDiveLabel(item)
-  const showDeepDive = Boolean(deepDive && deepDive.status !== "skipped")
-  const age = formatAge(item.publishedAt)
+  const ddStatus    = deepDiveStatus(item)
+  const age         = formatAge(item.publishedAt)
+  const title       = decodeHtmlEntities(item.title)
+  const summary     = decodeHtmlEntities(item.summary)
+
+  // Only show DeepDive summary when it has real content (not just deterministic placeholder)
+  const deepDiveSummary = deepDive && ddStatus !== 'pending'
+    ? (deepDive.oneSentence || deepDive.summary)
+    : null
 
   const body = (
     <>
@@ -99,64 +105,55 @@ export function EngineRecommendationCard({ item, enableDetail = false }: EngineR
           {item.sourceTier}
         </span>
         <h2 className="min-w-0 flex-1 text-sm font-semibold leading-snug text-foreground group-hover:text-primary transition-colors line-clamp-2 text-left">
-          {item.title}
+          {title}
         </h2>
       </div>
 
       {/* Summary */}
-      {item.summary && (
+      {summary && (
         <p className="mt-1 text-xs text-muted-foreground line-clamp-2 text-left">
-          {item.summary}
+          {summary}
         </p>
       )}
 
       {/* Badges */}
       <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
         <SmallBadge className={tierColor}>{tierLabel}</SmallBadge>
-        <SmallBadge className={statusColor}>{statusLabel}</SmallBadge>
+        {item.sourceStatus !== 'single_source' && (
+          <SmallBadge className={statusColor}>{statusLabel}</SmallBadge>
+        )}
         {item.qualityFlags.includes("fresh") && (
-          <SmallBadge className="text-sky-600 border-sky-400/30 bg-sky-400/8 dark:text-sky-400">
-            新鲜
-          </SmallBadge>
+          <SmallBadge className="text-sky-600 border-sky-400/30 bg-sky-400/8 dark:text-sky-400">新鲜</SmallBadge>
         )}
         {item.qualityFlags.includes("official_source") && (
-          <SmallBadge className="text-amber-700 border-amber-400/30 bg-amber-50 dark:text-amber-400 dark:bg-amber-400/10">
-            官方
-          </SmallBadge>
+          <SmallBadge className="text-amber-700 border-amber-400/30 bg-amber-50 dark:text-amber-400 dark:bg-amber-400/10">官方</SmallBadge>
+        )}
+        {ddStatus === 'ai' && (
+          <SmallBadge className="text-violet-600 border-violet-400/25 bg-violet-50/50 dark:text-violet-400 dark:bg-violet-400/10">已生成解读</SmallBadge>
+        )}
+        {ddStatus === 'pending' && (
+          <SmallBadge className="text-muted-foreground/60 border-border bg-muted/30">待深度解读</SmallBadge>
         )}
       </div>
 
-      {/* Recommendation reason */}
-      <p className="mt-1.5 text-xs text-foreground/75 leading-relaxed text-left">
-        {item.recommendationReason}
-      </p>
-
-      {/* DeepDive preview — only oneSentence */}
-      {showDeepDive && deepDive && (
-        <div className="mt-1.5 rounded border border-border/60 bg-muted/30 px-2.5 py-2">
-          <div className="flex items-center justify-between gap-2 mb-1">
-            <p className="text-[10px] font-medium text-muted-foreground">信号解读</p>
-            {modelLabel && (
-              <span className="text-[10px] text-muted-foreground/60">{modelLabel}</span>
-            )}
-          </div>
-          <p className="text-xs text-foreground/80 leading-relaxed line-clamp-3 text-left">
-            {deepDive.oneSentence || deepDive.summary}
-          </p>
-        </div>
-      )}
-
-      {/* Risk note */}
-      {item.riskNote && (
-        <p className="mt-0.5 text-[10px] text-warning/80 italic leading-relaxed text-left">
-          · {item.riskNote}
+      {/* DeepDive one-sentence summary — only when AI-generated */}
+      {deepDiveSummary && (
+        <p className="mt-1.5 text-xs text-foreground/80 leading-relaxed line-clamp-2 text-left border-l-2 border-primary/30 pl-2">
+          {deepDiveSummary}
         </p>
       )}
 
-      {/* Related signals hint — very subtle */}
+      {/* Recommendation reason — only show if not a generic template */}
+      {item.recommendationReason && !item.recommendationReason.includes('综合评分') && (
+        <p className="mt-1 text-[11px] text-muted-foreground/70 leading-relaxed text-left">
+          {item.recommendationReason}
+        </p>
+      )}
+
+      {/* Related signals hint */}
       {(item.relatedSignals?.length ?? 0) > 0 && (
         <p className="mt-0.5 text-[10px] text-muted-foreground/40 text-left">
-          相关信号 {item.relatedSignals!.length}
+          {item.relatedSignals!.length} 个相关信号
         </p>
       )}
     </>

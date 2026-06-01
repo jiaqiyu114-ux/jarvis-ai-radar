@@ -503,16 +503,19 @@ export default async function DashboardPage() {
   let headerLabel: string
   let headerSubtitle: string
   if (hasEngineSnapshot) {
-    headerLabel    = '推荐快照'
-    headerSubtitle = `快照生成于 ${formatTime(engineSnapshot!.generated_at)}`
+    const todayTotal = todayMRCount + todayHVCount
+    headerLabel    = '今日雷达'
+    headerSubtitle = todayTotal > 0
+      ? `今日推荐 ${todayTotal} 条 · 候选池 ${stats.captureTotal} 条（72h窗口）· 快照生成于 ${formatTime(engineSnapshot!.generated_at)}`
+      : `候选池 ${stats.captureTotal} 条（72h窗口）· 今日尚无达到阈值的新推荐 · 快照生成于 ${formatTime(engineSnapshot!.generated_at)}`
   } else if (hasLegacySnapshot) {
-    headerLabel    = legacySnapshot.isTodaySnapshot ? '今日推荐快照' : '最近一次推荐快照'
+    headerLabel    = legacySnapshot.isTodaySnapshot ? '今日推荐' : '最近推荐'
     headerSubtitle = legacySnapshot.run
       ? `快照生成于 ${formatTime(legacySnapshot.run.generated_at)}`
       : '已有快照'
   } else {
-    headerLabel    = '推荐雷达'
-    headerSubtitle = '暂无推荐快照，请点击「刷新推荐」生成'
+    headerLabel    = '今日雷达'
+    headerSubtitle = '暂无快照，点击「刷新推荐」开始抓取'
   }
 
   return (
@@ -525,17 +528,7 @@ export default async function DashboardPage() {
             <div>
               <p className="page-kicker mb-1">Today&apos;s Recommendations</p>
               <h1 className="editorial-title text-[2.15rem]">{headerLabel}</h1>
-              <p className="page-subtitle mt-1.5">
-                {headerSubtitle}
-                {(hasEngineSnapshot || hasLegacySnapshot) && (
-                  <>
-                    {' · '}
-                    当前窗口捕捉 <span className="font-medium text-foreground tabular-nums">{stats.captureTotal}</span> 条
-                    {' · '}
-                    推荐候选 <span className="font-medium text-foreground tabular-nums">{stats.recommendationCount}</span> 条
-                  </>
-                )}
-              </p>
+              <p className="page-subtitle mt-1.5">{headerSubtitle}</p>
             </div>
             {hasEngineSnapshot && (
               <span className="rounded border border-success/30 bg-success/10 px-2 py-1 text-[10px] font-medium text-success">
@@ -635,16 +628,16 @@ export default async function DashboardPage() {
 
         {/* ── Stat cards ── */}
         <div className="grid grid-cols-5 gap-3 mb-6">
-          <StatCard label="当前窗口捕捉" value={stats.captureTotal}
-            change={hasEngineSnapshot ? `${engineSnapshot!.window_hours}h 窗口` : hasLegacySnapshot ? "snapshot" : "—"} icon={Radio} />
+          <StatCard label="今日推荐" value={todayMRCount + todayHVCount}
+            change={`MR:${todayMRCount} HV:${todayHVCount}`} icon={Newspaper} accent />
+          <StatCard label="候选池" value={stats.captureTotal}
+            change={hasEngineSnapshot ? `${engineSnapshot!.window_hours}h 窗口内捕捉` : "—"} icon={Radio} />
           <StatCard label="推荐候选" value={stats.recommendationCount}
-            change={hasEngineSnapshot ? "engine snapshot" : hasLegacySnapshot ? "legacy snapshot" : "—"} icon={ListChecks} accent />
-          <StatCard label="可进日报" value={stats.dailyReportCount}
-            change="must_read" icon={Newspaper} />
-          <StatCard label="事件追踪候选" value={stats.eventCandidateCount}
-            change="should_track_event" icon={GitBranch} />
-          <StatCard label="深度分析候选" value={stats.deepCandidateCount}
-            change="deep / cluster" icon={Brain} />
+            change="通过引擎评分" icon={ListChecks} />
+          <StatCard label="观察榜" value={engineObserveBacklog.length}
+            change="近72h高分未推送" icon={GitBranch} />
+          <StatCard label="深度候选" value={stats.deepCandidateCount}
+            change="已标记深度分析" icon={Brain} />
         </div>
 
         {/* ── Quality overview strip ── */}
@@ -800,25 +793,16 @@ export default async function DashboardPage() {
               empty="暂无多源事件候选（单条观察簇不在此展示）"
               clusters={eventClusters}
             />
-            {/* Excluded candidates guidance */}
-            {qualityStats.estimatedExcluded > 0 && (
-              <section className="border border-border rounded-lg bg-card px-3 py-2.5">
-                <h2 className="section-title mb-1.5">暂未推荐的候选信号</h2>
-                <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">
-                  约有 <span className="font-mono font-medium text-foreground">{qualityStats.estimatedExcluded}</span> 条进入候选池但未推荐。
-                </p>
-                <ul className="space-y-1 mb-2">
-                  {['综合评分未达阈值（< 65分）', '标题/内容含噪音信号，已降权', '证据信号偏弱'].map(r => (
-                    <li key={r} className="flex items-start gap-1.5 text-[10px] text-muted-foreground/70">
-                      <span className="text-muted-foreground/40 shrink-0">–</span>{r}
-                    </li>
-                  ))}
-                </ul>
-                <Link href="/feed" className="inline-flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 border border-primary/20 bg-primary/5 rounded px-2 py-1 transition-colors">
-                  查看全量信息流 →
-                </Link>
-              </section>
-            )}
+            {/* Feed link — simple, no count that confuses */}
+            <section className="border border-border rounded-lg bg-card px-3 py-2.5">
+              <h2 className="section-title mb-1.5">全量流</h2>
+              <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">
+                查看系统原始捕捉的所有内容，按抓取时间排序，不代表推荐。
+              </p>
+              <Link href="/feed" className="inline-flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 border border-primary/20 bg-primary/5 rounded px-2 py-1 transition-colors">
+                查看全量流 →
+              </Link>
+            </section>
           </aside>
         </div>
       </div>

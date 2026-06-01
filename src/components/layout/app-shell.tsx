@@ -1,5 +1,6 @@
 import { TopStatusBar } from "./top-status-bar"
 import { SidebarNav } from "./sidebar-nav"
+import { ExperimentalNotice } from "./experimental-notice"
 
 export type TopSignalData = {
   score:    number
@@ -18,6 +19,7 @@ export function AppShell({ children, topSignal }: AppShellProps) {
       <TopStatusBar topSignal={topSignal} />
       <SidebarNav />
       <main className="ml-[220px] mt-10 min-h-[calc(100vh-40px)]">
+        <ExperimentalNotice />
         {children}
       </main>
     </div>
