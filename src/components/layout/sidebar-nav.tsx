@@ -7,7 +7,6 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-// Primary navigation — only stable, user-facing routes
 const navItems = [
   { href: "/dashboard", label: "今日雷达",  icon: LayoutDashboard },
   { href: "/feed",      label: "全量流",    icon: Rss             },
@@ -16,15 +15,34 @@ const navItems = [
   { href: "/settings",  label: "配置",      icon: Settings        },
 ]
 
-// Hidden routes (accessible via URL, show experimental notice via ExperimentalNotice):
-// /selected, /clusters, /reports, /topics, /feedback
+// Hidden: /selected /clusters /reports /topics /feedback — URL accessible, not in nav
 
 export function SidebarNav() {
   const pathname = usePathname()
 
   return (
-    <aside className="fixed left-0 top-10 h-[calc(100vh-40px)] w-[220px] border-r border-white/[0.07] bg-sidebar/90 backdrop-blur-xl flex flex-col z-40">
-      <nav className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto">
+    <aside className="fixed left-0 top-0 h-screen w-[220px] border-r border-white/[0.07] bg-sidebar/95 backdrop-blur-xl flex flex-col z-40">
+
+      {/* ── Brand ── */}
+      <div className="px-5 pt-6 pb-4 border-b border-white/[0.06]">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="text-[13px] font-bold tracking-[0.16em] text-foreground font-mono leading-none">
+              J.A.R.V.I.S
+            </div>
+            <div className="text-[9px] text-muted-foreground/45 mt-1 tracking-widest font-mono uppercase">
+              Personal AI Radar
+            </div>
+          </div>
+          <div className="flex items-center gap-1 pt-0.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+            <span className="text-[8px] text-success/60 font-mono tracking-widest">LIVE</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Navigation ── */}
+      <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
         {navItems.map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(href + '/')
           return (
@@ -32,24 +50,29 @@ export function SidebarNav() {
               key={href}
               href={href}
               className={cn(
-                "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-150",
+                "flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm transition-all duration-150",
                 active
-                  ? "bg-primary/15 text-primary font-medium"
-                  : "text-muted-foreground hover:bg-white/[0.05] hover:text-foreground"
+                  ? "bg-primary/12 text-primary font-medium border border-primary/20"
+                  : "text-muted-foreground/70 hover:bg-white/[0.05] hover:text-foreground border border-transparent"
               )}
             >
-              <Icon className={cn("h-4 w-4 shrink-0", active ? "opacity-100" : "opacity-60")} />
-              <span>{label}</span>
-              {active && <span className="ml-auto w-1 h-3.5 rounded-full bg-primary/60" />}
+              <Icon className={cn("h-[15px] w-[15px] shrink-0", active ? "text-primary" : "opacity-50")} />
+              <span className="text-[13px]">{label}</span>
+              {active && (
+                <span className="ml-auto flex items-center gap-1">
+                  <span className="w-1 h-1 rounded-full bg-primary/70" />
+                </span>
+              )}
             </Link>
           )
         })}
       </nav>
 
-      <div className="px-4 py-3 border-t border-white/[0.05]">
-        <span className="text-[9px] tracking-[0.18em] text-muted-foreground/30 uppercase font-mono">
-          J.A.R.V.I.S v0.1
-        </span>
+      {/* ── Footer ── */}
+      <div className="px-5 py-4 border-t border-white/[0.05] space-y-0.5">
+        <div className="text-[9px] font-mono tracking-widest text-muted-foreground/25 uppercase">
+          v0.1 · Local Mode
+        </div>
       </div>
     </aside>
   )

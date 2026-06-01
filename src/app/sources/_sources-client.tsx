@@ -528,10 +528,10 @@ function SourceRow({ source, onEdit, onToggleBlock, onMarkCurated, onCopyUrl, on
 
   return (
     <tr className={cn(
-      "border-b border-border last:border-0 transition-colors hover:bg-accent/50",
-      isDemo           && "opacity-60",
-      source.isBlocked && "opacity-50",
-      source.isUserCurated && "border-l-2 border-l-teal-500/60",
+      "border-b border-white/[0.05] last:border-0 transition-colors hover:bg-white/[0.025]",
+      isDemo           && "opacity-50",
+      source.isBlocked && "opacity-40",
+      source.isUserCurated && "border-l-2 border-l-teal-500/50",
     )}>
       {/* 信源 */}
       <td className="px-5 py-3.5 max-w-[280px]">
@@ -659,18 +659,6 @@ function SourceRow({ source, onEdit, onToggleBlock, onMarkCurated, onCopyUrl, on
   )
 }
 
-// ── Stat pill ─────────────────────────────────────────────────────────────────
-
-function StatPill({ label, value, accent }: { label: string; value: number; accent?: string }) {
-  return (
-    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-      <span className={cn("font-mono font-semibold tabular-nums", accent ?? "text-foreground")}>
-        {value}
-      </span>
-      {label}
-    </span>
-  )
-}
 
 // ── Main client component ─────────────────────────────────────────────────────
 
@@ -770,14 +758,15 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
   }, [])
 
   const stats = useMemo(() => {
-    const rss = sources.filter(s => s.platform === "rss")
+    const rss = sources.filter(s => s.platform === "rss" && !s.isBlocked)
     return {
-      total:     sources.length,
-      myCurated: sources.filter(s => s.isUserCurated).length,
-      rssOk:     rss.filter(s => s.healthStatus === "healthy").length,
-      failing:   rss.filter(s => s.healthStatus === "failing" || s.healthStatus === "degraded").length,
-      blocked:   sources.filter(s => s.isBlocked).length,
-      active:    sources.filter(s => !s.isBlocked).length,
+      total:      sources.length,
+      myCurated:  sources.filter(s => s.isUserCurated).length,
+      rssOk:      rss.filter(s => s.healthStatus === "healthy").length,
+      failing:    rss.filter(s => s.healthStatus === "failing" || s.healthStatus === "degraded").length,
+      blocked:    sources.filter(s => s.isBlocked).length,
+      active:     sources.filter(s => !s.isBlocked).length,
+      pendingWeb: sources.filter(s => s.platform !== "rss" && !s.isBlocked).length,
     }
   }, [sources])
 
@@ -792,69 +781,60 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
 
   return (
     <AppShell>
-      <div className="p-8">
+      <div className="p-6 md:p-8">
         {/* ── Header ── */}
         <div className="mb-6">
-          <p className="page-kicker mb-1">Source Library</p>
+          <p className="text-[9px] font-mono tracking-[0.2em] text-slate-500 uppercase mb-2">Source Library</p>
           <div className="flex items-end justify-between">
-            <h1 className="editorial-title text-3xl">信源管理</h1>
-            <div className="flex items-center gap-3 pb-1">
-              <p className="text-xs text-muted-foreground">
-                {stats.total} 个信源 · {stats.active} 个运行中
-              </p>
-              <Button size="sm" onClick={openAdd} className="h-7 gap-1.5 text-xs">
-                <Plus className="w-3.5 h-3.5" />
-                添加信源
-              </Button>
-            </div>
+            <h1 className="text-[2rem] font-bold tracking-tight text-slate-50">信源管理</h1>
+            <Button size="sm" onClick={openAdd} className="h-8 gap-1.5 text-xs mb-1">
+              <Plus className="w-3.5 h-3.5" />
+              添加信源
+            </Button>
           </div>
         </div>
 
-        {/* ── Stats bar (simplified) ── */}
-        <div className="flex items-center gap-4 mb-4 px-1 flex-wrap">
-          <StatPill label="全部"      value={stats.total} />
-          <span className="w-px h-3 bg-border" />
-          <StatPill label="我的源"    value={stats.myCurated} accent="text-teal-600 dark:text-teal-400" />
-          <span className="w-px h-3 bg-border" />
-          <StatPill label="RSS 正常"  value={stats.rssOk}     accent="text-success" />
-          {stats.failing > 0 && (
-            <StatPill label="失败/不稳定" value={stats.failing} accent="text-warning" />
-          )}
-          {stats.blocked > 0 && (
-            <StatPill label="被屏蔽"  value={stats.blocked}   accent="text-danger" />
-          )}
+        {/* ── Stats cards ── */}
+        <div className="grid grid-cols-5 gap-3 mb-5">
+          {[
+            { label: "总信源",    value: stats.total,      color: "text-slate-200" },
+            { label: "正常",      value: stats.rssOk,      color: "text-green-400" },
+            { label: "不稳定",    value: stats.failing,    color: stats.failing > 0 ? "text-amber-400" : "text-slate-500" },
+            { label: "屏蔽",      value: stats.blocked,    color: stats.blocked > 0 ? "text-red-400" : "text-slate-500" },
+            { label: "待网页抓取", value: stats.pendingWeb, color: "text-sky-400/80" },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="rounded-xl border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
+              <p className="text-[9px] font-mono tracking-widest text-slate-500 uppercase mb-1">{label}</p>
+              <p className={cn("text-xl font-bold tabular-nums font-mono", color)}>{value}</p>
+            </div>
+          ))}
         </div>
 
-        {/* ── Filter bar (simplified) ── */}
+        {/* ── Filter bar ── */}
         <div className="flex items-center gap-1.5 mb-4">
           {FILTERS.map(({ key, label }) => (
             <button
               key={key}
               onClick={() => setFilter(key)}
               className={cn(
-                "text-xs px-3 py-1.5 rounded-md border transition-colors",
+                "text-[11px] px-3 py-1.5 rounded-xl border transition-colors",
                 filter === key
-                  ? key === "my"
-                    ? "bg-teal-500/15 text-teal-700 border-teal-400/40 dark:text-teal-400 font-medium"
-                    : "bg-primary/10 text-primary border-primary/25 font-medium"
-                  : "text-muted-foreground border-border hover:bg-accent",
+                  ? "bg-primary/12 text-primary border-primary/25 font-medium"
+                  : "text-slate-500 border-white/[0.07] hover:bg-white/[0.05] hover:text-slate-300",
               )}
             >
               {label}
-              {key === "my"      && stats.myCurated > 0 && (
-                <span className="ml-1.5 font-mono text-[10px] opacity-70">{stats.myCurated}</span>
+              {key === "failing" && stats.failing > 0 && (
+                <span className="ml-1.5 font-mono text-[10px] text-amber-400/80">{stats.failing}</span>
               )}
-              {key === "failing" && stats.failing  > 0 && (
-                <span className="ml-1.5 font-mono text-[10px] text-warning opacity-80">{stats.failing}</span>
-              )}
-              {key === "blocked" && stats.blocked  > 0 && (
-                <span className="ml-1.5 font-mono text-[10px] text-danger opacity-80">{stats.blocked}</span>
+              {key === "blocked" && stats.blocked > 0 && (
+                <span className="ml-1.5 font-mono text-[10px] text-red-400/80">{stats.blocked}</span>
               )}
             </button>
           ))}
           {filter !== "all" && (
-            <span className="ml-2 text-xs text-muted-foreground">
-              显示 {filtered.length} / {sources.length}
+            <span className="ml-2 text-[11px] text-slate-500">
+              {filtered.length} / {sources.length}
             </span>
           )}
         </div>
@@ -871,16 +851,16 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
           </div>
         )}
 
-        {/* ── Table (5 columns, simplified) ── */}
-        <div className="border border-border rounded-lg overflow-hidden bg-card">
+        {/* ── Table ── */}
+        <div className="border border-white/[0.08] rounded-xl overflow-hidden bg-card">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border bg-surface">
-                <th className="text-left px-5 py-3"><span className="muted-label">信源</span></th>
-                <th className="text-left px-4 py-3"><span className="muted-label">等级</span></th>
-                <th className="text-left px-4 py-3"><span className="muted-label">健康</span></th>
-                <th className="text-left px-4 py-3"><span className="muted-label">最近同步</span></th>
-                <th className="text-left px-3 py-3"><span className="muted-label">操作</span></th>
+              <tr className="border-b border-white/[0.07] bg-white/[0.03]">
+                <th className="text-left px-5 py-3"><span className="jarvis-console-text">信源</span></th>
+                <th className="text-left px-4 py-3"><span className="jarvis-console-text">等级</span></th>
+                <th className="text-left px-4 py-3"><span className="jarvis-console-text">健康</span></th>
+                <th className="text-left px-4 py-3"><span className="jarvis-console-text">最近同步</span></th>
+                <th className="text-left px-3 py-3"><span className="jarvis-console-text">操作</span></th>
               </tr>
             </thead>
             <tbody>

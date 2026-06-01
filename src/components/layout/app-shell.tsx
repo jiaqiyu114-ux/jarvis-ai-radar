@@ -22,12 +22,14 @@ export function AppShell({ children, topSignal }: AppShellProps) {
         <div className="absolute -bottom-1/4 right-0 h-[500px] w-[500px] rounded-full bg-sky-900/[0.12] blur-[110px]" />
       </div>
       <div className="relative z-10">
-        <TopStatusBar topSignal={topSignal} />
         <SidebarNav />
-        <main className="ml-[220px] mt-10 min-h-[calc(100vh-40px)]">
-          <ExperimentalNotice />
-          {children}
-        </main>
+        <div className="ml-[220px] flex flex-col min-h-screen">
+          <TopStatusBar topSignal={topSignal} />
+          <main className="flex-1 mt-10">
+            <ExperimentalNotice />
+            {children}
+          </main>
+        </div>
       </div>
     </div>
   )

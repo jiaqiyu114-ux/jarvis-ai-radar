@@ -45,9 +45,10 @@ function resolve(mode: ThemeMode): ResolvedTheme {
 
 /* ── Provider ── */
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  /* SSR-safe: both server and initial client render start with "light".
-     No hydration mismatch — the class and state are updated only after mount. */
-  const [theme,   setThemeState] = useState<ThemeMode>("light")
+  /* SSR-safe: both server and initial client render start with "dark".
+     No hydration mismatch — the class and state are updated only after mount.
+     Default is "dark" (Dark Radar Console). */
+  const [theme,   setThemeState] = useState<ThemeMode>("dark")
   const [mounted, setMounted]    = useState(false)
 
   /* 1. Mount: read saved preference and apply to DOM.
@@ -55,7 +56,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
      (a client-only API) and sync React state. Suppress the strict rule. */
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY) as ThemeMode | null
-    const initial: ThemeMode = saved ?? "light"
+    const initial: ThemeMode = saved ?? "dark"
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setThemeState(initial)
     document.documentElement.classList.toggle("dark", resolve(initial) === "dark")

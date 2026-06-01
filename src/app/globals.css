@@ -152,6 +152,14 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Dark Radar Console — ambient radial glow background */
+.dark body {
+  background-image:
+    radial-gradient(ellipse 70% 45% at 0% 0%,   rgba(109, 93,252,0.09) 0%, transparent 55%),
+    radial-gradient(ellipse 55% 35% at 100% 0%,  rgba( 56,189,248,0.07) 0%, transparent 50%),
+    radial-gradient(ellipse 40% 25% at 50% 100%, rgba(251,146, 60,0.04) 0%, transparent 60%);
+}
+
 ::selection {
   background: var(--primary-soft);
   color: var(--foreground);
@@ -246,4 +254,116 @@ body {
   border-radius: 0.25rem;
   border: 1px solid color-mix(in oklch, currentColor 30%, transparent);
   background: color-mix(in oklch, currentColor 10%, transparent);
+}
+
+/* ══════════════════════════════════════════
+   JARVIS Dark Radar Console — Utility Classes
+   ══════════════════════════════════════════ */
+
+/* Glass panel — primary */
+.jarvis-glass {
+  background: rgba(255,255,255,0.045);
+  border: 1px solid rgba(255,255,255,0.10);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-radius: 1rem;
+}
+
+/* Glass panel — stronger (side panels, modals) */
+.jarvis-glass-strong {
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.13);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-radius: 1rem;
+  box-shadow: 0 20px 80px rgba(0,0,0,0.4);
+}
+
+/* Card — glass card with shadow */
+.jarvis-card {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 1rem;
+  box-shadow: 0 4px 32px rgba(0,0,0,0.3);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+/* Card hover state — apply with jarvis-card */
+.jarvis-card-hover:hover {
+  border-color: rgba(255,255,255,0.16);
+  background: rgba(255,255,255,0.06);
+  box-shadow: 0 8px 40px rgba(0,0,0,0.35);
+  transform: translateY(-1px);
+}
+
+/* Score orb — 80+ warm glow */
+.jarvis-score-hot {
+  border-color: rgba(251,146,60,0.45);
+  color: #fca67a;
+  background: rgba(251,146,60,0.09);
+}
+.jarvis-score-hot:hover, .group:hover .jarvis-score-hot {
+  box-shadow: 0 0 18px rgba(251,146,60,0.40);
+}
+
+/* Score orb — 65-79 cyan glow */
+.jarvis-score-mid {
+  border-color: rgba(56,189,248,0.4);
+  color: #7dd3fc;
+  background: rgba(56,189,248,0.08);
+}
+.jarvis-score-mid:hover, .group:hover .jarvis-score-mid {
+  box-shadow: 0 0 18px rgba(56,189,248,0.35);
+}
+
+/* Score orb — observe / low */
+.jarvis-score-dim {
+  border-color: rgba(255,255,255,0.10);
+  color: #71717a;
+  background: rgba(255,255,255,0.03);
+}
+
+/* Console monospace text */
+.jarvis-console-text {
+  font-family: var(--font-mono);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-size: 0.625rem;
+  color: rgba(161,161,170,0.7);
+}
+
+/* Section label */
+.jarvis-section-title {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: rgba(244,244,245,0.45);
+}
+
+/* Muted helper */
+.jarvis-muted {
+  color: rgba(161,161,170,0.75);
+}
+
+/* Horizontal divider */
+.jarvis-divider {
+  height: 1px;
+  background: rgba(255,255,255,0.06);
+}
+
+/* Pill / tag */
+.jarvis-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 0.625rem;
+  font-weight: 600;
+  padding: 0.1rem 0.5rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(255,255,255,0.11);
+  background: rgba(255,255,255,0.06);
+  color: rgba(244,244,245,0.7);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }

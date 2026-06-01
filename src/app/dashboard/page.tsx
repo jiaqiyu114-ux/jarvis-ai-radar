@@ -288,16 +288,22 @@ export default async function DashboardPage() {
           profileId={profileId}
         />
 
-        {/* ── Header ── */}
-        <header className="mb-5">
-          <div className="flex items-start justify-between gap-4">
+        {/* ── Hero ── */}
+        <header className="mb-6">
+          <div className="flex items-end justify-between gap-4">
             <div>
-              <p className="page-kicker mb-1">{currentDateKey}</p>
-              <h1 className="editorial-title text-[2.15rem]">今日雷达</h1>
-              <p className="page-subtitle mt-1.5 max-w-[520px]">{headerSubtitle}</p>
+              <p className="text-[9px] font-mono tracking-[0.2em] text-slate-500 uppercase mb-2">
+                {currentDateKey} · AI Signal Radar
+              </p>
+              <h1 className="text-[2.4rem] font-bold leading-none tracking-tight text-slate-50">
+                今日雷达
+              </h1>
+              <p className="mt-2 text-[13px] text-slate-400 max-w-[480px] leading-relaxed">
+                {headerSubtitle}
+              </p>
             </div>
-            <div className="flex items-center gap-2 pt-1">
-              <span className="text-[10px] text-muted-foreground/50 border border-border/50 rounded px-2 py-1">
+            <div className="flex items-center gap-2 pb-1 shrink-0">
+              <span className="text-[10px] text-slate-500 border border-white/[0.08] rounded-lg px-2.5 py-1.5 font-mono">
                 {activePreset.label}
               </span>
               <RefreshRecommendationsButton />
@@ -305,12 +311,12 @@ export default async function DashboardPage() {
           </div>
 
           {snapshotIsStale && (
-            <div className="mt-2 rounded border border-warning/30 bg-warning/5 px-3 py-1.5 text-[11px] text-warning/90">
+            <div className="mt-3 rounded-xl border border-warning/25 bg-warning/[0.06] px-4 py-2 text-[11px] text-warning/80">
               快照已超过 24 小时，建议刷新获取最新推荐。
             </div>
           )}
           {!hasEngineSnapshot && hasLegacySnapshot && !legacySnapshot.isTodaySnapshot && (
-            <div className="mt-2 rounded border border-border bg-muted/20 px-3 py-1.5 text-[11px] text-muted-foreground">
+            <div className="mt-3 rounded-xl border border-white/[0.07] bg-white/[0.03] px-4 py-2 text-[11px] text-slate-400">
               当前展示历史快照，请点击「刷新推荐」生成今日版本。
             </div>
           )}
@@ -446,22 +452,22 @@ export default async function DashboardPage() {
           {/* ── Aside ── */}
           <aside className="col-span-1 space-y-4">
 
-            {/* Candidate reference — items below today threshold, clearly labeled */}
+            {/* Candidate reference — items below today threshold */}
             {candidateRef.length > 0 && (
-              <section className="border border-white/[0.07] rounded-xl bg-card/80 px-3 py-2.5">
-                <h2 className="text-[10px] font-semibold text-foreground/70 uppercase tracking-wider mb-0.5">候选参考</h2>
-                <p className="text-[10px] text-muted-foreground mb-2">
-                  未进入今日推荐（分数 {thresholds.observe}–{thresholds.highValue - 1}），仅供排查和比对。
+              <section className="border border-white/[0.08] rounded-xl bg-white/[0.03] px-3 py-3">
+                <h2 className="text-[9px] font-bold text-slate-400 uppercase tracking-widest font-mono mb-0.5">候选参考</h2>
+                <p className="text-[10px] text-slate-500 mb-2.5 leading-relaxed">
+                  分数 {thresholds.observe}–{thresholds.highValue - 1}，未进今日推荐，供排查比对
                 </p>
                 <div className="space-y-0">
                   {candidateRef.map(item => (
-                    <div key={item.id} className="border-b border-border/50 last:border-0 py-2 flex items-start gap-2">
-                      <span className="text-[10px] font-mono font-semibold text-foreground/60 shrink-0 pt-0.5 w-7 text-right">
+                    <div key={item.id} className="border-b border-white/[0.05] last:border-0 py-2 flex items-start gap-2">
+                      <span className="text-[11px] font-mono font-bold text-slate-400 shrink-0 pt-0.5 w-7 text-right tabular-nums">
                         {item.recommendationScore}
                       </span>
                       <div className="min-w-0">
-                        <p className="text-[11px] text-foreground/80 line-clamp-2 leading-snug">{item.title}</p>
-                        <p className="text-[10px] text-muted-foreground mt-0.5">{item.source}</p>
+                        <p className="text-[11px] text-slate-300 line-clamp-2 leading-snug">{item.title}</p>
+                        <p className="text-[10px] text-slate-500 mt-0.5 truncate">{item.source}</p>
                       </div>
                     </div>
                   ))}
