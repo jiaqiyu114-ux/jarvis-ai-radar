@@ -1,6 +1,7 @@
 "use client"
 
 import { cn } from "@/lib/utils"
+import { cleanDisplayText } from "@/lib/text/decode-html"
 
 interface TopSignal {
   score:    number
@@ -69,7 +70,7 @@ export function TopStatusBar({
             <span className="text-[11px] font-bold font-mono text-primary shrink-0 tabular-nums">
               {topSignal.score}
             </span>
-            <span className="text-xs text-foreground/65 truncate">{topSignal.title}</span>
+            <span className="text-xs text-foreground/65 truncate">{cleanDisplayText(topSignal.title)}</span>
             <span className="text-[10px] text-muted-foreground/70 shrink-0 hidden xl:block">
               {topSignal.category}
             </span>

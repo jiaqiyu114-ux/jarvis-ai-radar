@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils"
 import { TIER_LABELS, TIER_COLORS } from "@/lib/recommendations/recommendation-engine"
 import type { RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import { RecommendationDetailModal } from "./_recommendation-detail-modal"
-import { decodeHtmlEntities } from "@/lib/text/decode-html"
+import { cleanDisplayText, safeSourceName } from "@/lib/text/decode-html"
 
 const SOURCE_STATUS_LABELS: Record<string, string> = {
   official:     "官方来源",
@@ -67,6 +67,21 @@ function formatAge(dateStr: string | null | undefined): string {
   } catch { return "" }
 }
 
+/** Build a concise, specific recommendation reason from item signals. Max 24 chars. */
+function buildCleanReason(item: RecommendedItem): string {
+  const score   = item.finalScore
+  const signals = item.relatedSignals?.length ?? 0
+  if (score >= 85)    return '综合评分很高，建议优先阅读。'
+  if (signals >= 3)   return `${signals} 个相关信号，不是孤立事件。`
+  if (item.isOfficial) return '官方信源发布，可信度高。'
+  if (item.qualityFlags.includes('strong_evidence')) return '证据信号充分，可参考引用。'
+  if (signals >= 2)   return `已有 ${signals} 个相关信号。`
+  if (item.isUserCurated) return '你认可的信源，纳入今日观察。'
+  if (score >= 75)    return '评分较高，适合今日阅读。'
+  if (score >= 65)    return '达到推荐线，可快速浏览。'
+  return '达到推荐线，建议浏览。'
+}
+
 function deepDiveStatus(item: RecommendedItem): 'ai' | 'rule' | 'pending' {
   const dd = item.deepDive
   if (!dd || dd.status === "skipped") return 'pending'
@@ -89,8 +104,10 @@ export function EngineRecommendationCard({ item, enableDetail = false }: EngineR
   const deepDive    = item.deepDive
   const ddStatus    = deepDiveStatus(item)
   const age         = formatAge(item.publishedAt)
-  const title       = decodeHtmlEntities(item.title)
-  const summary     = decodeHtmlEntities(item.summary)
+  const title       = cleanDisplayText(item.title)
+  const summary     = cleanDisplayText(item.summary)
+  const sourceName  = safeSourceName(item.source, item.originalUrl)
+  const cleanReason = buildCleanReason(item)
 
   // Only show DeepDive summary when it has real content (not just deterministic placeholder)
   const deepDiveSummary = deepDive && ddStatus !== 'pending'
@@ -143,12 +160,10 @@ export function EngineRecommendationCard({ item, enableDetail = false }: EngineR
         </p>
       )}
 
-      {/* Recommendation reason — only show if not a generic template */}
-      {item.recommendationReason && !item.recommendationReason.includes('综合评分') && (
-        <p className="mt-1 text-[11px] text-muted-foreground/70 leading-relaxed text-left">
-          {item.recommendationReason}
-        </p>
-      )}
+      {/* Recommendation reason — short, specific */}
+      <p className="mt-1 text-[11px] text-muted-foreground/70 leading-relaxed text-left">
+        {cleanReason}
+      </p>
 
       {/* Related signals hint */}
       {(item.relatedSignals?.length ?? 0) > 0 && (
@@ -183,7 +198,7 @@ export function EngineRecommendationCard({ item, enableDetail = false }: EngineR
             {/* Source + time + 查看原文 */}
             <div className="mt-2 flex items-center gap-1.5 flex-wrap">
               <span className="text-[10px] text-muted-foreground truncate max-w-[160px]">
-                {item.source}
+                {sourceName}
               </span>
               {age && (
                 <>

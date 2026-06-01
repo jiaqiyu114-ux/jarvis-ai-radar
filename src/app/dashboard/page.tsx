@@ -1,19 +1,15 @@
 export const dynamic = 'force-dynamic'
 
-import { Brain, GitBranch, ListChecks, Newspaper, Radio } from "lucide-react"
 import Link from "next/link"
 import { AppShell } from "@/components/layout/app-shell"
-import { StatCard } from "@/components/dashboard/stat-card"
-import { ScoreBadge } from "@/components/feed/score-badge"
-import { SourceTierBadge } from "@/components/feed/source-tier-badge"
 import { TodayRecommendationCard } from "./_today-recommendation-card"
 import { EngineRecommendationCard } from "./_engine-recommendation-card"
 import { RefreshRecommendationsButton } from "./_refresh-button"
 import { listEventClusters, type EventClusterListItem } from "@/lib/db/event-clusters"
 import { getLatestDailyRecommendationSnapshot } from "@/lib/data/daily-recommendation-snapshot"
-import { getLatestRecommendationSnapshot, type RecommendationSnapshotView } from "@/lib/db/recommendation-snapshots"
-import { getLatestRecommendationRun, type RecommendationRun } from "@/lib/db/recommendation-runs"
-import { getSourceCoverageStats, type SourceCoverageStats } from "@/lib/ingest/source-selector"
+import { getLatestRecommendationSnapshot } from "@/lib/db/recommendation-snapshots"
+import { getLatestRecommendationRun } from "@/lib/db/recommendation-runs"
+import { getSourceCoverageStats } from "@/lib/ingest/source-selector"
 import {
   getRecommendationFreshness,
   formatSnapshotAge,
@@ -26,76 +22,7 @@ import { todayKey, JARVIS_TIMEZONE } from "@/lib/recommendations/daily-gate"
 import { cn } from "@/lib/utils"
 import type { RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import type { DailyRecommendationSnapshotItem } from "@/lib/data/daily-recommendation-snapshot"
-import type { TodayRecommendationItem } from "@/lib/data/today-adapter"
 import type { TopSignalData } from "@/components/layout/app-shell"
-
-// ── Mini helpers ─────────────────────────────────────────────────────────────
-
-function MiniSignal({ item }: { item: TodayRecommendationItem }) {
-  return (
-    <div className="flex items-start gap-2.5 border-b border-border last:border-0 py-2.5">
-      <ScoreBadge score={item.finalScore} size="sm" />
-      <div className="min-w-0 flex-1">
-        <p className="line-clamp-2 text-xs font-medium leading-snug text-foreground">
-          {item.title}
-        </p>
-        <div className="mt-1 flex items-center gap-1.5">
-          <SourceTierBadge tier={item.sourceTier} />
-          <span className="truncate text-[10px] text-muted-foreground">{item.source}</span>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function SideSection({ title, empty, items }: {
-  title: string
-  empty: string
-  items: TodayRecommendationItem[]
-}) {
-  return (
-    <section className="border border-border rounded-lg bg-card px-3 py-2.5">
-      <h2 className="section-title mb-1.5">{title}</h2>
-      {items.length > 0
-        ? items.map(item => <MiniSignal key={item.id} item={item} />)
-        : <p className="py-4 text-center text-xs text-muted-foreground">{empty}</p>
-      }
-    </section>
-  )
-}
-
-function MiniCluster({ cluster }: { cluster: EventClusterListItem }) {
-  return (
-    <div className="border-b border-border last:border-0 py-2.5">
-      <p className="line-clamp-2 text-xs font-medium leading-snug text-foreground">
-        {cluster.title}
-      </p>
-      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-        <span className="text-[10px] text-muted-foreground">{cluster.status}</span>
-        <span className="text-muted-foreground/40 text-[10px]">·</span>
-        <span className="text-[10px] text-muted-foreground">items {cluster.itemCount}</span>
-        <span className="text-muted-foreground/40 text-[10px]">·</span>
-        <span className="text-[10px] text-muted-foreground">confidence {cluster.confidence}</span>
-      </div>
-    </div>
-  )
-}
-
-function ClusterSideSection({ title, empty, clusters }: {
-  title: string
-  empty: string
-  clusters: EventClusterListItem[]
-}) {
-  return (
-    <section className="border border-border rounded-lg bg-card px-3 py-2.5">
-      <h2 className="section-title mb-1.5">{title}</h2>
-      {clusters.length > 0
-        ? clusters.map(cluster => <MiniCluster key={cluster.id} cluster={cluster} />)
-        : <p className="py-4 text-center text-xs text-muted-foreground">{empty}</p>
-      }
-    </section>
-  )
-}
 
 // ── Section blocks ────────────────────────────────────────────────────────────
 
@@ -132,6 +59,7 @@ function EngineSectionBlock({ title, items, empty, enableDetail = false }: {
   enableDetail?: boolean
 }) {
   if (items.length === 0) {
+    if (!empty) return null
     return (
       <section className="border-b border-border last:border-b-0">
         <div className="px-4 py-2.5">
@@ -143,102 +71,106 @@ function EngineSectionBlock({ title, items, empty, enableDetail = false }: {
   }
   return (
     <section className="border-b border-border last:border-b-0">
-      <div className="flex items-center gap-2 px-4 py-2.5 bg-muted/20 border-b border-border">
-        <h2 className="section-title">{title}</h2>
-        <span className="meta-text">{items.length} 条</span>
-      </div>
+      {title && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-muted/15 border-b border-border">
+          <h2 className="section-title">{title}</h2>
+          <span className="meta-text">{items.length} 条</span>
+        </div>
+      )}
       {items.map(item => <EngineRecommendationCard key={item.id} item={item} enableDetail={enableDetail} />)}
     </section>
   )
 }
 
-// ── Daily Push Status Bar ─────────────────────────────────────────────────────
+// ── Status bar ────────────────────────────────────────────────────────────────
 
-function MetricCell({ label, value, sub, accent, warn }: {
-  label: string
-  value: string | number
-  sub?: string
-  accent?: boolean
-  warn?: boolean
+function StatusBar({
+  todayCount, capturedTotal, healthySrc, activeSrc, freshness, hasFailing,
+}: {
+  todayCount:    number
+  capturedTotal: number
+  healthySrc:    number
+  activeSrc:     number
+  freshness:     RecommendationFreshness | null
+  hasFailing:    boolean
 }) {
+  const snapshotAge = freshness?.ageMinutes != null
+    ? formatSnapshotAge(freshness.ageMinutes)
+    : '—'
+  const isStale = freshness?.severity === 'stale' || freshness?.severity === 'missing'
+
   return (
-    <div className="px-4 py-3 flex flex-col gap-0.5">
-      <span className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">{label}</span>
-      <span className={cn(
-        "text-lg font-bold tabular-nums leading-none",
-        accent ? "text-primary" : warn ? "text-warning" : "text-foreground",
-      )}>{value}</span>
-      {sub && <span className="text-[10px] text-muted-foreground/50 leading-tight">{sub}</span>}
+    <div className="mb-4 grid grid-cols-4 rounded-lg border border-border bg-card divide-x divide-border overflow-hidden">
+      {/* 今日推荐 */}
+      <div className="px-4 py-3">
+        <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mb-0.5">今日推荐</p>
+        <p className={cn(
+          "text-2xl font-bold tabular-nums leading-none",
+          todayCount > 0 ? "text-primary" : "text-muted-foreground",
+        )}>
+          {todayCount}
+        </p>
+        <p className="text-[10px] text-muted-foreground/50 mt-0.5">今天筛出的重点信息</p>
+      </div>
+
+      {/* 近72h捕捉 */}
+      <div className="px-4 py-3">
+        <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mb-0.5">近72h捕捉</p>
+        <p className="text-2xl font-bold tabular-nums leading-none text-foreground">{capturedTotal}</p>
+        <p className="text-[10px] text-muted-foreground/50 mt-0.5">系统抓取量</p>
+      </div>
+
+      {/* 可用信源 */}
+      <div className="px-4 py-3">
+        <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mb-0.5">可用信源</p>
+        <p className={cn(
+          "text-2xl font-bold tabular-nums leading-none",
+          hasFailing ? "text-warning" : "text-foreground",
+        )}>
+          {healthySrc}
+          <span className="text-base text-muted-foreground/50">/{activeSrc}</span>
+        </p>
+        <p className="text-[10px] text-muted-foreground/50 mt-0.5">正在参与抓取</p>
+      </div>
+
+      {/* 快照状态 */}
+      <div className="px-4 py-3">
+        <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mb-0.5">快照状态</p>
+        <p className={cn(
+          "text-2xl font-bold tabular-nums leading-none",
+          isStale ? "text-warning" : "text-foreground",
+        )}>
+          {snapshotAge}
+        </p>
+        <p className="text-[10px] text-muted-foreground/50 mt-0.5">
+          {freshness?.severity === 'ok' ? '自动刷新正常' : freshness?.severity === 'stale' ? '建议刷新' : '自动刷新状态'}
+        </p>
+      </div>
     </div>
   )
 }
 
-function DailyPushBar({
-  dateKey, engineSnapshot, coverage, freshness,
-  todayMR, todayHV, observeBacklogCount,
-}: {
-  dateKey:             string
-  engineSnapshot:      RecommendationSnapshotView | null
-  coverage:            SourceCoverageStats | null
-  freshness:           RecommendationFreshness | null
-  todayMR:             number
-  todayHV:             number
-  observeBacklogCount: number
-}) {
-  const todayTotal   = todayMR + todayHV
-  const snapshotAge  = freshness?.ageMinutes !== null && freshness?.ageMinutes !== undefined
-    ? formatSnapshotAge(freshness.ageMinutes)
-    : '—'
-  const healthySrc   = coverage?.healthySources ?? 0
-  const activeSrc    = coverage?.totalActiveRss ?? 0
-  const failingSrc   = coverage?.failingSources ?? 0
-  const hasFailing   = failingSrc > 0
+// ── Cluster aside ─────────────────────────────────────────────────────────────
 
+function MiniCluster({ cluster }: { cluster: EventClusterListItem }) {
   return (
-    <div className="mb-4 rounded-lg border border-border bg-card overflow-hidden">
-      <div className="grid grid-cols-6 divide-x divide-border">
-        <MetricCell label="今日日期" value={dateKey} sub={JARVIS_TIMEZONE} />
-        <MetricCell
-          label="健康信源"
-          value={`${healthySrc}/${activeSrc}`}
-          sub={hasFailing ? `${failingSrc} failing` : 'active sources'}
-          warn={hasFailing}
-        />
-        <MetricCell
-          label="今日推荐"
-          value={todayTotal}
-          sub={`MR:${todayMR} HV:${todayHV}`}
-          accent={todayTotal > 0}
-        />
-        <MetricCell
-          label="观察榜"
-          value={observeBacklogCount}
-          sub="近72h未推送"
-        />
-        <MetricCell
-          label="快照候选"
-          value={engineSnapshot?.captured_total ?? 0}
-          sub="72h窗口"
-        />
-        <MetricCell
-          label="快照时效"
-          value={snapshotAge}
-          sub={freshness?.severity ?? '—'}
-          warn={freshness?.severity === 'stale' || freshness?.severity === 'missing'}
-        />
-      </div>
-      {hasFailing && (
-        <div className="border-t border-border px-4 py-1.5 text-[10px] text-warning/80 bg-warning/5">
-          {failingSrc} 个信源最近持续失败，已进入冷却期。
-          {coverage?.neverFetchedSources ? ` ${coverage.neverFetchedSources} 个从未抓取。` : ''}
-          {' '}<Link href="/sources" className="underline hover:text-warning">管理信源 →</Link>
-        </div>
-      )}
+    <div className="border-b border-border last:border-0 py-2">
+      <p className="line-clamp-2 text-xs leading-snug text-foreground/80">{cluster.title}</p>
+      <p className="mt-0.5 text-[10px] text-muted-foreground/50">
+        {cluster.itemCount} 条 · 置信度 {cluster.confidence}
+      </p>
     </div>
   )
 }
 
 // ── Status helpers ────────────────────────────────────────────────────────────
+
+function formatTime(value: string | null | undefined): string {
+  if (!value) return "未记录"
+  return new Date(value).toLocaleString("zh-CN", {
+    month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  })
+}
 
 function timeAgo(iso: string | null | undefined): string {
   if (!iso) return '—'
@@ -251,128 +183,9 @@ function timeAgo(iso: string | null | undefined): string {
   return `${Math.floor(diffHr / 24)}d 前`
 }
 
-function formatTime(value: string | null | undefined): string {
-  if (!value) return "未记录"
-  return new Date(value).toLocaleString("zh-CN", {
-    month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
-  })
-}
-
-// (RUN_STATUS_* constants retained for potential future use or legacy paths)
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const _RUN_STATUS_COLOR: Record<string, string> = {
-  success: 'text-success', partial_success: 'text-warning',
-  running: 'text-sky-500', failed: 'text-danger',
-}
-
-const SEVERITY_COLOR: Record<string, string> = {
-  ok:      'text-success',
-  warning: 'text-warning',
-  stale:   'text-danger/70',
-  missing: 'text-muted-foreground/50',
-}
-
-function RunStatusStrip({ run, engineSnapshot, coverage, freshness }: {
-  run:           RecommendationRun | null
-  engineSnapshot: RecommendationSnapshotView | null
-  coverage:      SourceCoverageStats | null
-  freshness:     RecommendationFreshness | null
-}) {
-  // Always render — even with no data, the strip shows the refresh button.
-  const severityColor = freshness
-    ? (SEVERITY_COLOR[freshness.severity] ?? 'text-muted-foreground')
-    : 'text-muted-foreground/50'
-
-  const runStatus = run?.status ?? null
-  const captured  = engineSnapshot?.captured_total   ?? run?.captured_total   ?? 0
-  const mustRead  = engineSnapshot?.must_read_count  ?? run?.must_read_count  ?? 0
-  const highValue = engineSnapshot?.high_value_count ?? run?.high_value_count ?? 0
-  const observe   = engineSnapshot?.observe_count    ?? run?.observe_count    ?? 0
-
-  return (
-    <div className="mb-3 flex items-center gap-2 flex-wrap px-1 text-[11px] text-muted-foreground/70">
-      <span className="text-muted-foreground/40 text-[10px] uppercase tracking-wider">推荐引擎</span>
-
-      {/* Freshness indicator — primary status */}
-      {freshness ? (
-        <span className={cn("font-medium", severityColor)}>
-          {freshness.severity === 'ok'      && '自动刷新就绪'}
-          {freshness.severity === 'warning' && '建议尽快刷新'}
-          {freshness.severity === 'stale'   && '快照已过期'}
-          {freshness.severity === 'missing' && '暂无快照'}
-        </span>
-      ) : (
-        <span className="text-muted-foreground/50">状态检测中</span>
-      )}
-
-      {/* Snapshot age */}
-      {freshness && freshness.ageMinutes !== null && (
-        <>
-          <span className="text-muted-foreground/30">·</span>
-          <span className={cn(severityColor, 'opacity-80')}>
-            {formatSnapshotAge(freshness.ageMinutes)}
-          </span>
-        </>
-      )}
-
-      {/* Counts */}
-      {(mustRead > 0 || highValue > 0 || observe > 0) && (
-        <>
-          <span className="text-muted-foreground/30">·</span>
-          {mustRead  > 0 && <span className="text-success">MR <span className="tabular-nums">{mustRead}</span></span>}
-          {highValue > 0 && <span className="text-primary">HV <span className="tabular-nums">{highValue}</span></span>}
-          {observe   > 0 && <span className="text-sky-600 dark:text-sky-400">OB <span className="tabular-nums">{observe}</span></span>}
-          {captured  > 0 && <span className="text-muted-foreground/50 tabular-nums">/{captured}</span>}
-        </>
-      )}
-
-      {/* Coverage */}
-      {coverage && (
-        <>
-          <span className="text-muted-foreground/30">·</span>
-          <span className="text-muted-foreground/60">
-            RSS{' '}
-            <span className="tabular-nums text-foreground/60">{coverage.fetchedLast24h}</span>
-            {'/'}{coverage.totalActiveRss}
-          </span>
-          {coverage.healthySources > 0 && (
-            <span className="text-success/70">· {coverage.healthySources} healthy</span>
-          )}
-          {coverage.failingSources > 0 && (
-            <span className="text-danger/70">· {coverage.failingSources} failing</span>
-          )}
-          {coverage.neverFetchedSources > 0 && (
-            <span className="text-warning/70">· {coverage.neverFetchedSources} 未抓</span>
-          )}
-        </>
-      )}
-
-      {/* Run failure note */}
-      {runStatus && runStatus !== 'success' && runStatus !== 'running' && (
-        <span className="text-warning/70">· 上次运行不完整，旧快照仍可用</span>
-      )}
-
-      {/* Refresh button — always visible, low visual weight */}
-      <span className="ml-auto">
-        <RefreshRecommendationsButton />
-      </span>
-    </div>
-  )
-}
-
-function QualityPill({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-      <span className={`font-mono font-semibold tabular-nums ${color}`}>{value}</span>
-      {label}
-    </span>
-  )
-}
-
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default async function DashboardPage() {
-  // ── Data fetching (priority: engine snapshot > legacy snapshot) ──────────────
   const [engineSnapshot, legacySnapshot, latestRun, eventClustersResult, coverage, automationStatus] =
     await Promise.all([
       getLatestRecommendationSnapshot().catch(() => null),
@@ -390,132 +203,57 @@ export default async function DashboardPage() {
     ])
 
   const eventClusters = eventClustersResult.clusters
-    .filter(c =>
-      (c.status === "active" || c.status === "watching") &&
-      (c.confidence > 20 || c.itemCount >= 2 || c.sourceCount >= 2)
-    )
+    .filter(c => (c.status === "active" || c.status === "watching") &&
+                 (c.confidence > 20 || c.itemCount >= 2 || c.sourceCount >= 2))
     .slice(0, 5)
 
-  // Freshness classification (pure computation, no I/O)
   const freshness = getRecommendationFreshness({
     latestSnapshot: engineSnapshot ? { generated_at: engineSnapshot.generated_at } : null,
     latestRun,
     coverage,
   })
 
-  // ── Determine data source ────────────────────────────────────────────────────
   const hasEngineSnapshot = engineSnapshot !== null
   const hasLegacySnapshot = legacySnapshot.hasSnapshot
   const currentDateKey    = todayKey(JARVIS_TIMEZONE)
 
-  // Engine snapshot items
-  const engineItems = engineSnapshot?.items ?? []
-  const engineMustRead  = engineItems.filter(i => i.recommendationTier === 'must_read')
-  const engineHighValue = engineItems.filter(i => i.recommendationTier === 'high_value')
-  // observeBacklog: items demoted from must_read/high_value by daily gate OR genuine observe with backlog bucket
+  const engineItems        = engineSnapshot?.items ?? []
+  const engineMustRead     = engineItems.filter(i => i.recommendationTier === 'must_read')
+  const engineHighValue    = engineItems.filter(i => i.recommendationTier === 'high_value')
   const engineObserveBacklog = engineItems.filter(
     i => i.recommendationTier === 'observe' && i.recommendationBucket === 'observe_backlog',
   )
-  // Genuine observe-tier (not demoted by gate — scored below must_read/high_value but above archive)
   const engineObserve = engineItems.filter(
     i => i.recommendationTier === 'observe' && i.recommendationBucket !== 'observe_backlog',
   )
-  // Today's recommendation counts.
-  // engineMustRead / engineHighValue already exclude backlog items (gate demotes them to observe tier),
-  // so these tier-based counts are reliable even when recommendationBucket is null (old snapshots).
   const todayMRCount = engineMustRead.length
   const todayHVCount = engineHighValue.length
+  const todayTotal   = todayMRCount + todayHVCount
 
-  // Legacy snapshot items
   const snapshotItems = hasLegacySnapshot ? legacySnapshot.items : []
-
-  // Snapshot age warning (> 24h) — computed server-side at request time
-  const snapshotAgeMs   = engineSnapshot
+  const snapshotAgeMs = engineSnapshot
     ? new Date().getTime() - new Date(engineSnapshot.generated_at).getTime()
-    : null
-  const snapshotIsStale = snapshotAgeMs !== null && snapshotAgeMs > 24 * 3_600_000
-  const engineStatusLabel = latestRun?.status === "running"
-    ? "正在运行"
-    : freshness.severity === "ok"
-      ? "正常"
-      : freshness.severity === "warning"
-        ? "警告"
-        : freshness.severity === "stale"
-          ? "过期"
-          : "尚无快照"
+    : 0
+  const snapshotIsStale = snapshotAgeMs > 24 * 3_600_000
 
-  // Top signal for app shell
-  const topEngineItem   = engineItems[0] ?? null
-  const topLegacyItem   = snapshotItems[0] ?? null
-  const topSignal: TopSignalData | undefined = topEngineItem
-    ? { score: topEngineItem.recommendationScore, title: topEngineItem.title, category: topEngineItem.category }
-    : topLegacyItem
-      ? { score: topLegacyItem.finalScore, title: topLegacyItem.title, category: topLegacyItem.category }
-      : undefined
+  const capturedTotal = engineSnapshot?.captured_total ?? legacySnapshot.run?.total_candidates ?? 0
+  const healthySrc    = coverage?.healthySources ?? 0
+  const activeSrc     = coverage?.totalActiveRss ?? 0
+  const failingSrc    = coverage?.failingSources ?? 0
 
-  // ── Stats ────────────────────────────────────────────────────────────────────
-  const stats = hasEngineSnapshot
-    ? {
-        captureTotal:        engineSnapshot!.captured_total,
-        recommendationCount: engineSnapshot!.recommendation_candidates,
-        dailyReportCount:    engineSnapshot!.must_read_count,
-        eventCandidateCount: engineItems.filter(i => i.shouldTrackEvent).length,
-        deepCandidateCount:  engineItems.filter(i => i.shouldDeepAnalyze).length,
-      }
-    : hasLegacySnapshot && legacySnapshot.run
-      ? {
-          captureTotal:        legacySnapshot.run.total_candidates,
-          recommendationCount: legacySnapshot.run.selected_count,
-          dailyReportCount:    legacySnapshot.run.must_read_count,
-          eventCandidateCount: snapshotItems.filter(i => i.shouldTrackEvent).length,
-          deepCandidateCount:  snapshotItems.filter(i => i.shouldDeepAnalyze || i.analysisTier === 'deep').length,
-        }
-      : { captureTotal: 0, recommendationCount: 0, dailyReportCount: 0, eventCandidateCount: 0, deepCandidateCount: 0 }
+  const topItem = engineItems[0] ?? snapshotItems[0] ?? null
+  const topSignal: TopSignalData | undefined = topItem
+    ? { score: (topItem as RecommendedItem).recommendationScore ?? (topItem as { finalScore: number }).finalScore, title: topItem.title, category: topItem.category }
+    : undefined
 
-  // ── Quality pills ────────────────────────────────────────────────────────────
-  const qualityStats = hasEngineSnapshot
-    ? {
-        mustRead:          engineSnapshot!.must_read_count,
-        highValue:         engineSnapshot!.high_value_count,
-        observe:           engineSnapshot!.observe_count,
-        multiSource:       engineItems.filter(i => i.sourceStatus === 'multi_source').length,
-        userCurated:       engineItems.filter(i => i.isUserCurated).length,
-        withEvidence:      engineItems.filter(i => i.evidenceLevel === 'strong' || i.evidenceLevel === 'medium').length,
-        estimatedExcluded: Math.max(0, engineSnapshot!.captured_total - engineSnapshot!.recommendation_candidates),
-      }
-    : hasLegacySnapshot
-      ? {
-          mustRead:          legacySnapshot.grouped.must_read.length,
-          highValue:         legacySnapshot.grouped.high_value.length,
-          observe:           legacySnapshot.grouped.observe.length,
-          multiSource:       snapshotItems.filter(r => r.analysisTier === 'cluster').length,
-          userCurated:       snapshotItems.filter(r => r.isUserCurated === true).length,
-          withEvidence:      snapshotItems.filter(r => (r.evidenceScore ?? 0) >= 55).length,
-          estimatedExcluded: Math.max(0, stats.captureTotal - stats.recommendationCount),
-        }
-      : { mustRead: 0, highValue: 0, observe: 0, multiSource: 0, userCurated: 0, withEvidence: 0, estimatedExcluded: 0 }
-
-  const highScoreRef = hasLegacySnapshot
-    ? [...snapshotItems].sort((a, b) => b.finalScore - a.finalScore).slice(0, 5)
-    : []
-
-  // ── Header label ─────────────────────────────────────────────────────────────
-  let headerLabel: string
+  // Build user-friendly subtitle
   let headerSubtitle: string
-  if (hasEngineSnapshot) {
-    const todayTotal = todayMRCount + todayHVCount
-    headerLabel    = '今日雷达'
-    headerSubtitle = todayTotal > 0
-      ? `今日推荐 ${todayTotal} 条 · 候选池 ${stats.captureTotal} 条（72h窗口）· 快照生成于 ${formatTime(engineSnapshot!.generated_at)}`
-      : `候选池 ${stats.captureTotal} 条（72h窗口）· 今日尚无达到阈值的新推荐 · 快照生成于 ${formatTime(engineSnapshot!.generated_at)}`
-  } else if (hasLegacySnapshot) {
-    headerLabel    = legacySnapshot.isTodaySnapshot ? '今日推荐' : '最近推荐'
-    headerSubtitle = legacySnapshot.run
-      ? `快照生成于 ${formatTime(legacySnapshot.run.generated_at)}`
-      : '已有快照'
+  if (todayTotal > 0) {
+    headerSubtitle = `今天筛出 ${todayTotal} 条重点信息，按重要程度排序。全量捕捉请看「全量流」。`
+  } else if (hasEngineSnapshot) {
+    headerSubtitle = `今日暂无新推荐。系统正在持续抓取，可查看下方观察榜或稍后刷新。`
   } else {
-    headerLabel    = '今日雷达'
-    headerSubtitle = '暂无快照，点击「刷新推荐」开始抓取'
+    headerSubtitle = '点击「刷新推荐」开始生成今日推荐。'
   }
 
   return (
@@ -526,251 +264,120 @@ export default async function DashboardPage() {
         <header className="mb-5">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="page-kicker mb-1">Today&apos;s Recommendations</p>
-              <h1 className="editorial-title text-[2.15rem]">{headerLabel}</h1>
-              <p className="page-subtitle mt-1.5">{headerSubtitle}</p>
+              <p className="page-kicker mb-1">{currentDateKey}</p>
+              <h1 className="editorial-title text-[2.15rem]">今日雷达</h1>
+              <p className="page-subtitle mt-1.5 max-w-[520px]">{headerSubtitle}</p>
             </div>
-            {hasEngineSnapshot && (
-              <span className="rounded border border-success/30 bg-success/10 px-2 py-1 text-[10px] font-medium text-success">
-                稳定快照
-              </span>
-            )}
-            {!hasEngineSnapshot && !hasLegacySnapshot && (
-              <span className="rounded border border-muted bg-muted/30 px-2 py-1 text-[10px] font-medium text-muted-foreground">
-                无快照
-              </span>
-            )}
+            <div className="flex items-center gap-2 pt-1">
+              <RefreshRecommendationsButton />
+            </div>
           </div>
 
-          {/* Stale snapshot warning */}
-          {hasEngineSnapshot && snapshotIsStale && (
-            <div className="mt-2 rounded border border-warning/30 bg-warning/8 px-3 py-1.5 text-[11px] text-warning">
-              推荐快照较旧（{timeAgo(engineSnapshot!.generated_at)}），建议点击「刷新推荐」获取最新结果。
+          {snapshotIsStale && (
+            <div className="mt-2 rounded border border-warning/30 bg-warning/5 px-3 py-1.5 text-[11px] text-warning/90">
+              快照已超过 24 小时，建议刷新获取最新推荐。
             </div>
           )}
-
-          {/* Legacy fallback notice */}
           {!hasEngineSnapshot && hasLegacySnapshot && !legacySnapshot.isTodaySnapshot && (
-            <div className="mt-2 rounded border border-warning/30 bg-warning/10 px-3 py-1.5 text-xs text-warning">
-              当前展示历史快照，暂无新版推荐快照。请点击「刷新推荐」生成。
-              {legacySnapshot.run ? `（快照日期 ${legacySnapshot.run.run_date}）` : ''}
+            <div className="mt-2 rounded border border-border bg-muted/20 px-3 py-1.5 text-[11px] text-muted-foreground">
+              当前展示历史快照，请点击「刷新推荐」生成今日版本。
             </div>
           )}
         </header>
 
-        {/* ── Daily Push Status Bar ── */}
-        <DailyPushBar
-          dateKey={currentDateKey}
-          engineSnapshot={engineSnapshot}
-          coverage={coverage}
+        {/* ── Status bar (4 clean metrics) ── */}
+        <StatusBar
+          todayCount={todayTotal}
+          capturedTotal={capturedTotal}
+          healthySrc={healthySrc}
+          activeSrc={activeSrc}
           freshness={freshness}
-          todayMR={todayMRCount}
-          todayHV={todayHVCount}
-          observeBacklogCount={engineObserveBacklog.length}
+          hasFailing={failingSrc > 0}
         />
-
-        {/* ── Run status strip + refresh button ── */}
-        <RunStatusStrip run={latestRun} engineSnapshot={engineSnapshot} coverage={coverage} freshness={freshness} />
-
-        <div className="mb-4 rounded border border-border bg-card px-3 py-2 text-[11px] text-muted-foreground/80">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-muted-foreground/50">引擎状态</span>
-            <span className={cn(
-              "font-medium",
-              latestRun?.status === "running"
-                ? "text-sky-500"
-                : freshness.severity === "ok"
-                  ? "text-success"
-                  : freshness.severity === "warning"
-                    ? "text-warning"
-                    : "text-danger/70",
-            )}>{engineStatusLabel}</span>
-            {engineSnapshot && (
-              <>
-                <span className="text-muted-foreground/30">·</span>
-                <span>最近快照 {formatTime(engineSnapshot.generated_at)}</span>
-                {freshness.ageMinutes !== null && <span>({formatSnapshotAge(freshness.ageMinutes)})</span>}
-                <span className="text-muted-foreground/30">·</span>
-                <span>捕捉 {engineSnapshot.captured_total}</span>
-                <span>MR {engineSnapshot.must_read_count}</span>
-                <span>HV {engineSnapshot.high_value_count}</span>
-                <span>OB {engineSnapshot.observe_count}</span>
-              </>
-            )}
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <span className={automationStatus.vercelCronConfigured ? "text-success/80" : "text-warning/80"}>
-              {automationStatus.vercelCronConfigured ? "自动刷新: 每 6 小时" : "自动刷新未接入，请使用本地任务或 Vercel Cron"}
-            </span>
-            {coverage && (
-              <>
-                <span className="text-muted-foreground/30">·</span>
-                <span>RSS 覆盖 {coverage.fetchedLast24h}/{coverage.totalActiveRss}</span>
-                {coverage.neverFetchedSources > 0 && <span>{coverage.neverFetchedSources} 个未抓</span>}
-                {coverage.needsRefresh && <span className="text-warning/80">建议扩大本轮抓取源数量</span>}
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Snapshot table not-ready / no-snapshot notice */}
-        {!hasEngineSnapshot && !latestRun && (
-          <div className="mb-4 rounded border border-border bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground space-y-1">
-            <p>暂无推荐快照，点击上方「刷新推荐」按钮生成首个快照。</p>
-            <p className="text-[10px] text-muted-foreground/60">
-              如果按钮提示失败，请先在 Supabase SQL Editor 执行{' '}
-              <code className="font-mono text-foreground/70">supabase/recommendation-snapshots-v1.sql</code>{' '}
-              和{' '}
-              <code className="font-mono text-foreground/70">supabase/recommendation-runs-v1.sql</code>
-            </p>
-          </div>
-        )}
-
-        {/* ── Stat cards ── */}
-        <div className="grid grid-cols-5 gap-3 mb-6">
-          <StatCard label="今日推荐" value={todayMRCount + todayHVCount}
-            change={`MR:${todayMRCount} HV:${todayHVCount}`} icon={Newspaper} accent />
-          <StatCard label="候选池" value={stats.captureTotal}
-            change={hasEngineSnapshot ? `${engineSnapshot!.window_hours}h 窗口内捕捉` : "—"} icon={Radio} />
-          <StatCard label="推荐候选" value={stats.recommendationCount}
-            change="通过引擎评分" icon={ListChecks} />
-          <StatCard label="观察榜" value={engineObserveBacklog.length}
-            change="近72h高分未推送" icon={GitBranch} />
-          <StatCard label="深度候选" value={stats.deepCandidateCount}
-            change="已标记深度分析" icon={Brain} />
-        </div>
-
-        {/* ── Quality overview strip ── */}
-        {(hasEngineSnapshot || hasLegacySnapshot) && (
-          <div className="mb-5 flex items-center gap-2 flex-wrap rounded-lg border border-border bg-card px-4 py-2.5">
-            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mr-1">质量分布</span>
-            {qualityStats.mustRead   > 0 && <QualityPill label="重点推荐" value={qualityStats.mustRead}   color="text-success" />}
-            {qualityStats.highValue  > 0 && <QualityPill label="高价值"   value={qualityStats.highValue}  color="text-primary" />}
-            {qualityStats.observe    > 0 && <QualityPill label="观察"     value={qualityStats.observe}    color="text-sky-600 dark:text-sky-400" />}
-            <span className="w-px h-3 bg-border mx-0.5" />
-            {qualityStats.multiSource  > 0 && <QualityPill label="多源验证" value={qualityStats.multiSource}  color="text-success" />}
-            {qualityStats.userCurated  > 0 && <QualityPill label="我的源"   value={qualityStats.userCurated}  color="text-teal-600 dark:text-teal-400" />}
-            {qualityStats.withEvidence > 0 && <QualityPill label="证据充分" value={qualityStats.withEvidence} color="text-foreground" />}
-            {qualityStats.estimatedExcluded > 0 && (
-              <>
-                <span className="w-px h-3 bg-border mx-0.5" />
-                <QualityPill label="候选未入选" value={qualityStats.estimatedExcluded} color="text-muted-foreground" />
-              </>
-            )}
-          </div>
-        )}
 
         {/* ── Main grid ── */}
         <div className="grid grid-cols-3 gap-6">
           <main className="col-span-2">
+
+            {/* Section label */}
             <div className="mb-2 flex items-center gap-2">
-              <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-              <h2 className="section-title text-primary/80">
-                {hasEngineSnapshot
-                  ? (todayMRCount + todayHVCount > 0 ? '今日推荐' : '今日推荐（暂无）')
-                  : hasLegacySnapshot ? '快照推荐' : '暂无推荐'}
-              </h2>
-              {hasEngineSnapshot && todayMRCount + todayHVCount > 0 && (
-                <span className="meta-text">{todayMRCount + todayHVCount} 条</span>
-              )}
-              {hasEngineSnapshot && todayMRCount + todayHVCount > 0 && (
-                <span className="text-[10px] text-muted-foreground/40">
-                  · 阈值筛选，非固定 Top 5
-                </span>
-              )}
+              <div className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
+              <h2 className="section-title text-primary/80">今日推荐</h2>
+              {todayTotal > 0 && <span className="meta-text">{todayTotal} 条</span>}
             </div>
 
-            {/* Zero today-recommendation: structured empty state */}
-            {hasEngineSnapshot && engineMustRead.length + engineHighValue.length === 0 && (
-              <div className="mb-2 rounded-lg border border-border bg-muted/20 px-4 py-4 space-y-2">
-                <p className="text-sm font-medium text-muted-foreground">今日暂无达到阈值的新推荐</p>
+            {/* Empty state */}
+            {hasEngineSnapshot && todayTotal === 0 && (
+              <div className="mb-3 rounded-lg border border-border bg-muted/15 px-4 py-5 space-y-2">
+                <p className="text-sm font-medium text-muted-foreground">今日暂无新推荐</p>
                 <div className="text-[11px] text-muted-foreground/70 space-y-1">
-                  {stats.captureTotal === 0 && <p>· 当前快照无捕获信息，请点击「刷新推荐」触发抓取。</p>}
-                  {stats.captureTotal > 0 && stats.recommendationCount === 0 && (
-                    <p>· 捕获 {stats.captureTotal} 条，均低于评分候选阈值（低于 50 分），请检查信源质量。</p>
+                  {capturedTotal === 0 && <p>· 快照无捕获信息，请点击「刷新推荐」触发抓取。</p>}
+                  {capturedTotal > 0 && engineObserveBacklog.length > 0 && (
+                    <p>· 观察榜有 {engineObserveBacklog.length} 条近期高分信息，见下方。</p>
                   )}
-                  {stats.recommendationCount > 0 && <p>· {stats.recommendationCount} 条进入引擎评分，但未达到 high_value 阈值（≥ 65）。</p>}
-                  {engineObserveBacklog.length > 0 && <p>· {engineObserveBacklog.length} 条近期信息进入观察榜（非今日内容）。</p>}
-                  {engineObserve.length > 0 && <p>· {engineObserve.length} 条评分属于 observe 层（50-65 分），可在全量流查看。</p>}
-                </div>
-                <div className="flex gap-2 pt-1">
-                  {engineObserveBacklog.length > 0 && (
-                    <span className="text-[10px] text-sky-600 dark:text-sky-400">↓ 观察榜有 {engineObserveBacklog.length} 条</span>
+                  {engineObserve.length > 0 && (
+                    <p>· 另有 {engineObserve.length} 条低于推荐阈值，可在全量流查看。</p>
                   )}
-                  <Link href="/feed" className="text-[10px] text-primary/70 hover:text-primary underline">查看全量流 →</Link>
                 </div>
+                <Link href="/feed" className="text-[10px] text-primary/70 hover:text-primary underline">查看全量流 →</Link>
               </div>
             )}
 
-            {/* Main recommendations */}
+            {/* Today's recommendations */}
             <div className="overflow-hidden rounded-lg border border-border bg-card">
               {hasEngineSnapshot ? (
                 <>
-                  {engineMustRead.length > 0 && (
-                    <EngineSectionBlock title="Must Read" items={engineMustRead} enableDetail
-                      empty="" />
-                  )}
-                  {engineHighValue.length > 0 && (
-                    <EngineSectionBlock title="High Value" items={engineHighValue} enableDetail
-                      empty="" />
-                  )}
-                  {engineMustRead.length === 0 && engineHighValue.length === 0 && (
-                    <div className="px-4 py-6 text-center text-xs text-muted-foreground">
-                      今日暂无达到阈值的推荐内容
+                  {(engineMustRead.length > 0 || engineHighValue.length > 0) ? (
+                    <>
+                      {engineMustRead.length > 0 && (
+                        <EngineSectionBlock title="重点推荐" items={engineMustRead} enableDetail empty="" />
+                      )}
+                      {engineHighValue.length > 0 && (
+                        <EngineSectionBlock title="今日推荐" items={engineHighValue} enableDetail empty="" />
+                      )}
+                    </>
+                  ) : (
+                    <div className="px-4 py-8 text-center text-xs text-muted-foreground">
+                      今日暂无推荐内容
                     </div>
                   )}
                   {engineObserve.length > 0 && (
-                    <EngineSectionBlock title="Observe" items={engineObserve}
-                      empty="" />
+                    <EngineSectionBlock title="近期观察" items={engineObserve} empty="" />
                   )}
                 </>
               ) : hasLegacySnapshot ? (
                 <>
-                  <LegacySectionBlock title="Must Read" items={legacySnapshot.grouped.must_read}
-                    empty="本次快照没有 must_read 内容" />
-                  <LegacySectionBlock title="High Value" items={legacySnapshot.grouped.high_value}
-                    empty="本次快照没有 high_value 内容" />
-                  <LegacySectionBlock title="Observe" items={legacySnapshot.grouped.observe}
-                    empty="本次快照没有 observe 内容" />
+                  <LegacySectionBlock title="重点推荐" items={legacySnapshot.grouped.must_read} empty="无 must_read 内容" />
+                  <LegacySectionBlock title="今日推荐" items={legacySnapshot.grouped.high_value} empty="无 high_value 内容" />
                 </>
               ) : (
                 <div className="px-6 py-10 text-center space-y-3">
-                  <p className="text-sm text-muted-foreground">当前暂无推荐快照</p>
+                  <p className="text-sm text-muted-foreground">尚无推荐快照</p>
                   <p className="text-xs text-muted-foreground/60">
-                    点击上方「刷新推荐」生成首个快照。如首次使用，请先在{' '}
+                    点击右上角「刷新推荐」生成首个快照，或先在{' '}
                     <Link href="/sources" className="underline">信源管理</Link> 中导入信源。
                   </p>
                 </div>
               )}
             </div>
 
-            {/* ── Observe Backlog — separate from today, limited to first 30 ── */}
+            {/* Observe backlog — clearly separated */}
             {engineObserveBacklog.length > 0 && (
-              <div className="mt-4">
-                <div className="mb-1.5 flex items-center gap-2 flex-wrap">
-                  <div className="h-1.5 w-1.5 rounded-full bg-sky-500/60 shrink-0" />
-                  <h2 className="section-title text-sky-600/80 dark:text-sky-400/80">
-                    观察榜
-                  </h2>
+              <div className="mt-5">
+                <div className="mb-1.5 flex items-center gap-2">
+                  <div className="h-1.5 w-1.5 rounded-full bg-sky-500/50 shrink-0" />
+                  <h2 className="section-title text-sky-600/70 dark:text-sky-400/70">观察榜</h2>
                   <span className="meta-text">{engineObserveBacklog.length} 条</span>
-                  <span className="text-[10px] text-muted-foreground/40">
-                    · 近72h捕获 · 非今日内容 · 未达今日推荐阈值
-                  </span>
+                  <span className="text-[10px] text-muted-foreground/40">· 近 72 小时高分 · 非今日内容</span>
                   {engineObserveBacklog.length > 30 && (
-                    <span className="text-[10px] text-muted-foreground/50 ml-auto">
-                      显示前 30 条
-                    </span>
+                    <span className="ml-auto text-[10px] text-muted-foreground/40">显示前 30 条</span>
                   )}
                 </div>
-                <div className="overflow-hidden rounded-lg border border-sky-500/20 bg-card">
-                  <EngineSectionBlock
-                    title=""
-                    items={engineObserveBacklog.slice(0, 30)}
-                    empty=""
-                  />
+                <div className="overflow-hidden rounded-lg border border-sky-500/15 bg-card">
+                  <EngineSectionBlock title="" items={engineObserveBacklog.slice(0, 30)} empty="" />
                   {engineObserveBacklog.length > 30 && (
-                    <div className="px-4 py-2.5 border-t border-border bg-muted/20 text-center">
-                      <Link href="/feed" className="text-[10px] text-primary/70 hover:text-primary">
+                    <div className="px-4 py-2 border-t border-border/50 text-center">
+                      <Link href="/feed" className="text-[10px] text-primary/60 hover:text-primary">
                         还有 {engineObserveBacklog.length - 30} 条 · 查看全量流 →
                       </Link>
                     </div>
@@ -780,31 +387,63 @@ export default async function DashboardPage() {
             )}
           </main>
 
+          {/* ── Aside ── */}
           <aside className="col-span-1 space-y-4">
-            {highScoreRef.length > 0 && (
-              <SideSection
-                title={legacySnapshot.isTodaySnapshot ? "今日高分参考" : "高分参考"}
-                empty="暂无高分参考"
-                items={highScoreRef}
-              />
+
+            {/* Candidate reference — low visual weight, collapsed if many today items */}
+            {snapshotItems.length > 0 && todayTotal < 5 && (
+              <section className="border border-border/60 rounded-lg bg-card/80 px-3 py-2.5">
+                <h2 className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider mb-1">候选参考</h2>
+                <p className="text-[10px] text-muted-foreground/50 mb-2">未进入今日推荐，仅供排查。</p>
+                <div className="space-y-0">
+                  {[...snapshotItems].sort((a, b) => b.finalScore - a.finalScore).slice(0, 5).map(item => (
+                    <div key={item.id} className="border-b border-border/40 last:border-0 py-2 flex items-start gap-2">
+                      <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0 pt-0.5 w-6 text-right">{item.finalScore}</span>
+                      <div className="min-w-0">
+                        <p className="text-[11px] text-muted-foreground/70 line-clamp-2 leading-snug">{item.title}</p>
+                        <p className="text-[10px] text-muted-foreground/40 mt-0.5">{item.source}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
             )}
-            <ClusterSideSection
-              title="多源事件候选"
-              empty="暂无多源事件候选（单条观察簇不在此展示）"
-              clusters={eventClusters}
-            />
-            {/* Feed link — simple, no count that confuses */}
-            <section className="border border-border rounded-lg bg-card px-3 py-2.5">
-              <h2 className="section-title mb-1.5">全量流</h2>
-              <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">
-                查看系统原始捕捉的所有内容，按抓取时间排序，不代表推荐。
-              </p>
-              <Link href="/feed" className="inline-flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 border border-primary/20 bg-primary/5 rounded px-2 py-1 transition-colors">
-                查看全量流 →
+
+            {/* Clusters */}
+            {eventClusters.length > 0 && (
+              <section className="border border-border/60 rounded-lg bg-card/80 px-3 py-2.5">
+                <h2 className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider mb-1.5">多源追踪</h2>
+                {eventClusters.map(c => <MiniCluster key={c.id} cluster={c} />)}
+              </section>
+            )}
+
+            {/* Feed shortcut */}
+            <section className="border border-border/40 rounded-lg bg-card/50 px-3 py-2.5">
+              <p className="text-[11px] text-muted-foreground/70 mb-1.5">查看系统原始捕捉的所有内容（不代表推荐）</p>
+              <Link href="/feed" className="text-[10px] text-primary/70 hover:text-primary border border-primary/20 bg-primary/5 rounded px-2 py-1 transition-colors inline-flex">
+                打开全量流 →
               </Link>
             </section>
           </aside>
         </div>
+
+        {/* ── System debug fold ── */}
+        <details className="mt-8 border border-border/30 rounded-lg overflow-hidden">
+          <summary className="px-4 py-2 text-[11px] text-muted-foreground/50 cursor-pointer select-none hover:text-muted-foreground/70 transition-colors list-none flex items-center gap-2">
+            <span>▶ 系统状态</span>
+            <span className="text-[10px]">（调试信息，默认折叠）</span>
+          </summary>
+          <div className="px-4 py-3 bg-muted/10 border-t border-border/30 text-[11px] text-muted-foreground/60 space-y-1 font-mono">
+            <p>快照生成于：{formatTime(engineSnapshot?.generated_at)} （{timeAgo(engineSnapshot?.generated_at)} 前）</p>
+            <p>近72h捕捉：{capturedTotal} 条 / 引擎候选：{engineSnapshot?.recommendation_candidates ?? 0} 条</p>
+            <p>今日推荐：MR={todayMRCount} HV={todayHVCount} / 观察榜：{engineObserveBacklog.length} 条</p>
+            <p>信源：{healthySrc} healthy / {failingSrc} failing / {activeSrc} active</p>
+            <p>快照时效：{freshness?.severity ?? '—'} ({freshness?.ageMinutes != null ? `${freshness.ageMinutes}m` : '—'})</p>
+            <p>自动刷新：{automationStatus.vercelCronConfigured ? '已配置 Vercel Cron' : '未配置，请使用本地任务'}</p>
+            <p>日期键：{currentDateKey} ({JARVIS_TIMEZONE})</p>
+          </div>
+        </details>
+
       </div>
     </AppShell>
   )
