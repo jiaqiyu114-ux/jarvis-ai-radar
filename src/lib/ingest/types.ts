@@ -1,11 +1,12 @@
 /** One article extracted from an RSS / Atom feed, before DB normalisation. */
 export type ParsedRssItem = {
-  title:       string
-  url:         string
-  guid?:       string | null   // RSS <guid> or Atom <id> — preferred externalId
-  author:      string | null
-  summary:     string
-  publishedAt: string   // ISO 8601
+  title:          string
+  url:            string
+  guid?:          string | null   // RSS <guid> or Atom <id> — preferred externalId
+  author:         string | null
+  summary:        string           // Short excerpt (~300 chars), for display
+  rssFullContent: string | null    // Full text from content:encoded / Atom content (stripped HTML, up to 12k chars)
+  publishedAt:    string           // ISO 8601
 }
 
 /** Per-source summary after a single ingest run. */

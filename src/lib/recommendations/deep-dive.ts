@@ -230,9 +230,11 @@ function computeInputDiagnostics(
   qualityWarnings: string[] = [],
   qualityFailures: string[] = [],
 ): DeepDiveInputDiagnostics {
-  const titleLen = safeText(input.title, '').length
-  const summaryLen = safeText(input.summary, '').length
-  const fullContentLen = safeText(input.fullContent, '').length
+  // Use raw string length, NOT safeText — safeText caps at 800 and would always
+  // report 803 for any content > 800 chars. We need the actual byte count here.
+  const titleLen = input.title?.length ?? 0
+  const summaryLen = input.summary?.length ?? 0
+  const fullContentLen = input.fullContent?.length ?? 0
 
   // contentSource and hasFullContent based ONLY on actual fullContent length —
   // NOT the hasFullContent flag (which reflects DB wordCount, not model input).

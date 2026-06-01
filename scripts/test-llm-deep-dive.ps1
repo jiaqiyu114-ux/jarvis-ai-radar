@@ -226,13 +226,64 @@ if ($titleLens.Count -gt 0) {
   $avgS  = [Math]::Round(($summaryLens     | Measure-Object -Average).Average, 1)
   $avgFC = [Math]::Round(($fullContentLens | Measure-Object -Average).Average, 1)
   Write-Host ("  avg title:       {0} chars" -f $avgT)
-  Write-Host ("  avg summary:     {0} chars" -f $avgS)
-  Write-Host ("  avg fullContent: {0} chars" -f $avgFC)
+  Write-Host ("  avg summary:     {0} chars  (RSS summary capped at ~300)" -f $avgS)
+  Write-Host ("  avg fullContent: {0} chars  (target: >2000 = partial, >5000 = good)" -f $avgFC)
+
+  # Warn if all items have same fcLen (typical of the 803-bug era)
+  $allSameFcLen = ($fullContentLens | Select-Object -Unique).Count -eq 1 -and $fullContentLens.Count -gt 1
+  if ($allSameFcLen) {
+    Write-Host ("  [WARN] All items have IDENTICAL inputFullContentLength={0} — possible diagnostic cap bug" -f $fullContentLens[0]) -ForegroundColor Yellow
+  }
+
   if ($avgFC -lt 50) {
-    Write-Host ("  [WARN] avg fullContent very short ({0} chars). Model likely only saw RSS summary." -f $avgFC) -ForegroundColor Yellow
+    Write-Host ("  [WARN] avg fullContent very short ({0} chars). No full text — LLM only saw RSS summary." -f $avgFC) -ForegroundColor Yellow
+  } elseif ($avgFC -lt 500) {
+    Write-Host ("  [WARN] avg fullContent {0} chars — partial content, check article fetch / RSS content:encoded" -f $avgFC) -ForegroundColor Yellow
+  } elseif ($avgFC -lt 2000) {
+    Write-Host ("  [INFO] avg fullContent {0} chars — partial, consider enabling ARTICLE_FETCH_ENABLED" -f $avgFC) -ForegroundColor Gray
+  } else {
+    Write-Host ("  [OK]   avg fullContent {0} chars — good content depth" -f $avgFC) -ForegroundColor Green
   }
 } else {
   Write-Host "  [WARN] inputDiagnostics not present on any item -- run a fresh snapshot" -ForegroundColor Yellow
+}
+
+# ── fallbackReason distribution ────────────────────────────────────────────────
+Write-Host ""
+Write-Host "--- fallbackReason Distribution ---"
+$fallbackReasons = @{}
+$invalidJsonCount = 0
+for ($i = 0; $i -lt $final.Count; $i++) {
+  $dd = $final[$i].deepDive
+  if ($null -eq $dd) { continue }
+  $status = [string]$dd.status
+  if ($status -eq "fallback") {
+    $fr = if ($dd.PSObject.Properties.Name -contains "fallbackReason") { [string]$dd.fallbackReason } else { "" }
+    if ([string]::IsNullOrWhiteSpace($fr)) { $fr = "(no reason)" }
+    # Categorize
+    $cat = if ($fr -match "not valid JSON|invalid_json") { "invalid_json" }
+           elseif ($fr -match "retry_failed") { "retry_failed" }
+           elseif ($fr -match "quality") { "quality_issue" }
+           elseif ($fr -match "parse|required_field") { "parse_error" }
+           elseif ($fr -match "LLM disabled|missing API") { "llm_disabled" }
+           else { "other" }
+    if ($cat -eq "invalid_json") { $invalidJsonCount++ }
+    if (-not $fallbackReasons.ContainsKey($cat)) { $fallbackReasons[$cat] = 0 }
+    $fallbackReasons[$cat]++
+  }
+}
+if ($fallbackReasons.Count -eq 0) {
+  Write-Host "  (no fallback items)" -ForegroundColor Gray
+} else {
+  foreach ($k in ($fallbackReasons.Keys | Sort-Object)) {
+    $color = if ($k -eq "invalid_json" -or $k -eq "retry_failed") { "Yellow" } else { "Gray" }
+    Write-Host ("  {0}: {1}" -f $k, $fallbackReasons[$k]) -ForegroundColor $color
+  }
+  if ($invalidJsonCount -gt 0) {
+    Write-Host ("  [WARN] invalid_json fallbacks: {0} (model outputting non-JSON)" -f $invalidJsonCount) -ForegroundColor Yellow
+  } else {
+    Write-Host "  invalid_json fallbacks: 0  [OK]" -ForegroundColor Green
+  }
 }
 
 # ── Model Verification ───────────────────────────────────────────────────────

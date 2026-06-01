@@ -85,6 +85,42 @@ function stripHtml(html: string): string {
     .trim()
 }
 
+/**
+ * Strip HTML for full-content fields (content:encoded).
+ * Removes script/style blocks first to avoid their text leaking in.
+ */
+function stripRssHtml(html: string): string {
+  return stripHtml(
+    html
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+  )
+}
+
+const RSS_FULL_CONTENT_MAX = 12_000
+
+/**
+ * Extract full article text from RSS/Atom content fields.
+ * Prefers content:encoded (full-text RSS standard), then Atom content.
+ * Only returns content meaningfully longer than the short summary.
+ */
+function extractFullContent(o: Record<string, unknown>, shortSummary: string): string | null {
+  const candidates = [
+    xmlText(o['content:encoded']),
+    xmlText(o.encoded),
+    xmlText(o.content),
+  ]
+  for (const raw of candidates) {
+    if (!raw) continue
+    const stripped = stripRssHtml(raw)
+    // Only use if substantially longer than the clamped summary
+    if (stripped.length >= 200 && stripped.length > shortSummary.length + 80) {
+      return stripped.slice(0, RSS_FULL_CONTENT_MAX)
+    }
+  }
+  return null
+}
+
 /** Truncate to max chars, appending ellipsis only when truncated. */
 function clamp(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + '…' : s
@@ -115,29 +151,31 @@ function detectLanguage(title: string, summary: string): DbItemLanguage {
 
 function parseRssItem(raw: unknown): ParsedRssItem {
   const o = raw as Record<string, unknown>
-  const title       = xmlText(o.title)
-  const rawGuid     = xmlText(o.guid)
-  const url         = xmlText(o.link) || rawGuid || ''
-  const guid        = rawGuid || null
-  const author      = xmlText(o['dc:creator'] ?? o.author) || null
-  const summary     = clamp(stripHtml(xmlText(o.description ?? o.summary ?? o.content)), 300)
-  const publishedAt = safeIso(xmlText(o.pubDate ?? o['dc:date']))
-  return { title, url, guid, author, summary, publishedAt }
+  const title          = xmlText(o.title)
+  const rawGuid        = xmlText(o.guid)
+  const url            = xmlText(o.link) || rawGuid || ''
+  const guid           = rawGuid || null
+  const author         = xmlText(o['dc:creator'] ?? o.author) || null
+  const summary        = clamp(stripHtml(xmlText(o.description ?? o.summary ?? o.content)), 300)
+  const publishedAt    = safeIso(xmlText(o.pubDate ?? o['dc:date']))
+  const rssFullContent = extractFullContent(o, summary)
+  return { title, url, guid, author, summary, rssFullContent, publishedAt }
 }
 
 function parseAtomEntry(raw: unknown): ParsedRssItem {
   const o = raw as Record<string, unknown>
-  const title       = xmlText(o.title)
-  const rawId       = xmlText(o.id)
-  const url         = xmlLink(o.link) || rawId
-  const guid        = rawId || null
-  const authorNode  = o.author
-  const author      = authorNode
+  const title          = xmlText(o.title)
+  const rawId          = xmlText(o.id)
+  const url            = xmlLink(o.link) || rawId
+  const guid           = rawId || null
+  const authorNode     = o.author
+  const author         = authorNode
     ? xmlText((authorNode as Record<string, unknown>).name ?? authorNode)
     : null
-  const summary     = clamp(stripHtml(xmlText(o.summary ?? o.content)), 300)
-  const publishedAt = safeIso(xmlText(o.updated ?? o.published))
-  return { title, url, guid, author: author || null, summary, publishedAt }
+  const summary        = clamp(stripHtml(xmlText(o.summary ?? o.content)), 300)
+  const publishedAt    = safeIso(xmlText(o.updated ?? o.published))
+  const rssFullContent = extractFullContent(o, summary)
+  return { title, url, guid, author: author || null, summary, rssFullContent, publishedAt }
 }
 
 // ── Public: parse RSS/Atom XML string → items array ──────────────────────────

@@ -24,7 +24,7 @@ import {
 } from '@/lib/db/sources'
 import { upsertProvider }          from '@/lib/db/providers'
 import { findOrCreateSource }      from '@/lib/db/sources'
-import { upsertItemByCanonicalUrl, updateItemArticleContent, markItemContentFetchFailed } from '@/lib/db/items'
+import { upsertItemByCanonicalUrl, updateItemArticleContent, markItemContentFetchFailed, updateItemRssContent } from '@/lib/db/items'
 import { upsertItemMention }       from '@/lib/db/item-mentions'
 import { fetchArticleContent, getArticleFetchConfig } from '@/lib/ingest/article-content'
 import { fetchRssFeed, parseRssFeed } from '@/lib/ingest/rss'
@@ -217,6 +217,7 @@ function buildNormalizedItem(
     title:               parsed.title,
     normalizedTitle:     normalizeTitle(parsed.title),
     summary:             parsed.summary || null,
+    rssFullContent:      parsed.rssFullContent || null,
     url,
     canonicalUrl,
     originalSourceName:  feed.name,
@@ -461,18 +462,23 @@ async function writeItems(
       if (upserted.status === 'inserted') acc.items.insertedItems++
       else                                acc.items.reusedItems++
 
-      // ── Article content fetch (best-effort, only for newly inserted items) ──
-      if (artCfg.enabled && upserted.status === 'inserted') {
+      // ── Article content (best-effort, only for newly inserted items) ─────────
+      if (upserted.status === 'inserted') {
         const fetchUrl = item.canonicalUrl || item.url
         const timeLeft = deadline - Date.now()
-        const canFetch =
+        const canFetchArticle =
+          artCfg.enabled &&
           fetchUrl.startsWith('http') &&
           acc.articleFetch.attempted < artCfg.maxItemsPerRun &&
           timeLeft > artCfg.timeoutMs + 8_000  // leave 8s buffer beyond fetch timeout
-        if (canFetch) {
+
+        let articleContentWritten = false
+
+        if (canFetchArticle) {
           acc.articleFetch.attempted++
           const artResult = await fetchArticleContent(fetchUrl, artCfg)
           if (artResult.ok && artResult.textContent && artResult.textContent.length >= 100) {
+            articleContentWritten = true
             acc.articleFetch.succeeded++
             acc.articleFetch.totalContentLength += artResult.contentLength
             updateItemArticleContent(upserted.id, {
@@ -496,8 +502,16 @@ async function writeItems(
               fetchUrl,
             ).catch(() => {})
           }
-        } else if (fetchUrl.startsWith('http')) {
+        } else if (artCfg.enabled && fetchUrl.startsWith('http')) {
           acc.articleFetch.skipped++
+        }
+
+        // Fallback: write RSS content:encoded if article fetch didn't happen
+        if (!articleContentWritten) {
+          const rfc = item.rssFullContent
+          if (rfc && rfc.length >= 200) {
+            updateItemRssContent(upserted.id, rfc).catch(() => {})
+          }
         }
       }
 

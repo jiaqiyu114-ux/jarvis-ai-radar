@@ -59,6 +59,7 @@ export type NormalizedIngestItem = {
   title:               string
   normalizedTitle:     string           // lowercase + stripped — used for dedup
   summary?:            string | null
+  rssFullContent?:     string | null    // Full text from content:encoded (stripped HTML, up to 12k)
   url:                 string           // raw URL from provider
   canonicalUrl:        string           // cleaned, tracking-param-stripped URL
 

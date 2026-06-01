@@ -386,6 +386,29 @@ export async function markItemContentFetchFailed(
   return true
 }
 
+/**
+ * Write full text extracted from RSS content:encoded to an item.
+ * Used when article fetch is disabled or skipped, but the RSS feed provides full text.
+ */
+export async function updateItemRssContent(
+  itemId:    string,
+  cleanText: string,
+): Promise<boolean> {
+  if (!isServerSupabaseConfigured || !supabaseServer) return false
+  const wordCount = cleanText.split(/\s+/).filter(Boolean).length
+  const { error } = await supabaseServer
+    .from('items')
+    .update({
+      content_fetch_status: 'rss_content',
+      content_fetched_at:   new Date().toISOString(),
+      clean_text:           cleanText,
+      content_word_count:   wordCount,
+    })
+    .eq('id', itemId)
+  if (error) { console.error('[db/items] updateItemRssContent:', error.message); return false }
+  return true
+}
+
 // ── Analysis Queue / Token Budget Gate v1 ────────────────────────────────────
 
 export type AnalysisGatePayload = {

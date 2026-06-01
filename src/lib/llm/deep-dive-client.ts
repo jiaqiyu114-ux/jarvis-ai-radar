@@ -64,10 +64,15 @@ function extractJsonObject(text: string): Record<string, unknown> | null {
   const cleaned = text.trim()
   if (!cleaned) return null
 
-  const direct = tryParseJson(cleaned)
+  // Strip <think>...</think> blocks (DeepSeek reasoner CoT leaking into content)
+  const withoutThink = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+  const base = withoutThink || cleaned
+
+  const direct = tryParseJson(base)
   if (direct) return direct
 
-  const fenced = cleaned
+  // Remove markdown fences
+  const fenced = base
     .replace(/^```json\s*/i, '')
     .replace(/^```\s*/i, '')
     .replace(/\s*```$/i, '')
@@ -75,10 +80,11 @@ function extractJsonObject(text: string): Record<string, unknown> | null {
   const fencedParsed = tryParseJson(fenced)
   if (fencedParsed) return fencedParsed
 
-  const start = cleaned.indexOf('{')
-  const end = cleaned.lastIndexOf('}')
+  // Extract first complete {...} object — handles explanatory text before/after JSON
+  const start = base.indexOf('{')
+  const end = base.lastIndexOf('}')
   if (start >= 0 && end > start) {
-    return tryParseJson(cleaned.slice(start, end + 1))
+    return tryParseJson(base.slice(start, end + 1))
   }
   return null
 }

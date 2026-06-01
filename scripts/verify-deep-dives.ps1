@@ -316,12 +316,62 @@ try {
       Write-Host "  --- average input lengths ---"
       Write-Host ("  avg title:       {0} chars" -f $avgT)
       Write-Host ("  avg summary:     {0} chars  (RSS capped ~300)" -f $avgS)
-      Write-Host ("  avg fullContent: {0} chars" -f $avgFC)
+      Write-Host ("  avg fullContent: {0} chars  (target: >2000)" -f $avgFC)
+
+      # WARN if all items have identical fcLen (diagnostic cap bug)
+      $allSameFcLen = ($fullContentLens | Select-Object -Unique).Count -eq 1 -and $fullContentLens.Count -gt 1
+      if ($allSameFcLen) {
+        Write-Warn ("All items have IDENTICAL fcLen={0} — likely pre-fix diagnostic (should now be fixed)" -f $fullContentLens[0])
+      }
+
       if ($avgFC -lt 50) {
         Write-Warn ("avg fullContent very short ({0} chars). LLM only saw RSS summary." -f $avgFC)
+      } elseif ($avgFC -lt 500) {
+        Write-Warn ("avg fullContent {0} chars — partial; check ARTICLE_FETCH_ENABLED or RSS content:encoded" -f $avgFC)
+      } elseif ($avgFC -ge 2000) {
+        Write-Ok ("avg fullContent {0} chars — good content depth" -f $avgFC)
+      } else {
+        Write-Info ("avg fullContent {0} chars — partial content" -f $avgFC)
       }
     } elseif ($diagMissing -gt 0) {
       Write-Warn ("inputDiagnostics missing on {0} items -- run fresh snapshot first" -f $diagMissing)
+    }
+
+    # fallbackReason distribution
+    $fallbackReasons = @{}
+    $invalidJsonCount = 0
+    for ($i = 0; $i -lt $finalItems.Count; $i++) {
+      $dd = $finalItems[$i].deepDive
+      if ($null -eq $dd) { continue }
+      $status = [string]$dd.status
+      if ($status -eq "fallback") {
+        $fr = if ($dd.PSObject.Properties.Name -contains "fallbackReason") { [string]$dd.fallbackReason } else { "" }
+        if ([string]::IsNullOrWhiteSpace($fr)) { $fr = "(no reason)" }
+        $cat = if ($fr -match "not valid JSON|invalid_json") { "invalid_json" }
+               elseif ($fr -match "retry_failed") { "retry_failed" }
+               elseif ($fr -match "quality") { "quality_issue" }
+               elseif ($fr -match "parse|required_field") { "parse_error" }
+               elseif ($fr -match "LLM disabled|missing API") { "llm_disabled" }
+               else { "other" }
+        if ($cat -eq "invalid_json") { $invalidJsonCount++ }
+        if (-not $fallbackReasons.ContainsKey($cat)) { $fallbackReasons[$cat] = 0 }
+        $fallbackReasons[$cat]++
+      }
+    }
+    Write-Host ""
+    Write-Host "  --- fallbackReason distribution ---"
+    if ($fallbackReasons.Count -eq 0) {
+      Write-Info "(no fallback items)"
+    } else {
+      foreach ($k in ($fallbackReasons.Keys | Sort-Object)) {
+        $color = if ($k -eq "invalid_json" -or $k -eq "retry_failed") { "Yellow" } else { "Gray" }
+        Write-Host ("  {0}: {1}" -f $k, $fallbackReasons[$k]) -ForegroundColor $color
+      }
+    }
+    if ($invalidJsonCount -gt 0) {
+      Write-Warn ("invalid JSON fallbacks: {0}" -f $invalidJsonCount)
+    } else {
+      Write-Ok "invalid JSON fallbacks: 0"
     }
 
     if ($summaryOnlyN -gt 0) {
