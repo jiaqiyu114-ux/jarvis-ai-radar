@@ -94,9 +94,9 @@ if ($SkipIngest) {
 
     if ($ingest.ingest) {
       $ing = $ingest.ingest
-      $script:rawItemsFetched = $ing.items.parsedItems ?? 0
-      $script:itemsInserted   = $ing.items.insertedItems ?? 0
-      $script:itemsReused     = $ing.items.reusedItems ?? 0
+      $script:rawItemsFetched = if ($null -ne $ing.items.parsedItems)   { $ing.items.parsedItems }   else { 0 }
+      $script:itemsInserted   = if ($null -ne $ing.items.insertedItems) { $ing.items.insertedItems } else { 0 }
+      $script:itemsReused     = if ($null -ne $ing.items.reusedItems)   { $ing.items.reusedItems }   else { 0 }
       Mark-Info "sourcesAttempted:  $($ing.sources.attempted)"
       Mark-Info "sourcesSucceeded:  $($ing.sources.successful)"
       Mark-Info "itemsParsed:       $($ing.items.parsedItems)"
@@ -165,9 +165,9 @@ try {
     Mark-Info "observeCount (raw engine):    $($stats.observeCount)"
   }
 
-  $script:deepDiveReadyCount            = $refresh.deepDiveReadyCount ?? 0
-  $script:hiddenDueToDeepDiveBudgetCount = $refresh.hiddenDueToDeepDiveBudget ?? 0
-  $script:deepDiveQueuedCount           = $refresh.deepDiveStats.total ?? 0
+  $script:deepDiveReadyCount             = if ($null -ne $refresh.deepDiveReadyCount)      { $refresh.deepDiveReadyCount }      else { 0 }
+  $script:hiddenDueToDeepDiveBudgetCount = if ($null -ne $refresh.hiddenDueToDeepDiveBudget) { $refresh.hiddenDueToDeepDiveBudget } else { 0 }
+  $script:deepDiveQueuedCount            = if ($null -ne $refresh.deepDiveStats.total)      { $refresh.deepDiveStats.total }      else { 0 }
 
   Mark-Info "deepDiveReady:                $($script:deepDiveReadyCount)"
   Mark-Info "hiddenDueToDeepDiveBudget:    $($script:hiddenDueToDeepDiveBudgetCount)"
@@ -263,7 +263,7 @@ Write-Host ""
 
 # ── 5. Verify observeBacklog承接 ──────────────────────────────────────────────
 
-Write-Host "5) Verify observeBacklog承接"
+Write-Host "5) Verify observeBacklog coverage"
 if ($script:finalObserveItems.Count -gt 0) {
   Mark-Ok "observeBacklog has $($script:finalObserveItems.Count) items — near-miss signals captured"
   $observeWithReason = @($script:finalObserveItems | Where-Object { $_.observeReason -or $_.recommendationBucket -eq "observe_backlog" })
