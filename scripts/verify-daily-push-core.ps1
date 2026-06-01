@@ -102,6 +102,28 @@ if ($SkipIngest) {
       Mark-Info "itemsParsed:       $($ing.items.parsedItems)"
       Mark-Info "itemsInserted:     +$($ing.items.insertedItems)"
       Mark-Info "itemsReused:       ~$($ing.items.reusedItems)"
+
+      # Per-source breakdown from sourceSelection
+      if ($ing.sourceSelection -and $ing.sourceSelection.selectedSources) {
+        Write-Host "   Selected sources:" -ForegroundColor Gray
+        foreach ($sel in $ing.sourceSelection.selectedSources) {
+          $hs = if ($null -ne $sel.healthStatus) { $sel.healthStatus } else { "unknown" }
+          Mark-Info ("  source: [" + $hs + "] [" + $sel.tier + "] " + $sel.name)
+          # Warn if failed/failing source was selected
+          if ($hs -eq "failing" -or $hs -eq "failed") {
+            Mark-Warn ("  Failed source included in ingest: " + $sel.name + " (healthStatus=" + $hs + ")")
+          }
+        }
+      }
+
+      # Report failed sources
+      if ($ing.failedSources -and @($ing.failedSources).Count -gt 0) {
+        Write-Host "   Failed during ingest:" -ForegroundColor Red
+        foreach ($fs in $ing.failedSources) {
+          Mark-Warn ("  source FAIL [" + $fs.stage + "] " + $fs.name + ": " + $fs.reason)
+        }
+      }
+
       if ($ing.sources.successful -eq 0) {
         Mark-Warn "No sources succeeded. Check source configuration and network."
       }
@@ -214,9 +236,24 @@ try {
   if ($finalTierItems.Count -gt 5) {
     Mark-Ok "More than 5 recommendations found ($($finalTierItems.Count)) — no fixed top-5 limit"
   } elseif ($finalTierItems.Count -gt 0) {
-    Mark-Ok "Today recommendations: $($finalTierItems.Count) (within threshold, not artificially capped)"
+    Mark-Ok "Today recommendations: $($finalTierItems.Count) (threshold-based, not artificially capped)"
   } else {
-    Mark-Warn "0 today recommendations — check sources and scoring thresholds"
+    # Diagnose why today recommendations = 0
+    $totalItems  = $items.Count
+    $observeAll  = @($items | Where-Object { $_.recommendationTier -eq "observe" }).Count
+    $archiveAll  = @($items | Where-Object { $_.recommendationTier -eq "archive" }).Count
+    $backlogAll  = @($items | Where-Object { $_.recommendationBucket -eq "observe_backlog" }).Count
+    if ($totalItems -eq 0) {
+      Mark-Warn "0 today recommendations — reason: no_active_healthy_sources (snapshot empty)"
+    } elseif ($observeAll -gt 0 -and $backlogAll -gt 0) {
+      Mark-Warn ("0 today recommendations — reason: all_demoted_to_observe (backlog=" + $backlogAll + " observe=" + $observeAll + ")")
+    } elseif ($observeAll -gt 0) {
+      Mark-Warn ("0 today recommendations — reason: below_threshold (items in observe=" + $observeAll + " but none hit must_read/high_value)")
+    } elseif ($archiveAll -gt 0) {
+      Mark-Warn ("0 today recommendations — reason: no_today_items (all " + $archiveAll + " items below score threshold)")
+    } else {
+      Mark-Warn "0 today recommendations — reason: unknown (check scoring and daily gate)"
+    }
   }
 
   # Check: no previous-day items in today recommendations

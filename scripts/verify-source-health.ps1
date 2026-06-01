@@ -1,8 +1,9 @@
 param(
-  [string]$BundleFile = "config\source-bundles\ai-radar-sources.json",
-  [int]$MaxSources = 15,
-  [int]$TimeoutSec = 12,
-  [int]$MaxItemsCheck = 5,
+  [string]$BundleFile   = "config\source-bundles\ai-radar-sources.json",
+  [int]$MaxSources      = 0,
+  [int]$TimeoutSec      = 12,
+  [int]$MaxItemsCheck   = 5,
+  [string]$OutputFile   = ".tmp\source-health-report.json",
   [switch]$RecommendedOnly,
   [switch]$FailFast
 )
@@ -12,9 +13,7 @@ $ErrorActionPreference = "Continue"
 Write-Host ""
 Write-Host "=== J.A.R.V.I.S. Source Health Check ===" -ForegroundColor Cyan
 Write-Host ("Time:       " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss"))
-Write-Host ("MaxSources: " + $MaxSources)
 Write-Host ("TimeoutSec: " + $TimeoutSec)
-Write-Host ""
 
 # ── Load bundle ────────────────────────────────────────────────────────────────
 
@@ -32,6 +31,7 @@ $rawJson = [System.IO.File]::ReadAllText($bundlePath, [System.Text.Encoding]::UT
 $bundle = $rawJson | ConvertFrom-Json
 $allSources = @($bundle.sources)
 
+# Filter sources to check
 $toCheck = if ($RecommendedOnly) {
   @($allSources | Where-Object {
     ($_.type -eq "rss" -or $_.type -eq "atom") -and
@@ -43,12 +43,15 @@ $toCheck = if ($RecommendedOnly) {
   @($allSources | Where-Object { $_.type -eq "rss" -or $_.type -eq "atom" })
 }
 
-if ($toCheck.Count -gt $MaxSources) {
-  Write-Host ("[INFO] Capping at $MaxSources of " + $toCheck.Count + " sources (-MaxSources to change)") -ForegroundColor Gray
+# MaxSources = 0 means check all
+if ($MaxSources -gt 0 -and $toCheck.Count -gt $MaxSources) {
+  Write-Host ("[INFO] Capping at " + $MaxSources + " of " + $toCheck.Count + " sources (-MaxSources to change, 0=all)") -ForegroundColor Gray
   $toCheck = $toCheck | Select-Object -First $MaxSources
+} else {
+  Write-Host ("MaxSources: all (" + $toCheck.Count + " sources)")
 }
-
-Write-Host ("Checking " + $toCheck.Count + " source(s)...")
+Write-Host ""
+Write-Host ("Checking " + $toCheck.Count + " source(s) ...")
 Write-Host ""
 
 # ── Health test function ───────────────────────────────────────────────────────
@@ -60,6 +63,7 @@ function Test-RssFeed {
     name                = $Name
     url                 = $Url
     status              = "unknown"
+    feedType            = "unknown"
     fetchMs             = 0
     httpStatus          = 0
     itemCount           = 0
@@ -69,21 +73,20 @@ function Test-RssFeed {
     hasSummaryCount     = 0
     hasContentEncoded   = 0
     avgSummaryLength    = 0
-    feedType            = "unknown"
     errorReason         = ""
+    errorType           = ""
   }
 
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
-
   $content = $null
-  $parseError = $null
 
-  # Fetch
   try {
     $wr = [System.Net.HttpWebRequest]::Create($Url)
     $wr.Timeout = $TimeoutMs
     $wr.UserAgent = "JARVIS-SourceHealth/1.0 (personal AI radar)"
     $wr.Accept = "application/rss+xml, application/atom+xml, application/xml, text/xml, */*"
+    $wr.AllowAutoRedirect = $true
+    $wr.MaximumAutomaticRedirections = 5
 
     $response = $wr.GetResponse()
     $sw.Stop()
@@ -95,19 +98,45 @@ function Test-RssFeed {
     $content = $reader.ReadToEnd()
     $reader.Close()
     $response.Close()
+
   } catch [System.Net.WebException] {
     $sw.Stop()
     $r.fetchMs = $sw.ElapsedMilliseconds
     $ex = $_.Exception
+
     if ($ex.Response) {
-      $r.httpStatus  = [int]$ex.Response.StatusCode
-      $r.status      = "failed"
-      $r.errorReason = "HTTP " + [int]$ex.Response.StatusCode + " " + $ex.Response.StatusDescription
+      $r.httpStatus = [int]$ex.Response.StatusCode
+      $code = $r.httpStatus
+      $r.status = "failed"
+      if ($code -eq 404) {
+        $r.errorType = "failed_not_found"
+        $r.errorReason = "HTTP 404 Not Found"
+      } elseif ($code -in @(500, 502, 503, 504)) {
+        $r.errorType = "failed_bad_gateway"
+        $r.errorReason = "HTTP $code Bad Gateway / Server Error"
+      } elseif ($code -ge 300 -and $code -lt 400) {
+        $r.errorType = "failed_redirect"
+        $r.errorReason = "HTTP $code redirect could not be resolved"
+      } else {
+        $r.errorType = "failed_http_$code"
+        $r.errorReason = "HTTP $code"
+      }
     } elseif ($ex.Status -eq [System.Net.WebExceptionStatus]::Timeout) {
-      $r.status      = "failed"
-      $r.errorReason = "timeout after ${TimeoutMs}ms"
+      $r.status    = "failed"
+      $r.errorType = "failed_timeout"
+      $r.errorReason = "Timeout after ${TimeoutMs}ms"
+    } elseif ($ex.Status -eq [System.Net.WebExceptionStatus]::ConnectionClosed -or
+              $ex.Status -eq [System.Net.WebExceptionStatus]::ReceiveFailure) {
+      $r.status    = "failed"
+      $r.errorType = "failed_connection_closed"
+      $r.errorReason = "Connection closed: " + $ex.Message
+    } elseif ($ex.Status -eq [System.Net.WebExceptionStatus]::NameResolutionFailure) {
+      $r.status    = "failed"
+      $r.errorType = "failed_dns"
+      $r.errorReason = "DNS resolution failed"
     } else {
-      $r.status      = "failed"
+      $r.status    = "failed"
+      $r.errorType = "failed_network"
       $r.errorReason = $ex.Message
     }
     return $r
@@ -115,44 +144,48 @@ function Test-RssFeed {
     $sw.Stop()
     $r.fetchMs = $sw.ElapsedMilliseconds
     $r.status  = "failed"
+    $r.errorType = "failed_unknown"
     $r.errorReason = $_.Exception.Message
     return $r
   }
 
   if (-not $content) {
-    $r.status = "failed"
-    $r.errorReason = "empty response"
+    $r.status    = "failed"
+    $r.errorType = "failed_empty"
+    $r.errorReason = "Empty response"
     return $r
   }
 
   $trimmed = $content.TrimStart()
-  if (-not ($trimmed.StartsWith("<?xml") -or $trimmed.StartsWith("<rss") -or $trimmed.StartsWith("<feed") -or $trimmed.StartsWith("<channel"))) {
-    $r.status = "failed"
-    $r.errorReason = "response is not XML (possibly HTML error page)"
+  if (-not ($trimmed.StartsWith("<?xml") -or $trimmed.StartsWith("<rss") -or
+            $trimmed.StartsWith("<feed") -or $trimmed.StartsWith("<channel"))) {
+    $r.status    = "failed"
+    $r.errorType = "failed_not_xml"
+    $r.errorReason = "Response is not XML (HTML error page?)"
     return $r
   }
 
-  # Parse XML
   $xml = New-Object System.Xml.XmlDocument
+  $parseErr = $null
   try {
     $xml.LoadXml($content)
-    $parseError = $null
   } catch {
-    $parseError = $_.Exception.Message
+    $parseErr = $_.Exception.Message
   }
 
-  if ($parseError) {
-    $r.status = "weak"
-    $r.errorReason = "XML parse error: " + $parseError.Substring(0, [Math]::Min(80, $parseError.Length))
+  if ($parseErr) {
+    $r.status    = "weak"
+    $r.errorType = "parse_error"
+    $short = if ($parseErr.Length -gt 80) { $parseErr.Substring(0,77) + "..." } else { $parseErr }
+    $r.errorReason = "XML parse error: " + $short
     return $r
   }
 
   $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
-  $ns.AddNamespace("atom", "http://www.w3.org/2005/Atom")
+  $ns.AddNamespace("atom",    "http://www.w3.org/2005/Atom")
   $ns.AddNamespace("content", "http://purl.org/rss/1.0/modules/content/")
-  $ns.AddNamespace("dc", "http://purl.org/dc/elements/1.1/")
+  $ns.AddNamespace("dc",      "http://purl.org/dc/elements/1.1/")
 
-  # Detect items
   $items = $xml.SelectNodes("//channel/item")
   if ($items -and $items.Count -gt 0) {
     $r.feedType = "rss2"
@@ -162,15 +195,14 @@ function Test-RssFeed {
       $r.feedType = "atom"
     } else {
       $items = $xml.SelectNodes("//*[local-name()='item']")
-      if ($items -and $items.Count -gt 0) {
-        $r.feedType = "rss-generic"
-      }
+      if ($items -and $items.Count -gt 0) { $r.feedType = "rss-generic" }
     }
   }
 
   if (-not $items -or $items.Count -eq 0) {
-    $r.status = "weak"
-    $r.errorReason = "feed parsed but 0 items found"
+    $r.status    = "weak"
+    $r.errorType = "no_items"
+    $r.errorReason = "Feed parsed OK but 0 items found"
     return $r
   }
 
@@ -183,9 +215,7 @@ function Test-RssFeed {
 
     $titleNode = $item.SelectSingleNode("title")
     if (-not $titleNode) { $titleNode = $item.SelectSingleNode("*[local-name()='title']") }
-    if ($titleNode -and -not [string]::IsNullOrWhiteSpace($titleNode.InnerText)) {
-      $r.hasTitleCount++
-    }
+    if ($titleNode -and -not [string]::IsNullOrWhiteSpace($titleNode.InnerText)) { $r.hasTitleCount++ }
 
     $linkNode = $item.SelectSingleNode("link")
     if (-not $linkNode) { $linkNode = $item.SelectSingleNode("*[local-name()='link']") }
@@ -201,9 +231,7 @@ function Test-RssFeed {
     if (-not $pubNode) { $pubNode = $item.SelectSingleNode("*[local-name()='published']") }
     if (-not $pubNode) { $pubNode = $item.SelectSingleNode("*[local-name()='updated']") }
     if (-not $pubNode) { $pubNode = $item.SelectSingleNode("dc:date", $ns) }
-    if ($pubNode -and -not [string]::IsNullOrWhiteSpace($pubNode.InnerText)) {
-      $r.hasPublishedAtCount++
-    }
+    if ($pubNode -and -not [string]::IsNullOrWhiteSpace($pubNode.InnerText)) { $r.hasPublishedAtCount++ }
 
     $summNode = $item.SelectSingleNode("description")
     if (-not $summNode) { $summNode = $item.SelectSingleNode("*[local-name()='summary']") }
@@ -214,10 +242,8 @@ function Test-RssFeed {
 
     $contNode = $item.SelectSingleNode("content:encoded", $ns)
     if (-not $contNode) { $contNode = $item.SelectSingleNode("*[local-name()='encoded']") }
-    if (-not $contNode) { $contNode = $item.SelectSingleNode("*[local-name()='content'][not(@type) or @type='html' or @type='xhtml']") }
-    if ($contNode -and -not [string]::IsNullOrWhiteSpace($contNode.InnerText)) {
-      $r.hasContentEncoded++
-    }
+    if (-not $contNode) { $contNode = $item.SelectSingleNode("*[local-name()='content']") }
+    if ($contNode -and -not [string]::IsNullOrWhiteSpace($contNode.InnerText)) { $r.hasContentEncoded++ }
   }
 
   if ($sumLengths.Count -gt 0) {
@@ -229,16 +255,16 @@ function Test-RssFeed {
   $summaryRatio = if ($checkN -gt 0) { $r.hasSummaryCount / $checkN } else { 0 }
 
   if ($titleRatio -ge 0.8 -and $urlRatio -ge 0.8 -and $r.itemCount -ge 3) {
-    if ($summaryRatio -ge 0.6) {
-      $r.status = "healthy"
-    } else {
-      $r.status = "usable"
-    }
+    if ($summaryRatio -ge 0.6) { $r.status = "healthy" }
+    else                        { $r.status = "usable"  }
   } elseif ($titleRatio -ge 0.5 -and $urlRatio -ge 0.5) {
-    $r.status = "weak"
+    $r.status    = "weak"
+    $r.errorType = "weak_fields"
+    $r.errorReason = ("Low field coverage: title=" + [Math]::Round($titleRatio*100) + "% url=" + [Math]::Round($urlRatio*100) + "%")
   } else {
-    $r.status = "failed"
-    $r.errorReason = "critical fields missing (title or url ratio too low)"
+    $r.status    = "failed"
+    $r.errorType = "failed_fields"
+    $r.errorReason = "Critical fields missing: title or url ratio too low"
   }
 
   return $r
@@ -248,17 +274,27 @@ function Test-RssFeed {
 
 $results = @()
 $idx = 0
+
 foreach ($src in $toCheck) {
   $idx++
   $nameShort = if ($src.name.Length -gt 30) { $src.name.Substring(0,27) + "..." } else { $src.name }
-  $urlShort  = if ($src.url.Length  -gt 60) { $src.url.Substring(0,57)  + "..." } else { $src.url  }
-  Write-Host ("[$idx/$($toCheck.Count)] " + $nameShort) -NoNewline
+  $urlShort  = if ($src.url.Length  -gt 58) { $src.url.Substring(0,55)  + "..." } else { $src.url  }
+  Write-Host ("[" + $idx + "/" + $toCheck.Count + "] " + $nameShort) -NoNewline
   Write-Host (" " + $urlShort) -ForegroundColor DarkGray
 
   $r = Test-RssFeed -Url $src.url -Name $src.name -TimeoutMs ($TimeoutSec * 1000)
-  $r | Add-Member -NotePropertyName origin   -NotePropertyValue $src.origin   -Force
-  $r | Add-Member -NotePropertyName tier     -NotePropertyValue $src.tier     -Force
-  $r | Add-Member -NotePropertyName priority -NotePropertyValue $src.priority -Force
+
+  # Attach bundle metadata for the saved report
+  $r | Add-Member -NotePropertyName bundleId     -NotePropertyValue $src.id           -Force
+  $r | Add-Member -NotePropertyName origin       -NotePropertyValue $src.origin       -Force
+  $r | Add-Member -NotePropertyName category     -NotePropertyValue $src.category     -Force
+  $r | Add-Member -NotePropertyName tier         -NotePropertyValue $src.tier         -Force
+  $r | Add-Member -NotePropertyName priority     -NotePropertyValue $src.priority     -Force
+  $r | Add-Member -NotePropertyName official     -NotePropertyValue $src.official     -Force
+  $r | Add-Member -NotePropertyName userCurated  -NotePropertyValue $src.userCurated  -Force
+  $r | Add-Member -NotePropertyName notes        -NotePropertyValue $src.notes        -Force
+  $r | Add-Member -NotePropertyName riskNotes    -NotePropertyValue $src.riskNotes    -Force
+  $r | Add-Member -NotePropertyName importedFrom -NotePropertyValue $src.importedFrom -Force
 
   $statusColor = switch ($r.status) {
     "healthy"  { "Green"  }
@@ -268,11 +304,11 @@ foreach ($src in $toCheck) {
     default    { "Gray"   }
   }
 
-  $line = ("  [" + $r.status.ToUpper().PadRight(9) + "] items=" + $r.itemCount +
-    " titles=" + $r.hasTitleCount + " urls=" + $r.hasUrlCount +
-    " summaries=" + $r.hasSummaryCount + " ms=" + $r.fetchMs)
+  $tag = ("[" + $r.status.ToUpper().PadRight(9) + "]")
+  $line = ("  " + $tag + " items=" + $r.itemCount + " titles=" + $r.hasTitleCount +
+    " urls=" + $r.hasUrlCount + " summaries=" + $r.hasSummaryCount +
+    " ms=" + $r.fetchMs)
   Write-Host $line -ForegroundColor $statusColor
-
   if ($r.errorReason) {
     Write-Host ("             " + $r.errorReason) -ForegroundColor DarkGray
   }
@@ -285,18 +321,19 @@ foreach ($src in $toCheck) {
   }
 }
 
-# ── Summary ────────────────────────────────────────────────────────────────────
+# ── Summary table ──────────────────────────────────────────────────────────────
 
 Write-Host ""
 Write-Host "── Health Summary ────────────────────────────────────────────────────" -ForegroundColor Cyan
-
-$results | Select-Object name, status, itemCount, hasTitleCount, hasUrlCount, hasSummaryCount, hasContentEncoded, avgSummaryLength, fetchMs, errorReason |
+$results | Select-Object name, status, feedType, itemCount, hasTitleCount, hasUrlCount, hasSummaryCount, hasContentEncoded, avgSummaryLength, fetchMs, errorReason |
   Format-Table -AutoSize
 
-$healthyCount    = @($results | Where-Object { $_.status -eq "healthy" }).Count
-$usableCount     = @($results | Where-Object { $_.status -eq "usable"  }).Count
-$weakCount       = @($results | Where-Object { $_.status -eq "weak"    }).Count
-$failedCount     = @($results | Where-Object { $_.status -eq "failed"  }).Count
+# ── Stats ──────────────────────────────────────────────────────────────────────
+
+$healthyCount  = @($results | Where-Object { $_.status -eq "healthy" }).Count
+$usableCount   = @($results | Where-Object { $_.status -eq "usable"  }).Count
+$weakCount     = @($results | Where-Object { $_.status -eq "weak"    }).Count
+$failedCount   = @($results | Where-Object { $_.status -eq "failed"  }).Count
 
 Write-Host "── Results ───────────────────────────────────────────────────────────" -ForegroundColor Cyan
 Write-Host ("sourcesChecked: " + $results.Count)
@@ -307,7 +344,7 @@ Write-Host ("failed:         " + $failedCount)  -ForegroundColor Red
 Write-Host ""
 
 if ($healthyCount + $usableCount -gt 0) {
-  Write-Host "── Ready to Enable (healthy / usable) ────────────────────────────────" -ForegroundColor Green
+  Write-Host "── Ready to Import (healthy / usable) ────────────────────────────────" -ForegroundColor Green
   $results | Where-Object { $_.status -eq "healthy" -or $_.status -eq "usable" } | ForEach-Object {
     $tag = if ($_.status -eq "healthy") { "[HEALTHY]" } else { "[USABLE] " }
     Write-Host ("  " + $tag + " [" + $_.tier + "] " + $_.name) -ForegroundColor White
@@ -319,9 +356,40 @@ if ($healthyCount + $usableCount -gt 0) {
 if ($failedCount -gt 0) {
   Write-Host "── Failed Sources ────────────────────────────────────────────────────" -ForegroundColor Red
   $results | Where-Object { $_.status -eq "failed" } | ForEach-Object {
-    Write-Host ("  [FAIL] " + $_.name + ": " + $_.errorReason) -ForegroundColor Red
+    Write-Host ("  [" + $_.errorType + "] " + $_.name + ": " + $_.errorReason) -ForegroundColor Red
   }
   Write-Host ""
 }
 
-Write-Host ("RESULT: COMPLETE ($healthyCount healthy, $usableCount usable, $weakCount weak, $failedCount failed)") -ForegroundColor Cyan
+# ── Save JSON report ──────────────────────────────────────────────────────────
+
+$outPath = Join-Path (Get-Location) $OutputFile
+$outDir  = Split-Path $outPath -Parent
+if (-not (Test-Path $outDir)) {
+  New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+}
+
+$report = [PSCustomObject]@{
+  generatedAt    = (Get-Date -Format "yyyy-MM-ddTHH:mm:ss")
+  bundleFile     = $BundleFile
+  sourcesChecked = $results.Count
+  summary        = [PSCustomObject]@{
+    healthy = $healthyCount
+    usable  = $usableCount
+    weak    = $weakCount
+    failed  = $failedCount
+  }
+  results = $results
+}
+
+try {
+  $reportJson = $report | ConvertTo-Json -Depth 10
+  [System.IO.File]::WriteAllText($outPath, $reportJson, [System.Text.Encoding]::UTF8)
+  Write-Host ("Health report saved to: " + $outPath) -ForegroundColor Green
+} catch {
+  Write-Host ("Warning: could not save report: " + $_.Exception.Message) -ForegroundColor Yellow
+}
+Write-Host ""
+Write-Host ("RESULT: " + $healthyCount + " healthy, " + $usableCount + " usable, " + $weakCount + " weak, " + $failedCount + " failed") -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Run import-healthy-sources.ps1 to import healthy/usable sources." -ForegroundColor Gray

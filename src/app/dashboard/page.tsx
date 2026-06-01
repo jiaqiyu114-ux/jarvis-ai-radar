@@ -248,6 +248,12 @@ function RunStatusStrip({ run, engineSnapshot, coverage, freshness }: {
             <span className="tabular-nums text-foreground/60">{coverage.fetchedLast24h}</span>
             {'/'}{coverage.totalActiveRss}
           </span>
+          {coverage.healthySources > 0 && (
+            <span className="text-success/70">· {coverage.healthySources} healthy</span>
+          )}
+          {coverage.failingSources > 0 && (
+            <span className="text-danger/70">· {coverage.failingSources} failing</span>
+          )}
           {coverage.neverFetchedSources > 0 && (
             <span className="text-warning/70">· {coverage.neverFetchedSources} 未抓</span>
           )}
@@ -575,8 +581,7 @@ export default async function DashboardPage() {
             {/* Zero today-recommendation notice */}
             {hasEngineSnapshot && engineMustRead.length + engineHighValue.length === 0 && (
               <div className="mb-2 rounded border border-warning/25 bg-warning/5 px-3 py-2 text-[11px] text-warning/80">
-                今日暂无达到阈值的新推荐。可查看观察榜或{' '}
-                <a href="/feed" className="underline hover:text-warning">全量流</a>。
+                今日暂无达到阈值的新推荐。系统仍在观察近期高分信息，可查看观察榜。
               </div>
             )}
 
