@@ -309,9 +309,20 @@ function computeRecommendationScore(
   else if (tier === 'A') score += 5
   else if (tier === 'B') score += 3
 
-  // Freshness
+  // Freshness bonus (fetch recency)
   if (hoursAgo < 24)      score += 4
   else if (hoursAgo < 72) score += 2
+
+  // Published-at age decay: reduce score for content older than 24h.
+  // Prevents high-scoring articles from dominating must_read for 72h straight.
+  // must_read threshold = 80; a typical top item scores ~90 before decay.
+  const pubMs = row.published_at ? new Date(row.published_at).getTime() : 0
+  if (pubMs > 0) {
+    const pubAgeH = (Date.now() - pubMs) / 3_600_000
+    if (pubAgeH > 48)      score -= 25   // very stale: push below must_read (80)
+    else if (pubAgeH > 36) score -= 15   // stale: hard to stay in must_read
+    else if (pubAgeH > 24) score -= 6    // one-day-old: mild decay
+  }
 
   // Signal flags
   if (b(row.should_enter_daily_report)) score += 5

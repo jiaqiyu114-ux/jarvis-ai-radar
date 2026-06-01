@@ -660,6 +660,99 @@ try {
 }
 Write-Host ""
 
+# ── 3) Cross-snapshot repeat recommendation check ─────────────────────────────
+# Detects items that appear in must_read/high_value across multiple recent snapshots.
+# Root cause: high final_score keeps an item in must_read for the full 72h window.
+# Fix: freshness decay in computeRecommendationScore + getPreviouslyRecommendedItemIds suppression.
+
+Write-Host "3) Cross-snapshot repeat recommendation check"
+try {
+  $snapUrl3 = ("{0}/api/recommendations/snapshots?limit=5&includeItems=true&itemsLimit=30" -f $Base.TrimEnd('/'))
+  $snaps3 = Invoke-RestMethod -Method Get -Uri $snapUrl3 -TimeoutSec 30
+
+  if ($snaps3.ok -and $snaps3.count -ge 2) {
+    $allSnaps3 = @($snaps3.snapshots)
+    $seenInFinal = @{}
+    $seenTitle   = @{}
+    $oldInFinal  = @()
+
+    for ($sIdx = 0; $sIdx -lt $allSnaps3.Count; $sIdx++) {
+      $snap3 = $allSnaps3[$sIdx]
+      $snapItems3 = if ($snap3.PSObject.Properties.Name -contains "items" -and $null -ne $snap3.items) {
+        @($snap3.items)
+      } else { @() }
+
+      foreach ($it3 in $snapItems3) {
+        $tier3 = [string]$it3.recommendationTier
+        if ($tier3 -ne "must_read" -and $tier3 -ne "high_value") { continue }
+
+        # Key by item_id (prefer) or url
+        $iid3 = if (-not [string]::IsNullOrWhiteSpace([string]$it3.id)) { [string]$it3.id } else { "" }
+        if (-not [string]::IsNullOrWhiteSpace($iid3)) {
+          if (-not $seenInFinal.ContainsKey($iid3)) { $seenInFinal[$iid3] = [System.Collections.Generic.List[int]]::new() }
+          $seenInFinal[$iid3].Add($sIdx)
+        }
+
+        # Key by normalized title
+        $rawTitle3 = [string]$it3.title
+        if (-not [string]::IsNullOrWhiteSpace($rawTitle3)) {
+          $normTitle3 = $rawTitle3.ToLower().Trim() -replace '[^\w\s]','' -replace '\s+',' '
+          if (-not $seenTitle.ContainsKey($normTitle3)) { $seenTitle[$normTitle3] = [System.Collections.Generic.List[int]]::new() }
+          $seenTitle[$normTitle3].Add($sIdx)
+        }
+
+        # Check published age for items in latest snapshot (sIdx=0)
+        if ($sIdx -eq 0) {
+          $pubAt3 = [string]$it3.publishedAt
+          if (-not [string]::IsNullOrWhiteSpace($pubAt3)) {
+            try {
+              $pubAge3 = [Math]::Round((([datetime]::UtcNow) - ([datetime]$pubAt3)).TotalHours, 1)
+              if ($pubAge3 -gt 48) {
+                $titleSnip = if ($rawTitle3.Length -gt 60) { $rawTitle3.Substring(0,60) } else { $rawTitle3 }
+                $oldInFinal += ("{0}h old [{1}]: {2}" -f $pubAge3, $tier3, $titleSnip)
+              }
+            } catch {}
+          }
+        }
+      }
+    }
+
+    $repeatCount = ($seenInFinal.Values | Where-Object { $_.Count -ge 2 } | Measure-Object).Count
+    $repeatTitleCount = ($seenTitle.Values | Where-Object { $_.Count -ge 2 } | Measure-Object).Count
+
+    if ($repeatCount -eq 0 -and $repeatTitleCount -eq 0) {
+      Write-Ok ("No repeated items in must_read/high_value across last {0} snapshots" -f $allSnaps3.Count)
+    } else {
+      Write-Warn ("Repeated must_read/high_value items detected: {0} by id, {1} by title" -f $repeatCount, $repeatTitleCount)
+      Write-Warn "  Cause: high final_score keeps items in top tiers for full 72h window"
+      Write-Info "  Fix: freshness decay in recommendation-engine + getPreviouslyRecommendedItemIds suppression"
+      # Show examples
+      $examples = $seenInFinal.GetEnumerator() | Where-Object { $_.Value.Count -ge 2 } | Select-Object -First 3
+      foreach ($ex in $examples) {
+        $exKey = if ($ex.Key.Length -gt 60) { $ex.Key.Substring(0,60) } else { $ex.Key }
+        Write-Info ("  repeated id: [{0}] in snapshot indices [{1}]" -f $exKey, ($ex.Value -join ","))
+      }
+    }
+
+    if ($oldInFinal.Count -gt 0) {
+      Write-Warn ("{0} item(s) older than 48h still in must_read/high_value in latest snapshot:" -f $oldInFinal.Count)
+      $oldInFinal | Select-Object -First 3 | ForEach-Object { Write-Info ("  {0}" -f $_) }
+    } else {
+      Write-Ok "No items older than 48h in must_read/high_value of latest snapshot"
+    }
+
+  } elseif ($snaps3.ok -and $snaps3.count -eq 1) {
+    Write-Info "Only 1 snapshot available - need 2+ to check for repeats (run -Refresh twice)"
+  } elseif ($snaps3.ok -and $snaps3.count -eq 0) {
+    Write-Warn "No snapshots available for repeat check"
+  } else {
+    Write-Warn "Could not load snapshots for repeat check"
+  }
+} catch {
+  Write-Warn ("Cross-snapshot repeat check failed: {0}" -f $_.Exception.Message)
+}
+Write-Host ""
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 Write-Host "=== Summary ==="

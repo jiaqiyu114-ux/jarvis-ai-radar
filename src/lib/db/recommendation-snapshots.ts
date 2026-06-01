@@ -621,3 +621,64 @@ export async function listRecommendationSnapshots(limit = 20): Promise<Recommend
     return []
   }
 }
+
+/**
+ * Returns the set of item_ids that appeared as must_read or high_value
+ * in snapshots generated between olderThanHours and withinHours ago.
+ *
+ * The `olderThanHours` lower bound prevents same-session refreshes (< 6h apart)
+ * from suppressing each other. The `withinHours` upper bound caps the lookback.
+ *
+ * Used by the refresh pipeline to avoid re-promoting the same items.
+ * Returns an empty set on any error (graceful degradation).
+ */
+export async function getPreviouslyRecommendedItemIds(
+  olderThanHours = 6,
+  withinHours    = 48,
+): Promise<Set<string>> {
+  if (!isServerSupabaseConfigured || !supabaseServer) return new Set()
+  try {
+    const now    = Date.now()
+    const since  = new Date(now - withinHours    * 3_600_000).toISOString()
+    const before = new Date(now - olderThanHours * 3_600_000).toISOString()
+
+    const { data: snaps, error: snapErr } = await db()
+      .from('recommendation_snapshots')
+      .select('id')
+      .gte('generated_at', since)
+      .lte('generated_at', before)
+      .in('status', ['success', 'partial_success'])
+      .order('generated_at', { ascending: false })
+      .limit(20)
+
+    if (snapErr) {
+      if (isMissingTable(snapErr)) return new Set()
+      console.warn('[db/recommendation-snapshots] getPreviouslyRecommendedItemIds snapshots:', snapErr.message)
+      return new Set()
+    }
+    if (!snaps || snaps.length === 0) return new Set()
+
+    const snapIds = (snaps as { id: string }[]).map(s => s.id)
+
+    const { data: rows, error: rowsErr } = await db()
+      .from('recommendation_snapshot_items')
+      .select('item_id')
+      .in('snapshot_id', snapIds)
+      .in('recommendation_tier', ['must_read', 'high_value'])
+
+    if (rowsErr) {
+      if (isMissingTable(rowsErr) || isMissingColumn(rowsErr)) return new Set()
+      console.warn('[db/recommendation-snapshots] getPreviouslyRecommendedItemIds items:', rowsErr.message)
+      return new Set()
+    }
+
+    const ids = new Set<string>()
+    for (const row of (rows ?? []) as { item_id: string | null }[]) {
+      if (row.item_id) ids.add(row.item_id)
+    }
+    return ids
+  } catch (err) {
+    console.warn('[db/recommendation-snapshots] getPreviouslyRecommendedItemIds:', err)
+    return new Set()
+  }
+}

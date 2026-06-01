@@ -12,6 +12,7 @@ import {
 } from '@/lib/db/recommendation-runs'
 import {
   createRecommendationSnapshot,
+  getPreviouslyRecommendedItemIds,
 } from '@/lib/db/recommendation-snapshots'
 
 export const dynamic = 'force-dynamic'
@@ -79,7 +80,33 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    const snapshotItemsBase = result.items.filter(i => i.recommendationTier !== 'archive')
+    // Suppress items that were already in must_read/high_value in recent snapshots
+    // (6h–48h ago window). Prevents the same high-score item from dominating
+    // must_read for the full 72h retention window.
+    // Safety valve: only suppress when fresh items exist to replace the suppressed ones.
+    // If all candidates are stale (no data pipeline running), skip suppression gracefully.
+    const prevRecommendedIds = await getPreviouslyRecommendedItemIds()
+    const freshFinalCount = result.items.filter(i =>
+      !prevRecommendedIds.has(i.id) &&
+      (i.recommendationTier === 'must_read' || i.recommendationTier === 'high_value')
+    ).length
+    const applySuppression = prevRecommendedIds.size > 0 && freshFinalCount >= 1
+
+    let suppressedFromFinal = 0
+    const snapshotItemsBase = result.items
+      .filter(i => i.recommendationTier !== 'archive')
+      .map(i => {
+        if (
+          applySuppression &&
+          prevRecommendedIds.has(i.id) &&
+          (i.recommendationTier === 'must_read' || i.recommendationTier === 'high_value')
+        ) {
+          suppressedFromFinal++
+          return { ...i, recommendationTier: 'observe' as const }
+        }
+        return i
+      })
+
     const deepDiveStart = Date.now()
     const { items: snapshotItemsWithDeepDive, deepDiveStats } =
       await attachDeepDivesToRecommendations(snapshotItemsBase, {
@@ -120,6 +147,7 @@ export async function POST(req: NextRequest) {
           deepDiveMode,
           deepDiveStats,
           relatedSignals: relatedStats,
+          suppressedDuplicates: suppressedFromFinal,
         },
       },
       snapshotItemsFinal,
@@ -157,7 +185,8 @@ export async function POST(req: NextRequest) {
       },
       deepDiveMode,
       deepDiveStats,
-      relatedSignals: relatedStats,
+      relatedSignals:       relatedStats,
+      suppressedDuplicates: suppressedFromFinal,
       run,
       snapshot,
       stats: result.stats,
