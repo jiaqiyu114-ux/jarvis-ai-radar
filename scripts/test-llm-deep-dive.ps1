@@ -99,6 +99,27 @@ $final = @($items | Where-Object { $_.recommendationTier -in @("must_read","high
 
 Write-Host ("finalItems (must_read/high_value): {0}" -f $final.Count)
 
+# ── Cross-check generated/fallback/failed from item-level stats ───────────────
+$itemGenerated = 0; $itemFallback = 0; $itemFailed = 0
+foreach ($it in $final) {
+  if ($null -eq $it.deepDive) { continue }
+  $st = [string]$it.deepDive.status
+  if ($st -eq "generated") { $itemGenerated++ }
+  elseif ($st -eq "fallback") { $itemFallback++ }
+  elseif ($st -eq "error") { $itemFailed++ }
+}
+Write-Host ("item-level: generated={0}  fallback={1}  failed={2}" -f $itemGenerated, $itemFallback, $itemFailed)
+if ($res.deepDiveStats) {
+  $rGen = [int]$res.deepDiveStats.generated
+  $rFb  = [int]$res.deepDiveStats.fallback
+  if ($itemGenerated -ne $rGen -or $itemFallback -ne $rFb) {
+    Write-Host ("[WARN] Stats mismatch: API stats(gen={0} fb={1}) vs items(gen={2} fb={3})" -f `
+      $rGen, $rFb, $itemGenerated, $itemFallback) -ForegroundColor Yellow
+  } else {
+    Write-Host "[OK]   item-level stats match API deepDiveStats" -ForegroundColor Green
+  }
+}
+
 # ── per-item stats ─────────────────────────────────────────────────────────────
 
 $csDistrib       = @{}
@@ -156,10 +177,20 @@ for ($i = 0; $i -lt $final.Count; $i++) {
   Write-Host ("       {0}" -f $diagLine)
 
   # WARN: generated status but non-null fallbackReason
+  # FAIL: generated must have null fallbackReason
   if ($status -eq "generated" -and $dd.PSObject.Properties.Name -contains "fallbackReason") {
     $fr = [string]$dd.fallbackReason
     if (-not [string]::IsNullOrWhiteSpace($fr)) {
-      Write-Host ("[WARN] item[{0}] status=generated but fallbackReason non-null: {1}" -f $i, $fr.Substring(0, [Math]::Min(60, $fr.Length))) -ForegroundColor Yellow
+      Write-Host ("[FAIL] item[{0}] status=generated but fallbackReason non-null: {1}" -f $i, $fr.Substring(0, [Math]::Min(80, $fr.Length))) -ForegroundColor Red
+    }
+  }
+  # FAIL: fallback must have non-null fallbackReason
+  if ($status -eq "fallback") {
+    $fr = [string]$dd.fallbackReason
+    if ([string]::IsNullOrWhiteSpace($fr)) {
+      Write-Host ("[FAIL] item[{0}] status=fallback but fallbackReason is null/empty" -f $i) -ForegroundColor Red
+    } else {
+      Write-Host ("       fallbackReason: {0}" -f $fr.Substring(0, [Math]::Min(80, $fr.Length))) -ForegroundColor Gray
     }
   }
   # WARN/FAIL: full_article with empty fullContent

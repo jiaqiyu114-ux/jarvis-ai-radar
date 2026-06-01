@@ -356,12 +356,6 @@ function sourceStatusLabel(status: string | null | undefined): string {
   }
 }
 
-function fallbackReasonFromInput(input: RecommendationDeepDiveInput): string {
-  const summary = safeText(input.summary, '')
-  if (!summary) return '原始摘要为空，仅能基于标题和结构化字段生成规则解读。'
-  if (summary.length < 30) return '摘要较短，仅能生成轻量规则解读。'
-  return '模型结果不稳定，已切换规则解读保障可读性。'
-}
 
 function buildDeterministicFollowUp(input: RecommendationDeepDiveInput): string[] {
   if (input.nextStep) {
@@ -892,7 +886,8 @@ export function generateDeterministicDeepDive(
   const provider = safeText(options.provider, DEFAULT_PROVIDER, 40) || DEFAULT_PROVIDER
   const status = options.status ?? 'generated'
   const inputQuality = options.inputQuality ?? inferInputQuality(input)
-  const fallbackReason = normalizeFallbackReason(options.fallbackReason)
+  // generated items must never carry a fallbackReason — it only applies to fallback/error
+  const fallbackReason = status === 'generated' ? null : normalizeFallbackReason(options.fallbackReason)
   const content = buildDeterministicContent(input)
   const inputDiagnostics = computeInputDiagnostics(input, status, model, provider, fallbackReason)
 
@@ -1186,6 +1181,6 @@ export function ensureDeterministicDeepDive(
     model: DEFAULT_MODEL,
     provider: DEFAULT_PROVIDER,
     status: 'generated',
-    fallbackReason: fallbackReasonFromInput(input),
+    // No fallbackReason: status=generated means the content was produced successfully
   })
 }

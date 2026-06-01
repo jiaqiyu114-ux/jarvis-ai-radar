@@ -175,6 +175,30 @@ try {
     Write-Ok ("final items (must_read/high_value): {0}" -f $finalItems.Count)
     Write-Info ("observe={0}  archive={1}" -f $observeItems.Count, $archiveItems.Count)
 
+    # ── Cross-check generated/fallback/failed stats ───────────────────────────
+    # Count from the GET response items (snapshot-decoded values)
+    $snapGenerated = 0; $snapFallback = 0; $snapFailed = 0
+    foreach ($it in $finalItems) {
+      if ($null -eq $it.deepDive) { continue }
+      $st = [string]$it.deepDive.status
+      if ($st -eq "generated") { $snapGenerated++ }
+      elseif ($st -eq "fallback") { $snapFallback++ }
+      elseif ($st -eq "error") { $snapFailed++ }
+    }
+    Write-Info ("snapshot decoded: generated={0}  fallback={1}  failed={2}" -f $snapGenerated, $snapFallback, $snapFailed)
+
+    # Compare with refresh stats (if available)
+    if ($null -ne $refresh -and $null -ne $refresh.deepDiveStats) {
+      $rds = $refresh.deepDiveStats
+      $rGen = [int]$rds.generated; $rFb = [int]$rds.fallback; $rFail = [int]$rds.failed
+      Write-Info ("refresh stats:          generated={0}  fallback={1}  failed={2}" -f $rGen, $rFb, $rFail)
+      if ($snapGenerated -ne $rGen -or $snapFallback -ne $rFb) {
+        Write-Warn ("Stats mismatch: refresh(gen={0} fb={1}) vs snapshot(gen={2} fb={3}) — may be stale snapshot or race" -f $rGen, $rFb, $snapGenerated, $snapFallback)
+      } else {
+        Write-Ok "refresh vs snapshot stats consistent"
+      }
+    }
+
     # FAIL: must_read/high_value must all have deepDive
     $missingDD = @($finalItems | Where-Object { $null -eq $_.deepDive })
     if ($missingDD.Count -gt 0) {
@@ -221,11 +245,20 @@ try {
       Write-Host ("  [{0}] status={1} | contentStatus={2} | model={3} | provider={4} | oneSentLen={5} | followUps={6}" -f `
         $i, $status, $cs, $model, $provider, $osLen, $fuCount)
 
-      # WARN: generated status but non-null fallbackReason (data integrity check)
+      # FAIL: generated status must have null fallbackReason
       if ($status -eq "generated" -and $dd.PSObject.Properties.Name -contains "fallbackReason") {
         $fr = [string]$dd.fallbackReason
         if (-not [string]::IsNullOrWhiteSpace($fr)) {
-          Write-Warn ("{0} status=generated but fallbackReason non-null: {1}" -f $pfx, $fr.Substring(0, [Math]::Min(60, $fr.Length)))
+          Write-Fail ("{0} status=generated but fallbackReason non-null: {1}" -f $pfx, $fr.Substring(0, [Math]::Min(80, $fr.Length)))
+        }
+      }
+      # FAIL: fallback status must have a fallbackReason
+      if ($status -eq "fallback") {
+        $fr = [string]$dd.fallbackReason
+        if ([string]::IsNullOrWhiteSpace($fr)) {
+          Write-Fail ("{0} status=fallback but fallbackReason is null/empty" -f $pfx)
+        } else {
+          Write-Info ("{0} fallbackReason: {1}" -f $pfx, $fr.Substring(0, [Math]::Min(80, $fr.Length)))
         }
       }
 
@@ -364,21 +397,31 @@ try {
       Write-Warn ("inputDiagnostics missing on {0} items -- run fresh snapshot first" -f $diagMissing)
     }
 
-    # fallbackReason distribution
+    # fallbackReason distribution (only for fallback status items)
     $fallbackReasons = @{}
     $invalidJsonCount = 0
+    $generatedWithFr = 0   # track generated items that (incorrectly) have fallbackReason
     for ($i = 0; $i -lt $finalItems.Count; $i++) {
       $dd = $finalItems[$i].deepDive
       if ($null -eq $dd) { continue }
       $status = [string]$dd.status
+      $fr = if ($dd.PSObject.Properties.Name -contains "fallbackReason") { [string]$dd.fallbackReason } else { "" }
+
+      # Track generated items that still have fallbackReason (should be fixed by now)
+      if ($status -eq "generated" -and -not [string]::IsNullOrWhiteSpace($fr)) {
+        $generatedWithFr++
+      }
+
       if ($status -eq "fallback") {
-        $fr = if ($dd.PSObject.Properties.Name -contains "fallbackReason") { [string]$dd.fallbackReason } else { "" }
         if ([string]::IsNullOrWhiteSpace($fr)) { $fr = "(no reason)" }
+        # Categorize without exposing raw garbled text
         $cat = if ($fr -match "not valid JSON|invalid_json") { "invalid_json" }
                elseif ($fr -match "retry_failed") { "retry_failed" }
-               elseif ($fr -match "quality") { "quality_issue" }
-               elseif ($fr -match "parse|required_field") { "parse_error" }
-               elseif ($fr -match "LLM disabled|missing API") { "llm_disabled" }
+               elseif ($fr -match "quality|vague|garbled") { "quality_issue" }
+               elseif ($fr -match "parse|required_field|missing") { "parse_error" }
+               elseif ($fr -match "LLM disabled|missing API|llm_disabled") { "llm_disabled" }
+               elseif ($fr -match "timeout|abort") { "timeout" }
+               elseif ($fr -match "llm_error") { "llm_error" }
                else { "other" }
         if ($cat -eq "invalid_json") { $invalidJsonCount++ }
         if (-not $fallbackReasons.ContainsKey($cat)) { $fallbackReasons[$cat] = 0 }
@@ -386,9 +429,9 @@ try {
       }
     }
     Write-Host ""
-    Write-Host "  --- fallbackReason distribution ---"
+    Write-Host "  --- fallbackReason distribution (fallback items only) ---"
     if ($fallbackReasons.Count -eq 0) {
-      Write-Info "(no fallback items)"
+      Write-Ok "(no fallback items — all generated)"
     } else {
       foreach ($k in ($fallbackReasons.Keys | Sort-Object)) {
         $color = if ($k -eq "invalid_json" -or $k -eq "retry_failed") { "Yellow" } else { "Gray" }
@@ -399,6 +442,11 @@ try {
       Write-Warn ("invalid JSON fallbacks: {0}" -f $invalidJsonCount)
     } else {
       Write-Ok "invalid JSON fallbacks: 0"
+    }
+    if ($generatedWithFr -gt 0) {
+      Write-Fail ("{0} generated item(s) still have non-null fallbackReason — fix not applied?" -f $generatedWithFr)
+    } else {
+      Write-Ok "generated items: fallbackReason is null for all"
     }
 
     if ($summaryOnlyN -gt 0) {

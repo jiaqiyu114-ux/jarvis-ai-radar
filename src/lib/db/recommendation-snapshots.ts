@@ -96,11 +96,32 @@ function looksGarbled(text: string): boolean {
   if (!text || text.length < 4) return false
   return (
     text.includes('锟') ||
+    text.includes('â€') ||
     text.includes('�') ||
     text.includes('鈧') ||
     text.includes('鑺') ||
     text.includes('脙')
   )
+}
+
+/**
+ * Normalize a raw fallbackReason to a readable category string.
+ * Strips garbled/long error messages. Only used when status=fallback.
+ */
+function sanitizeFallbackReason(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const cleaned = cleanText(raw)
+  if (!cleaned || looksGarbled(cleaned)) return 'llm_error'
+  const lower = cleaned.toLowerCase()
+  // Map to a canonical category — keep prefix for structured reasons like "retry_failed:..."
+  if (lower.startsWith('retry_failed'))                                return cleaned.slice(0, 120)
+  if (lower.startsWith('parse_or_required_field_failed'))              return cleaned.slice(0, 120)
+  if (lower.includes('not valid json') || lower.includes('invalid_json')) return 'invalid_json'
+  if (lower.includes('quality') || lower.includes('vague') || lower.includes('garbled')) return 'quality_issue'
+  if (lower.includes('parse') || lower.includes('required_field'))    return 'parse_error'
+  if (lower.includes('disabled') || lower.includes('api key') || lower.includes('llm_disabled')) return 'llm_disabled'
+  if (lower.includes('timeout') || lower.includes('abort'))           return 'timeout'
+  return cleaned.slice(0, 200)
 }
 
 function sanitizeDisplayText(value: string | null | undefined, fallback = ''): string {
@@ -273,17 +294,29 @@ function buildDeepDiveFromRow(row: any, item: RecommendedItem): RecommendationDe
     sanitizeDisplayText(row.source_reading_guide, generated.sourceNotes),
   )
 
-  const decodedFallbackReason = typeof decoded?.fallbackReason === 'string'
+  // Do NOT fall back to generated.fallbackReason — it's a deterministic placeholder,
+  // not a real fallback reason. If the encoded payload has no fallbackReason (null),
+  // keep it null and let the status-enforcement below handle it.
+  const rawFallbackReason = typeof decoded?.fallbackReason === 'string'
     ? decoded.fallbackReason
-    : (generated.fallbackReason ?? null)
+    : null
 
   const decodedInputDiagnostics: DeepDiveInputDiagnostics | undefined =
     decoded?.inputDiagnostics && typeof decoded.inputDiagnostics === 'object'
       ? (decoded.inputDiagnostics as DeepDiveInputDiagnostics)
       : generated.inputDiagnostics
 
+  // Decode the status first so we can enforce the generated→fallbackReason=null rule below.
+  const finalStatus = sanitizeDisplayText(row.deep_dive_status, generated.status) as RecommendationDeepDive['status']
+
+  // Enforce invariant: generated items must have fallbackReason=null.
+  // sanitizeFallbackReason only applies to fallback/error status.
+  const finalFallbackReason = finalStatus === 'generated'
+    ? null
+    : sanitizeFallbackReason(rawFallbackReason)
+
   return {
-    status: sanitizeDisplayText(row.deep_dive_status, generated.status) as RecommendationDeepDive['status'],
+    status: finalStatus,
     generatedAt: row.deep_dive_generated_at ?? generated.generatedAt,
     model: sanitizeDisplayText(row.deep_dive_model, generated.model),
     provider: sanitizeDisplayText(typeof decoded?.provider === 'string' ? decoded.provider : '', generated.provider),
@@ -312,11 +345,11 @@ function buildDeepDiveFromRow(row: any, item: RecommendedItem): RecommendationDe
         ? decodedQuality.needsHumanReview
         : generated.quality.needsHumanReview,
     },
-    deepDiveStatus: sanitizeDisplayText(row.deep_dive_status, generated.deepDiveStatus) as RecommendationDeepDive['deepDiveStatus'],
+    deepDiveStatus: finalStatus,
     deepDiveGeneratedAt: row.deep_dive_generated_at ?? generated.deepDiveGeneratedAt,
     deepDiveModel: sanitizeDisplayText(row.deep_dive_model, generated.deepDiveModel),
     inputQuality: generated.inputQuality,
-    fallbackReason: decodedFallbackReason,
+    fallbackReason: finalFallbackReason,
     inputDiagnostics: decodedInputDiagnostics,
   }
 }
