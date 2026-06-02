@@ -38,36 +38,42 @@ export function TopStatusBar({
   const relativeTime = "12m 前"
 
   return (
-    <header className="sticky top-0 h-10 z-30 border-b border-white/[0.07] bg-background/80 backdrop-blur-md flex items-center px-5 gap-4">
+    <header className="sticky top-0 h-10 z-30 backdrop-blur-md flex items-center px-5 gap-4"
+            style={{
+              background: "rgba(8,10,11,0.80)",
+              borderBottom: "1px solid rgba(255,255,255,0.08)",
+            }}>
 
-      {/* System status */}
+      {/* LIVE dot */}
       <div className="flex items-center gap-1.5 shrink-0">
         <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", statusDot[systemStatus])} />
-        <span className="text-[9px] text-muted-foreground/60 font-mono tracking-widest">
+        <span className="text-[9px] font-mono tracking-widest" style={{color:"rgba(244,241,234,0.45)"}}>
           {statusLabel[systemStatus]}
         </span>
       </div>
 
-      <span className="text-white/[0.08] shrink-0 select-none">|</span>
+      <span className="shrink-0 select-none" style={{color:"rgba(255,255,255,0.12)"}}>|</span>
 
       {/* Metrics */}
       <div className="flex items-center gap-2 shrink-0 text-[10px] font-mono">
-        <span className="text-muted-foreground/40">{relativeTime}</span>
-        <span className="text-white/10">·</span>
-        <span className="text-foreground/60 tabular-nums">{todayCount}</span>
-        <span className="text-muted-foreground/30">条</span>
+        <span style={{color:"rgba(244,241,234,0.38)"}}>{relativeTime}</span>
+        <span style={{color:"rgba(255,255,255,0.12)"}}>·</span>
+        <span className="tabular-nums" style={{color:"rgba(244,241,234,0.68)"}}>{todayCount}</span>
+        <span style={{color:"rgba(244,241,234,0.30)"}}>条</span>
       </div>
 
       {/* Top signal ticker */}
       {topSignal && (
         <>
-          <span className="text-white/[0.08] shrink-0 select-none">|</span>
+          <span className="shrink-0 select-none" style={{color:"rgba(255,255,255,0.12)"}}>|</span>
           <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden">
-            <span className="text-[8px] text-white/20 shrink-0 font-mono tracking-widest">TOP</span>
-            <span className="text-[10px] font-bold font-mono text-primary/80 shrink-0 tabular-nums">
+            <span className="text-[8px] font-mono tracking-widest shrink-0" style={{color:"rgba(244,241,234,0.25)"}}>TOP</span>
+            <span className="text-[10px] font-bold font-mono shrink-0 tabular-nums" style={{color:"#E85D3D"}}>
               {topSignal.score}
             </span>
-            <span className="text-[10px] text-foreground/40 truncate">{cleanDisplayText(topSignal.title)}</span>
+            <span className="text-[10px] truncate" style={{color:"rgba(244,241,234,0.50)"}}>
+              {cleanDisplayText(topSignal.title)}
+            </span>
           </div>
         </>
       )}
@@ -75,7 +81,8 @@ export function TopStatusBar({
       {/* Date */}
       <div
         suppressHydrationWarning
-        className="shrink-0 text-[9px] text-muted-foreground/30 font-mono ml-auto tracking-widest"
+        className="shrink-0 text-[9px] font-mono ml-auto tracking-widest"
+        style={{color:"rgba(244,241,234,0.28)"}}
       >
         {new Date().toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', weekday: 'short' })}
       </div>

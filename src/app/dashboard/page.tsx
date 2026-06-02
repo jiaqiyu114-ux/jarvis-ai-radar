@@ -110,23 +110,32 @@ function StatusBar({
   return (
     <div className="mb-6 grid grid-cols-4 gap-3">
       {[
-        { label: "今日推荐", value: String(todayCount), sub: "条重点信息", accent: todayCount > 0, warn: false },
-        { label: "近72h捕捉", value: String(capturedTotal), sub: "条抓取", accent: false, warn: false },
-        { label: "可用信源", value: `${healthySrc}/${activeSrc}`, sub: hasFailing ? "部分失败" : "参与抓取", accent: false, warn: hasFailing },
-        { label: "快照状态", value: snapshotAge, sub: isStale ? "建议刷新" : "状态正常", accent: false, warn: isStale },
-      ].map(({ label, value, sub, accent, warn }) => (
-        <div key={label} className={cn(
-          "rounded-2xl border px-4 py-4 flex flex-col gap-1.5 transition-all duration-200",
-          "bg-[rgba(18,22,26,0.72)] border-white/[0.09]",
-          "hover:border-white/[0.16] hover:bg-[rgba(26,32,38,0.80)]",
-          accent && "border-primary/30 bg-[rgba(232,93,61,0.06)]",
-        )}>
-          <span className="text-[9px] text-muted-foreground/50 font-mono tracking-[0.15em] uppercase">{label}</span>
-          <span className={cn(
-            "text-[1.75rem] font-bold tabular-nums leading-none font-mono",
-            accent ? "text-primary" : warn ? "text-warning" : "text-foreground/90",
-          )}>{value}</span>
-          <span className="text-[10px] text-muted-foreground/40">{sub}</span>
+        { label: "今日推荐", value: String(todayCount), sub: "条重点信息", hot: todayCount > 0, warn: false },
+        { label: "近72h捕捉", value: String(capturedTotal), sub: "条抓取", hot: false, warn: false },
+        { label: "可用信源", value: `${healthySrc}/${activeSrc}`, sub: hasFailing ? "部分失败" : "参与抓取", hot: false, warn: hasFailing },
+        { label: "快照状态", value: snapshotAge, sub: isStale ? "建议刷新" : "状态正常", hot: false, warn: isStale },
+      ].map(({ label, value, sub, hot, warn }) => (
+        <div key={label} className="rounded-2xl px-4 py-4 flex flex-col gap-1.5"
+             style={{
+               background: hot
+                 ? "linear-gradient(135deg, rgba(232,93,61,0.18), rgba(232,93,61,0.08))"
+                 : "linear-gradient(135deg, rgba(255,255,255,0.09), rgba(255,255,255,0.04))",
+               border: hot
+                 ? "1px solid rgba(232,93,61,0.35)"
+                 : "1px solid rgba(255,255,255,0.12)",
+               backdropFilter: "blur(18px)",
+             }}>
+          <span className="text-[9px] font-mono tracking-[0.15em] uppercase"
+                style={{color:"rgba(244,241,234,0.42)"}}>
+            {label}
+          </span>
+          <span className="text-[1.75rem] font-bold tabular-nums leading-none font-mono"
+                style={{color: hot ? "#E85D3D" : warn ? "#F4C95D" : "rgba(244,241,234,0.92)"}}>
+            {value}
+          </span>
+          <span className="text-[10px]" style={{color:"rgba(244,241,234,0.38)"}}>
+            {sub}
+          </span>
         </div>
       ))}
     </div>
@@ -297,18 +306,22 @@ export default async function DashboardPage() {
         <header className="mb-6">
           <div className="flex items-end justify-between gap-4">
             <div>
-              <p className="text-[9px] font-mono tracking-[0.2em] text-slate-500 uppercase mb-2">
-                {currentDateKey} · AI Signal Radar
+              <p className="text-[9px] font-mono tracking-[0.2em] uppercase mb-2"
+                 style={{color:"rgba(244,241,234,0.38)"}}>
+                {currentDateKey} · AI SIGNAL RADAR
               </p>
-              <h1 className="text-[2.4rem] font-bold leading-none tracking-tight text-slate-50">
+              <h1 className="text-[2.6rem] font-bold leading-none tracking-tight"
+                  style={{color:"rgba(244,241,234,0.96)"}}>
                 今日雷达
               </h1>
-              <p className="mt-2 text-[13px] text-slate-400 max-w-[480px] leading-relaxed">
+              <p className="mt-2 text-[13px] max-w-[480px] leading-relaxed"
+                 style={{color:"rgba(244,241,234,0.62)"}}>
                 {headerSubtitle}
               </p>
             </div>
             <div className="flex items-center gap-2 pb-1 shrink-0">
-              <span className="text-[10px] text-slate-500 border border-white/[0.08] rounded-lg px-2.5 py-1.5 font-mono">
+              <span className="text-[10px] rounded-lg px-2.5 py-1.5 font-mono"
+                    style={{color:"rgba(244,241,234,0.55)", border:"1px solid rgba(255,255,255,0.12)"}}>
                 {activePreset.label}
               </span>
               <RefreshRecommendationsButton />
@@ -316,12 +329,14 @@ export default async function DashboardPage() {
           </div>
 
           {snapshotIsStale && (
-            <div className="mt-3 rounded-xl border border-warning/25 bg-warning/[0.06] px-4 py-2 text-[11px] text-warning/80">
+            <div className="mt-3 rounded-xl px-4 py-2 text-[11px]"
+                 style={{border:"1px solid rgba(244,196,93,0.25)", background:"rgba(244,196,93,0.06)", color:"rgba(244,196,93,0.85)"}}>
               快照已超过 24 小时，建议刷新获取最新推荐。
             </div>
           )}
           {!hasEngineSnapshot && hasLegacySnapshot && !legacySnapshot.isTodaySnapshot && (
-            <div className="mt-3 rounded-xl border border-white/[0.07] bg-white/[0.03] px-4 py-2 text-[11px] text-slate-400">
+            <div className="mt-3 rounded-xl px-4 py-2 text-[11px]"
+                 style={{border:"1px solid rgba(255,255,255,0.08)", background:"rgba(255,255,255,0.04)", color:"rgba(244,241,234,0.62)"}}>
               当前展示历史快照，请点击「刷新推荐」生成今日版本。
             </div>
           )}
@@ -344,8 +359,8 @@ export default async function DashboardPage() {
             {/* Section label + score distribution */}
             <div className="mb-2 space-y-1.5">
               <div className="flex items-center gap-2">
-                <div className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
-                <h2 className="section-title text-primary/80">今日推荐</h2>
+                <div className="h-1.5 w-1.5 rounded-full shrink-0" style={{background:"#E85D3D"}} />
+                <h2 className="section-title" style={{color:"rgba(232,93,61,0.85)"}}>今日推荐</h2>
                 {todayTotal > 0 && <span className="meta-text">{todayTotal} 条</span>}
                 <span className="text-[10px] text-muted-foreground/40">· 分数 ≥ {thresholds.highValue}</span>
               </div>
@@ -389,7 +404,12 @@ export default async function DashboardPage() {
             )}
 
             {/* Today's recommendations */}
-            <div className="overflow-hidden rounded-2xl border border-white/[0.09]" style={{background:"rgba(18,22,26,0.72)"}}>
+            <div className="overflow-hidden rounded-2xl"
+                 style={{
+                   background: "linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.035))",
+                   border: "1px solid rgba(255,255,255,0.12)",
+                   backdropFilter: "blur(18px)",
+                 }}>
               {hasEngineSnapshot ? (
                 <>
                   {(engineMustRead.length > 0 || engineHighValue.length > 0) ? (
@@ -440,7 +460,12 @@ export default async function DashboardPage() {
                     <span className="ml-auto text-[10px] text-muted-foreground/40">显示前 30 条</span>
                   )}
                 </div>
-                <div className="overflow-hidden rounded-2xl border border-white/[0.07]" style={{background:"rgba(18,22,26,0.65)"}}>
+                <div className="overflow-hidden rounded-2xl"
+                     style={{
+                       background: "linear-gradient(135deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))",
+                       border: "1px solid rgba(255,255,255,0.10)",
+                       backdropFilter: "blur(14px)",
+                     }}>
                   <EngineSectionBlock title="" items={engineObserveBacklog.slice(0, 30)} empty="" />
                   {engineObserveBacklog.length > 30 && (
                     <div className="px-4 py-2 border-t border-border/50 text-center">
@@ -459,23 +484,38 @@ export default async function DashboardPage() {
 
             {/* Candidate reference */}
             {candidateRef.length > 0 && (
-              <section className="rounded-2xl border border-white/[0.09] px-4 py-3.5" style={{background:"rgba(18,22,26,0.65)"}}>
+              <section className="rounded-2xl px-4 py-3.5"
+                       style={{
+                         background: "linear-gradient(135deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))",
+                         border: "1px solid rgba(255,255,255,0.10)",
+                         backdropFilter: "blur(14px)",
+                       }}>
                 <div className="flex items-center gap-2 mb-0.5">
-                  <span className="w-1 h-1 rounded-full bg-warning/60 shrink-0" />
-                  <h2 className="text-[9px] font-bold text-foreground/50 uppercase tracking-[0.14em] font-mono">候选参考</h2>
+                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{background:"#F4C95D"}} />
+                  <h2 className="text-[9px] font-bold uppercase tracking-[0.14em] font-mono"
+                      style={{color:"rgba(244,241,234,0.55)"}}>候选参考</h2>
                 </div>
-                <p className="text-[10px] text-muted-foreground/45 mb-3 leading-relaxed">
+                <p className="text-[10px] mb-3 leading-relaxed"
+                   style={{color:"rgba(244,241,234,0.48)"}}>
                   分数 {thresholds.observe}–{thresholds.highValue - 1}，未进推荐，横向对比用
                 </p>
                 <div>
                   {candidateRef.map(item => (
-                    <div key={item.id} className="border-b border-white/[0.05] last:border-0 py-2.5 flex items-start gap-2.5">
-                      <span className="text-[11px] font-mono font-bold text-foreground/45 shrink-0 pt-0.5 w-7 text-right tabular-nums">
+                    <div key={item.id} className="py-2.5 flex items-start gap-2.5"
+                         style={{borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
+                      <span className="text-[11px] font-mono font-bold shrink-0 pt-0.5 w-7 text-right tabular-nums"
+                            style={{color:"rgba(244,241,234,0.50)"}}>
                         {item.recommendationScore}
                       </span>
                       <div className="min-w-0">
-                        <p className="text-[11px] text-foreground/75 line-clamp-2 leading-snug">{item.title}</p>
-                        <p className="text-[10px] text-muted-foreground/50 mt-0.5 truncate">{item.source}</p>
+                        <p className="text-[11px] line-clamp-2 leading-snug"
+                           style={{color:"rgba(244,241,234,0.78)"}}>
+                          {item.title}
+                        </p>
+                        <p className="text-[10px] mt-0.5 truncate"
+                           style={{color:"rgba(244,241,234,0.42)"}}>
+                          {item.source}
+                        </p>
                       </div>
                     </div>
                   ))}
@@ -485,18 +525,30 @@ export default async function DashboardPage() {
 
             {/* Clusters */}
             {eventClusters.length > 0 && (
-              <section className="rounded-2xl border border-white/[0.07] px-4 py-3" style={{background:"rgba(18,22,26,0.55)"}}>
-                <h2 className="text-[9px] font-bold text-foreground/35 uppercase tracking-[0.14em] font-mono mb-2">多源追踪</h2>
+              <section className="rounded-2xl px-4 py-3"
+                       style={{
+                         background:"rgba(255,255,255,0.05)",
+                         border:"1px solid rgba(255,255,255,0.09)",
+                       }}>
+                <h2 className="text-[9px] font-bold uppercase tracking-[0.14em] font-mono mb-2"
+                    style={{color:"rgba(244,241,234,0.40)"}}>多源追踪</h2>
                 {eventClusters.map(c => <MiniCluster key={c.id} cluster={c} />)}
               </section>
             )}
 
             {/* Feed shortcut */}
-            <section className="rounded-2xl border border-white/[0.07] px-4 py-3" style={{background:"rgba(18,22,26,0.45)"}}>
-              <p className="text-[11px] text-muted-foreground/55 mb-2 leading-relaxed">
+            <section className="rounded-2xl px-4 py-3"
+                     style={{
+                       background:"rgba(255,255,255,0.04)",
+                       border:"1px solid rgba(255,255,255,0.08)",
+                     }}>
+              <p className="text-[11px] mb-2 leading-relaxed"
+                 style={{color:"rgba(244,241,234,0.52)"}}>
                 全量捕捉，不代表推荐
               </p>
-              <Link href="/feed" className="text-[10px] text-primary/70 hover:text-primary border border-primary/20 rounded-lg px-3 py-1.5 transition-colors inline-flex hover:bg-primary/[0.06]">
+              <Link href="/feed"
+                    className="text-[10px] rounded-lg px-3 py-1.5 inline-flex transition-colors"
+                    style={{color:"rgba(232,93,61,0.80)", border:"1px solid rgba(232,93,61,0.22)"}}>
                 打开全量流 →
               </Link>
             </section>

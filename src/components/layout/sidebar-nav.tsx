@@ -21,22 +21,28 @@ export function SidebarNav() {
   const pathname = usePathname()
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-[220px] border-r border-white/[0.07] bg-sidebar/95 backdrop-blur-xl flex flex-col z-40">
+    <aside className="fixed left-0 top-0 h-screen w-[220px] flex flex-col z-40 backdrop-blur-2xl"
+           style={{
+             background: "rgba(255,255,255,0.06)",
+             borderRight: "1px solid rgba(255,255,255,0.10)",
+           }}>
 
       {/* ── Brand ── */}
-      <div className="px-5 pt-6 pb-4 border-b border-white/[0.06]">
+      <div className="px-5 pt-6 pb-4" style={{borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
         <div className="flex items-start justify-between">
           <div>
-            <div className="text-[13px] font-bold tracking-[0.16em] text-foreground font-mono leading-none">
+            <div className="text-[13px] font-bold tracking-[0.16em] font-mono leading-none"
+                 style={{color:"rgba(244,241,234,0.95)"}}>
               J.A.R.V.I.S
             </div>
-            <div className="text-[9px] text-muted-foreground/45 mt-1 tracking-widest font-mono uppercase">
+            <div className="text-[9px] mt-1 tracking-widest font-mono uppercase"
+                 style={{color:"rgba(244,241,234,0.40)"}}>
               Personal AI Radar
             </div>
           </div>
           <div className="flex items-center gap-1 pt-0.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-            <span className="text-[8px] text-success/60 font-mono tracking-widest">LIVE</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+            <span className="text-[8px] font-mono tracking-widest" style={{color:"rgba(74,222,128,0.70)"}}>LIVE</span>
           </div>
         </div>
       </div>
@@ -50,29 +56,36 @@ export function SidebarNav() {
               key={href}
               href={href}
               className={cn(
-                "relative flex items-center gap-2.5 px-3 py-2 rounded-xl text-[13px] transition-all duration-150 overflow-hidden",
-                active
-                  ? "bg-white/[0.07] text-foreground font-medium"
-                  : "text-muted-foreground/60 hover:bg-white/[0.04] hover:text-foreground/80"
+                "relative flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-[13px] transition-all duration-150 overflow-hidden",
               )}
+              style={active
+                ? { background:"rgba(232,93,61,0.12)", color:"rgba(244,241,234,0.96)" }
+                : { color:"rgba(244,241,234,0.68)" }
+              }
+              onMouseEnter={e => {
+                if (!active) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.07)"
+              }}
+              onMouseLeave={e => {
+                if (!active) (e.currentTarget as HTMLElement).style.background = "transparent"
+              }}
             >
               {/* Orange left signal bar */}
               {active && (
-                <span className="absolute left-0 top-2 bottom-2 w-[2.5px] rounded-r-full bg-primary" />
+                <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full"
+                      style={{background:"#E85D3D"}} />
               )}
-              <Icon className={cn(
-                "h-[15px] w-[15px] shrink-0 transition-colors",
-                active ? "text-primary" : "opacity-40"
-              )} />
-              <span>{label}</span>
+              <Icon className={cn("h-[15px] w-[15px] shrink-0")}
+                    style={{color: active ? "#E85D3D" : "rgba(244,241,234,0.55)"}} />
+              <span className="font-medium">{label}</span>
             </Link>
           )
         })}
       </nav>
 
       {/* ── Footer ── */}
-      <div className="px-5 py-4 border-t border-white/[0.05] space-y-0.5">
-        <div className="text-[9px] font-mono tracking-widest text-muted-foreground/25 uppercase">
+      <div className="px-5 py-4" style={{borderTop:"1px solid rgba(255,255,255,0.06)"}}>
+        <div className="text-[9px] font-mono tracking-widest uppercase"
+             style={{color:"rgba(244,241,234,0.22)"}}>
           v0.1 · Local Mode
         </div>
       </div>

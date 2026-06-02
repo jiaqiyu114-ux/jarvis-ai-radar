@@ -137,21 +137,27 @@ export function EngineRecommendationCard({ item, enableDetail = false }: Props) 
         >
           {item.sourceTier}
         </span>
-        <h2 className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-slate-100 group-hover:text-white transition-colors line-clamp-2 text-left">
+        <h2 className="min-w-0 flex-1 text-[13px] font-semibold leading-snug transition-colors line-clamp-2 text-left"
+            style={{color:"rgba(244,241,234,0.92)"}}>
           {title}
         </h2>
       </div>
 
       {/* Row 2: summary */}
       {summary && (
-        <p className="mt-1.5 text-[11px] text-slate-400 leading-relaxed line-clamp-2 text-left">
+        <p className="mt-1.5 text-[11px] leading-relaxed line-clamp-2 text-left"
+           style={{color:"rgba(244,241,234,0.62)"}}>
           {summary}
         </p>
       )}
 
       {/* Row 3: DeepDive one-sentence (AI only) */}
       {deepDiveSummary && (
-        <p className="mt-1.5 text-[11px] text-slate-300/70 leading-relaxed line-clamp-2 text-left border-l-2 border-primary/40 pl-2">
+        <p className="mt-1.5 text-[11px] leading-relaxed line-clamp-2 text-left pl-2"
+           style={{
+             color:"rgba(244,241,234,0.72)",
+             borderLeft:"2px solid rgba(232,93,61,0.45)",
+           }}>
           {deepDiveSummary}
         </p>
       )}
@@ -179,7 +185,8 @@ export function EngineRecommendationCard({ item, enableDetail = false }: Props) 
       </div>
 
       {/* Row 5: reason */}
-      <p className="mt-1 text-[10px] text-slate-500/80 leading-relaxed text-left">
+      <p className="mt-1 text-[10px] leading-relaxed text-left"
+         style={{color:"rgba(244,241,234,0.42)"}}>
         {reason}
       </p>
     </>
@@ -208,13 +215,14 @@ export function EngineRecommendationCard({ item, enableDetail = false }: Props) 
 
             {/* Footer: source · time · link */}
             <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">
-              <span className="text-[10px] text-slate-500 truncate max-w-[150px] font-mono">
+              <span className="text-[10px] truncate max-w-[150px] font-mono"
+                    style={{color:"rgba(244,241,234,0.45)"}}>
                 {sourceName}
               </span>
-              <span className="text-white/[0.12] text-[10px]">·</span>
+              <span className="text-[10px]" style={{color:"rgba(255,255,255,0.15)"}}>·</span>
               <ClientRelativeTime
                 value={item.publishedAt ?? item.fetchedAt}
-                className="text-[10px] text-slate-600"
+                className="text-[10px] text-white/[0.38]"
                 fallback=""
               />
               <a

@@ -129,7 +129,11 @@ export default function SettingsPage() {
 
         {/* ── Appearance ── */}
         <Section title="外观">
-          <div className="flex items-center justify-between p-4 rounded-2xl border border-white/[0.09]" style={{background:"rgba(18,22,26,0.65)"}}>
+          <div className="flex items-center justify-between p-4 rounded-2xl"
+               style={{
+                 background:"linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04))",
+                 border:"1px solid rgba(255,255,255,0.12)",
+               }}>
             <div>
               <p className="text-sm font-medium text-foreground">界面主题</p>
               <p className="text-xs text-muted-foreground mt-0.5">浅色 / 深色 / 跟随系统</p>

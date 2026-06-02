@@ -18,7 +18,7 @@ export default function RootLayout({
       className="dark"
       suppressHydrationWarning
     >
-      <body className="min-h-screen antialiased bg-background text-foreground">
+      <body className="antialiased">
         <ThemeProvider>
           {children}
         </ThemeProvider>
