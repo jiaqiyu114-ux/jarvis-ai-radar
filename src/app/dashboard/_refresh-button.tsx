@@ -95,12 +95,12 @@ export function RefreshRecommendationsButton() {
   }
 
   const buttonClass: Record<RefreshState, string> = {
-    idle: "text-muted-foreground border-border/50 bg-transparent hover:bg-muted/40 hover:text-foreground cursor-pointer",
-    loading: "text-muted-foreground border-border/40 bg-muted/30 cursor-not-allowed",
+    idle: "text-[color:var(--text-tertiary)] border-[color:var(--border-subtle)] bg-white/[0.55] hover:bg-white/[0.85] hover:text-foreground cursor-pointer",
+    loading: "text-muted-foreground border-[color:var(--border-subtle)] bg-white/[0.45] cursor-not-allowed",
     success: "text-success border-success/30 bg-success/8 cursor-default",
     partial: "text-warning border-warning/30 bg-warning/8 cursor-default",
-    running: "text-sky-600 border-sky-400/30 bg-sky-400/8 dark:text-sky-400 cursor-default",
-    error: "text-danger/70 border-danger/20 bg-danger/5 hover:bg-danger/10 cursor-pointer",
+    running: "text-sky-400 border-sky-400/30 bg-sky-400/8 cursor-default",
+    error: "text-danger/80 border-danger/25 bg-danger/8 hover:bg-danger/12 cursor-pointer",
   }
 
   const icon = () => {
@@ -121,7 +121,7 @@ export function RefreshRecommendationsButton() {
         disabled={isDisabled}
         title="正常情况由定时任务自动执行，手动按钮仅用于临时补跑。"
         className={cn(
-          "inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border transition-colors",
+          "inline-flex items-center gap-1.5 text-[11px] px-3 py-2 rounded-[14px] border backdrop-blur-md transition-colors",
           buttonClass[state],
         )}
       >

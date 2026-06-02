@@ -4,11 +4,12 @@ import { useState, useMemo } from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { ExternalLink, X } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { TIER_LABELS, TIER_COLORS } from "@/lib/recommendations/recommendation-engine"
+import { TIER_LABELS } from "@/lib/recommendations/recommendation-engine"
 import type { RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import type { RecommendationDeepDive } from "@/lib/recommendations/deep-dive"
 import type { RelatedSignal } from "@/lib/recommendations/related-signals"
 import { RELATION_TYPE_LABELS, TOPIC_DISPLAY_ZH } from "@/lib/recommendations/related-signals"
+import { scoreBand, evidenceLevel } from "@/components/ui/score-band"
 
 // ── Image filtering ───────────────────────────────────────────────────────────
 
@@ -17,14 +18,51 @@ const IMAGE_BLOCKLIST = [
   'logo', 'icon', 'favicon', 'avatar', 'sprite',
   'placeholder', 'default-image', 'banner-ad', '/ad/', '/ads/',
   'tracking', '1x1', 'spacer', 'blank', 'noimage', 'no-image',
-  'header-image', 'site-logo', 'brand',
+  'header-image', 'site-logo', 'brand', 'fallback', 'dummy', 'sample',
+  'ai-generated', 'generated-image', 'midjourney', 'dall-e', 'stable-diffusion',
+  'cartoon', 'illustration', 'default-og', 'og-default', 'social-card',
 ]
 
-function isImageUsable(url: string): boolean {
+const ARTICLE_MEDIA_HINTS = [
+  '/wp-content/uploads/',
+  '/uploads/',
+  '/content/dam/',
+  '/images/',
+  '/image/',
+  '/media/',
+  '/assets/',
+  '/static/',
+  '/cdn-cgi/image/',
+]
+
+const IMAGE_EXTENSION_RE = /\.(?:avif|jpe?g|png|webp)$/i
+
+function isLikelyOriginalArticleImage(url: string, source: "cover" | "media"): boolean {
   if (!url || !url.startsWith('http')) return false
   if (url.startsWith('data:')) return false
-  const low = url.toLowerCase()
-  return !IMAGE_BLOCKLIST.some(kw => low.includes(kw))
+
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+
+  const low = `${parsed.hostname}${parsed.pathname}`.toLowerCase()
+  if (IMAGE_BLOCKLIST.some(kw => low.includes(kw))) return false
+
+  // Conservative: hide generic OG/social share images unless the URL clearly
+  // lives in an article media path. The detail view should never show a guessed
+  // or generated-looking image as evidence.
+  const looksLikeSocialPreview = /(?:^|[/_-])(og|open-graph|social|share|card)(?:[._/-]|$)/i.test(parsed.pathname)
+  const hasArticlePath = ARTICLE_MEDIA_HINTS.some(hint => low.includes(hint))
+  const hasImageExtension = IMAGE_EXTENSION_RE.test(parsed.pathname)
+
+  if (!hasImageExtension) return false
+  if (looksLikeSocialPreview && !hasArticlePath) return false
+  if (low.includes("nvidia") && /(cartoon|illustration|generated|social|share|og)/i.test(low)) return false
+
+  return source === "media" ? (hasArticlePath || low.includes('/media/')) : hasArticlePath
 }
 
 function stripQuery(url: string): string {
@@ -34,8 +72,9 @@ function stripQuery(url: string): string {
 
 /**
  * Pick a single best image for Signal Card.
- * Prioritises coverImageUrl, falls back to mediaUrls as candidates.
- * Filters out site decorations (logo, icon, favicon, ad, tracking pixels).
+ * Only shows images that look like original article/media assets. This is
+ * intentionally conservative: an omitted image is better than a fake-looking
+ * placeholder in a recommendation product.
  * Returns null when no suitable image is found.
  */
 function pickSignalImage(
@@ -44,24 +83,29 @@ function pickSignalImage(
 ): string | null {
   const seen = new Set<string>()
 
-  function tryUrl(u: string | null | undefined): string | null {
+  function normalizeUrl(u: string | null | undefined): { url: string; key: string } | null {
     if (!u) return null
     const url = u.trim()
-    if (!isImageUsable(url)) return null
+    if (!url) return null
     const key = stripQuery(url)
-    if (seen.has(key)) return null
-    seen.add(key)
-    return url
+    return { url, key }
   }
 
   // Priority 1: explicit cover image
-  const cover = tryUrl(coverImageUrl)
-  if (cover) return cover
+  const cover = normalizeUrl(coverImageUrl)
+  if (cover && !seen.has(cover.key) && isLikelyOriginalArticleImage(cover.url, "cover")) {
+    seen.add(cover.key)
+    return cover.url
+  }
 
   // Priority 2: first usable media URL
   for (const u of mediaUrls ?? []) {
-    const result = tryUrl(u)
-    if (result) return result
+    const result = normalizeUrl(u)
+    if (!result || seen.has(result.key)) continue
+    if (isLikelyOriginalArticleImage(result.url, "media")) {
+      seen.add(result.key)
+      return result.url
+    }
   }
 
   return null
@@ -107,39 +151,65 @@ function deepDiveBadge(dd: RecommendationDeepDive | undefined): { text: string; 
   return { text: "待深度处理", cls: "text-muted-foreground border-border bg-muted/40" }
 }
 
-function composeSignalNarrative(
+// ── Sectioned reading view ────────────────────────────────────────────────────
+// Splits the deep-dive into labeled blocks instead of one long run of prose,
+// so the modal reads like a briefing: 这是什么 / 为什么重要 / 对我有什么用 /
+// 风险和不确定性 / 后续可以看什么. Built ENTIRELY from existing fields — no
+// backend change. Sections with no usable content are omitted.
+
+type ReadingSection = { key: string; label: string; paras: string[] }
+
+function buildReadingSections(
   dd: RecommendationDeepDive | undefined,
   item: RecommendedItem,
-): string[] {
-  if (!dd || dd.status === "skipped") {
-    return [item.summary || item.title || ""].filter(Boolean)
-  }
-
-  const MIN = 25
+  displayCS: string | undefined,
+  sumLen: number | undefined,
+  fcLen: number | undefined,
+): ReadingSection[] {
+  const MIN = 12
   const seen = new Set<string>()
-
-  const os = (dd.oneSentence ?? "").trim()
-  if (os.length >= MIN) seen.add(os.slice(0, 60))
-
-  function add(text: string | null | undefined): string | null {
-    const t = (text ?? "").trim()
-    if (t.length < MIN) return null
-    const key = t.slice(0, 60)
+  const clean = (t: string | null | undefined) => (t ?? "").trim()
+  const fresh = (t: string | null | undefined): string | null => {
+    const v = clean(t)
+    if (v.length < MIN) return null
+    const key = v.slice(0, 60)
     if (seen.has(key)) return null
     seen.add(key)
-    return t
+    return v
+  }
+  const sections: ReadingSection[] = []
+  const add = (key: string, label: string, ...cands: (string | null | undefined)[]) => {
+    const paras = cands.map(fresh).filter((v): v is string => v != null)
+    if (paras.length) sections.push({ key, label, paras })
   }
 
-  const parts: string[] = []
-  const p = (t: string | null | undefined) => { const v = add(t); if (v) parts.push(v) }
+  add("what", "这是什么", dd?.whatHappened, dd?.context ?? item.summary)
+  add("why", "为什么重要", dd?.whyItMatters)
+  add("use", "对我有什么用", dd?.userValue || dd?.userInsight || dd?.userTakeaway)
 
-  p(dd.whyItMatters)
-  p(dd.whatHappened)
-  p(dd.context)
-  p(dd.userValue || dd.userInsight || dd.userTakeaway)
-  p(dd.uncertainty)
+  // Risk & uncertainty — uncertainty + risk note + content-quality caveat + gaps
+  const riskParas: string[] = []
+  const pushRisk = (t: string | null | undefined) => { const v = fresh(t); if (v) riskParas.push(v) }
+  pushRisk(dd?.uncertainty)
+  pushRisk(item.riskNote)
+  const qualityNote = (() => {
+    if (!displayCS || displayCS === "full_article") return ""
+    if (displayCS === "rss_summary") return `当前内容来自 RSS 摘要（约 ${sumLen ?? "?"} 字），尚缺完整原文，以上推断需保守解读。`
+    if (displayCS === "partial")     return `当前只获取到部分正文（约 ${fcLen ?? "?"} 字），分析不完整，建议查看原文补充细节。`
+    if (displayCS === "title_only" || displayCS === "missing") return "当前仅有标题信息，深度解读基于极有限输入，请以原文为准。"
+    return ""
+  })()
+  if (qualityNote) riskParas.push(qualityNote)
+  const gaps = (dd?.evidenceGaps ?? []).filter(Boolean)
+  if (gaps.length) riskParas.push(`待补充：${gaps.join("；")}`)
+  if (riskParas.length) sections.push({ key: "risk", label: "风险和不确定性", paras: riskParas })
 
-  return parts.length > 0 ? parts : [item.summary || item.title || ""].filter(Boolean)
+  // Fallback: no structured content at all → show the summary as "这是什么"
+  if (sections.length === 0) {
+    const s = clean(item.summary || item.title)
+    if (s) sections.push({ key: "what", label: "这是什么", paras: [s] })
+  }
+  return sections
 }
 
 function buildFollowUps(item: RecommendedItem): string[] {
@@ -169,7 +239,7 @@ function SignalImage({ url }: { url: string }) {
   const [failed, setFailed] = useState(false)
   if (failed) return null
   return (
-    <div className="w-full overflow-hidden rounded-lg bg-muted/20" style={{ height: "220px" }}>
+    <div className="w-full overflow-hidden rounded-[20px] bg-muted/20" style={{ height: "200px", maxHeight: "220px" }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={url}
@@ -199,87 +269,23 @@ function SystemNote({
 }) {
   if (!reason && !risk && !isFallback) return null
   return (
-    <div className="border-l-[3px] border-primary/25 pl-4 pr-2 py-0.5">
-      <p className="text-[10px] uppercase tracking-widest text-muted-foreground/50 mb-2">
+    <div className="border-l-[3px] pl-4 pr-2 py-0.5" style={{ borderColor: "rgba(255,122,48,0.36)" }}>
+      <p className="text-[10px] uppercase tracking-widest text-muted-foreground/70 mb-2">
         系统批注
       </p>
       {reason && (
-        <p className="text-[13px] leading-relaxed text-foreground/75">{reason}</p>
+        <p className="text-[13px] leading-relaxed text-foreground/85">{reason}</p>
       )}
       {risk && (
         <p className={cn("text-[12px] leading-relaxed", reason ? "mt-1.5" : "")}>
-          <span className="text-warning/80">{risk}</span>
+          <span className="text-warning/90">{risk}</span>
         </p>
       )}
       {isFallback && (
-        <p className="mt-2 text-[11px] text-muted-foreground/55">
+        <p className="mt-2 text-[11px] text-muted-foreground/65">
           当前展示为规则生成说明，AI 深度解读暂未完成
           {model && model !== "deterministic-v1" ? ` · ${model}${provider ? ` / ${provider}` : ""}` : ""}。
         </p>
-      )}
-    </div>
-  )
-}
-
-function EvidenceNote({
-  sourceNotes,
-  evidenceGaps,
-  followUps,
-  displayCS,
-  sumLen,
-  fcLen,
-}: {
-  sourceNotes: string | undefined
-  evidenceGaps: string[]
-  followUps: string[]
-  displayCS: string | undefined
-  sumLen: number | undefined
-  fcLen: number | undefined
-}) {
-  const parts: string[] = []
-  if (sourceNotes) parts.push(sourceNotes)
-
-  const qualityNote = (() => {
-    if (!displayCS || displayCS === "full_article") return ""
-    if (displayCS === "rss_summary") return `当前内容来自 RSS 摘要（约 ${sumLen ?? "?"}字），尚缺完整原文，以上推断需保守解读。`
-    if (displayCS === "partial")     return `当前只获取到部分正文（约 ${fcLen ?? "?"}字），分析不完整，建议查看原文补充细节。`
-    if (displayCS === "title_only" || displayCS === "missing") return "当前仅有标题信息，深度解读基于极有限输入，请以原文为准。"
-    return ""
-  })()
-  if (qualityNote) parts.push(qualityNote)
-
-  if (evidenceGaps.length > 0) {
-    parts.push(`待补充：${evidenceGaps.join("；")}`)
-  }
-
-  const evidencePara = parts.filter(Boolean).join(" ")
-  const hasContent = evidencePara || followUps.length > 0
-  if (!hasContent) return null
-
-  return (
-    <div className="space-y-3">
-      <p className="text-[10px] uppercase tracking-widest text-muted-foreground/50">证据与限制</p>
-      {evidencePara && (
-        <p className="text-[13px] leading-relaxed text-muted-foreground">{evidencePara}</p>
-      )}
-      {followUps.length > 0 && (
-        <div>
-          <p className="text-[10px] uppercase tracking-widest text-muted-foreground/50 mb-2">
-            后续观察
-          </p>
-          {followUps.length === 1 ? (
-            <p className="text-[13px] leading-relaxed text-foreground/70">{followUps[0]}</p>
-          ) : (
-            <div className="space-y-1.5">
-              {followUps.map((line, i) => (
-                <div key={i} className="flex items-start gap-2">
-                  <span className="text-primary/40 shrink-0 text-[11px] mt-[3px]">▸</span>
-                  <p className="text-[13px] leading-relaxed text-foreground/70">{line}</p>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
       )}
     </div>
   )
@@ -569,6 +575,110 @@ function AuditDrawer({
   )
 }
 
+// ── Evidence rail (§15.6) — source, evidence and system scores, NOT prose ─────
+
+function RailRow({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div className="flex items-center justify-between gap-2 text-[12px]">
+      <span style={{ color: "var(--text-tertiary)" }}>{label}</span>
+      <span className="font-medium text-right" style={{ color: color ?? "var(--text-secondary)" }}>{value}</span>
+    </div>
+  )
+}
+
+function darkScoreColor(score: number): string {
+  const cls = scoreBand(score).cls
+  if (cls === "sb-red") return "var(--dg-red)"
+  if (cls === "sb-orange") return "var(--dg-orange)"
+  if (cls === "sb-gold") return "var(--dg-amber)"
+  if (cls === "sb-blue") return "var(--dg-blue)"
+  return "var(--text-muted)"
+}
+
+function darkEvidenceColor(label: string): string {
+  if (label === "High") return "var(--dg-green)"
+  if (label === "Medium") return "var(--dg-amber)"
+  return "var(--text-muted)"
+}
+
+function RailScore({ label, value }: { label: string; value: number }) {
+  const color = darkScoreColor(value)
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[12px] w-14 shrink-0" style={{ color: "var(--text-tertiary)" }}>{label}</span>
+      <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.10)" }}>
+        <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, value))}%`, background: color }} />
+      </div>
+      <span className="text-[12px] font-mono tabular-nums w-7 text-right" style={{ color }}>{value}</span>
+    </div>
+  )
+}
+
+function RailGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-2.5 border-t border-[color:var(--border-subtle)] pt-3.5 first:border-t-0 first:pt-0">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.10em]" style={{ color: "var(--text-muted)" }}>{title}</p>
+      {children}
+    </div>
+  )
+}
+
+function EvidenceRail({
+  item, dd, displayCS,
+}: {
+  item: RecommendedItem
+  dd: RecommendationDeepDive | undefined
+  displayCS: string | undefined
+}) {
+  const signals = item.relatedSignals?.length ?? 0
+  const evidence = evidenceLevel({
+    strongEvidence: item.qualityFlags.includes("strong_evidence"),
+    evScore: item.evScore,
+    signals,
+    isOfficial: item.isOfficial,
+  })
+  const fullContent = displayCS === "full_article" ? "完整正文"
+    : displayCS === "extracted_article" ? "较长正文"
+    : displayCS === "partial" ? "部分正文"
+    : "仅摘要"
+
+  return (
+    <div className="space-y-3.5 rounded-xl p-4"
+         style={{
+           background:
+             "linear-gradient(145deg, rgba(255,255,255,0.105), rgba(255,255,255,0.024)), rgba(7,13,20,0.42)",
+           border: "1px solid rgba(255,255,255,0.12)",
+           boxShadow: "0 18px 54px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.12)",
+           backdropFilter: "blur(24px) saturate(155%)",
+           WebkitBackdropFilter: "blur(24px) saturate(155%)",
+         }}>
+      <RailGroup title="来源">
+        <RailRow label="Provider" value={dd?.provider || "RSS"} />
+        <RailRow label="Source" value={item.source} />
+        <RailRow label="信源等级" value={`Tier ${item.sourceTier}`}
+                 color={item.sourceTier === "S" ? "var(--dg-orange)" : item.sourceTier === "A" ? "var(--dg-cyan)" : "var(--text-secondary)"} />
+        <RailRow label="官方源" value={item.isOfficial ? "是" : "否"}
+                 color={item.isOfficial ? "var(--dg-amber)" : undefined} />
+      </RailGroup>
+
+      <RailGroup title="证据">
+        <RailRow label="证据强度" value={evidence.label} color={darkEvidenceColor(evidence.label)} />
+        <RailRow label="多源" value={signals > 0 ? `${signals} 个相关` : "暂无"} />
+        <RailRow label="正文" value={fullContent} />
+      </RailGroup>
+
+      {(item.truthScore != null || item.evScore != null || item.signalScore != null) && (
+        <RailGroup title="系统判断">
+          {item.truthScore != null  && <RailScore label="真实" value={item.truthScore} />}
+          {item.evScore != null     && <RailScore label="证据" value={item.evScore} />}
+          {item.signalScore != null && <RailScore label="信号" value={item.signalScore} />}
+          <RailScore label="综合" value={item.recommendationScore} />
+        </RailGroup>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 type RecommendationDetailModalProps = {
@@ -608,11 +718,12 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
     }
   }, [dd, isLlmGenerated, item])
 
-  // Narrative and follow-ups (memoized)
-  const narrative  = useMemo(() => composeSignalNarrative(dd, item), [dd, item])
-  const followUps  = useMemo(() => buildFollowUps(item), [item])
-  const evidenceGaps = useMemo(() => dd?.evidenceGaps?.filter(Boolean) ?? [], [dd])
-  const sourceNotes  = useMemo(() => dd?.sourceNotes || dd?.sourceReadingGuide || "", [dd])
+  // Sectioned reading view + follow-ups (memoized)
+  const sections = useMemo(
+    () => buildReadingSections(dd, item, displayCS, sumLen, fcLen),
+    [dd, item, displayCS, sumLen, fcLen],
+  )
+  const followUps = useMemo(() => buildFollowUps(item), [item])
 
   // Single best signal image (memoized, filtered)
   const signalImage = useMemo(
@@ -625,18 +736,38 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
-        {/* Overlay: plain semi-transparent, no backdrop-blur (GPU-intensive) */}
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/45 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+        {/* Overlay: a calm scrim, not a heavy black fog */}
+        <DialogPrimitive.Overlay
+          className="fixed inset-0 z-50 backdrop-blur-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+          style={{
+            background:
+              "radial-gradient(ellipse at 26% 18%, rgba(108,92,231,0.18), transparent 34%), radial-gradient(ellipse at 78% 70%, rgba(142,139,242,0.12), transparent 30%), rgba(10,9,16,0.78)",
+          }}
+        />
 
-        {/* Content: lighter shadow, no zoom animation */}
-        <DialogPrimitive.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-24px)] max-w-[960px] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border/80 bg-background shadow-xl focus:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0">
+        {/* Content: strong dark glass reading surface, 1040px */}
+        <DialogPrimitive.Content
+          className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-32px)] max-w-[1040px] -translate-x-1/2 -translate-y-1/2 rounded-[28px] focus:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+          style={{
+            background:
+              "linear-gradient(145deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03)), radial-gradient(ellipse at 82% 10%, rgba(108,92,231,0.12), transparent 38%), rgba(24,22,32,0.82)",
+            border: "1px solid rgba(255,255,255,0.12)",
+            boxShadow: "0 44px 140px rgba(0,0,0,0.70), 0 0 80px rgba(108,92,231,0.10), inset 0 1px 0 rgba(255,255,255,0.14), inset 0 -1px 0 rgba(255,255,255,0.04)",
+            backdropFilter: "blur(34px) saturate(160%) contrast(1.06)",
+            WebkitBackdropFilter: "blur(34px) saturate(160%) contrast(1.06)",
+          }}
+        >
           <DialogPrimitive.Title className="sr-only">{item.title}</DialogPrimitive.Title>
+          <DialogPrimitive.Description className="sr-only">
+            推荐详情、证据强度、系统判断和后续观察方向。
+          </DialogPrimitive.Description>
 
           {/* Close button */}
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="absolute right-3 top-3 z-10 inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background/90 text-muted-foreground transition-colors hover:text-foreground"
+            className="absolute right-4 top-4 z-10 inline-flex h-8 w-8 items-center justify-center rounded-lg border text-muted-foreground transition-colors hover:text-foreground"
+            style={{ borderColor: "rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.09)", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12)" }}
             aria-label="关闭详情"
           >
             <X className="h-4 w-4" />
@@ -644,122 +775,144 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
 
           <div className="flex h-[88vh] max-h-[88vh] flex-col">
 
-            {/* ── SIGNAL HEADER ─────────────────────────────────────────── */}
-            <header className="border-b border-border px-6 pb-5 pt-5 shrink-0">
-              <div className="flex items-center justify-between gap-3 pr-8">
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground min-w-0 flex-wrap">
-                  <span className="font-medium text-foreground/70 truncate max-w-[200px]">{item.source}</span>
-                  <span className="text-muted-foreground/30">·</span>
+            {/* ── HEADER (§15.3) — meta + actions only; title lives in body ── */}
+            <header
+              className="shrink-0 px-7 pt-5 pb-4"
+              style={{
+                borderBottom: "1px solid rgba(255,255,255,0.10)",
+                background: "linear-gradient(180deg, rgba(255,255,255,0.045), transparent)",
+              }}
+            >
+              <div className="flex items-center justify-between gap-3 pr-10">
+                <div className="flex items-center gap-2 text-[12px] min-w-0 flex-wrap" style={{ color: "var(--text-tertiary)" }}>
+                  <span className="font-semibold truncate max-w-[200px]"
+                        style={{ color: item.sourceTier === "S" ? "var(--dg-orange)" : item.sourceTier === "A" ? "var(--dg-cyan)" : "var(--text-secondary)" }}>
+                    Source {item.sourceTier}
+                  </span>
+                  <span style={{ color: "rgba(255,255,255,0.18)" }}>·</span>
+                  <span className="truncate max-w-[200px]">{item.source}</span>
+                  <span style={{ color: "rgba(255,255,255,0.18)" }}>·</span>
                   <span>{item.category}</span>
-                  {age && (
-                    <>
-                      <span className="text-muted-foreground/30">·</span>
-                      <span>{age}</span>
-                    </>
-                  )}
+                  {age && (<><span style={{ color: "rgba(255,255,255,0.18)" }}>·</span><span>{age}</span></>)}
+                  {item.isOfficial && (<><span style={{ color: "rgba(255,255,255,0.18)" }}>·</span><span style={{ color: "var(--dg-amber)" }}>Official</span></>)}
                 </div>
                 <a
                   href={item.originalUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="shrink-0 inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/8 px-3 py-1.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/15"
+                  className="glass-btn glass-btn-primary shrink-0 text-[12px] py-1.5 px-3"
                   onClick={e => e.stopPropagation()}
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
                   查看原文
                 </a>
               </div>
-
-              <h2 className="mt-3 text-xl font-bold leading-snug text-foreground pr-8">
-                {signalTitle}
-              </h2>
-
-              {originalTitleRef && (
-                <p className="mt-1.5 text-[12px] leading-snug text-muted-foreground/55 pr-8">
-                  原文标题：{originalTitleRef}
-                </p>
-              )}
-
-              {signalDek && (
-                <p className="mt-2 text-[13px] leading-relaxed text-foreground/65 pr-8">
-                  {signalDek}
-                </p>
-              )}
-
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Badge className={TIER_COLORS[item.recommendationTier]}>
-                  {TIER_LABELS[item.recommendationTier]}
-                </Badge>
-                <Badge className={ddBadge.cls}>{ddBadge.text}</Badge>
-                {csBadge && <Badge className={csBadge.cls}>{csBadge.text}</Badge>}
-                {item.isUserCurated && (
-                  <Badge className="text-teal-700 border-teal-400/35 bg-teal-400/8 dark:text-teal-400">
-                    我的来源
-                  </Badge>
-                )}
-              </div>
             </header>
 
-            {/* ── SCROLLABLE BODY ───────────────────────────────────────── */}
+            {/* ── SCROLLABLE BODY ── */}
             <div className="flex-1 overflow-y-auto">
-              <div className="px-6 py-7 space-y-8">
+              <div className="px-7 py-6">
 
-                {/* SIGNAL STAGE — single filtered image, lazy loaded */}
-                {signalImage && <SignalImage url={signalImage} />}
-
-                {/* SIGNAL INTERPRETATION — flowing narrative, no section labels */}
-                {narrative.length > 0 ? (
-                  <div className="space-y-5">
-                    {narrative.map((para, i) => (
-                      <p
-                        key={i}
-                        className={cn(
-                          "text-[15px] leading-[1.85]",
-                          i === narrative.length - 1
-                            ? "text-foreground/65"
-                            : "text-foreground/88",
-                        )}
-                      >
-                        {para}
-                      </p>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground leading-relaxed">
-                    这条推荐已有基础判断，但还没有生成完整深度解读。可以稍后刷新推荐快照。
+                {/* Title block (§15.4) */}
+                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12px] font-semibold tracking-[0.04em]">
+                  <span style={{ color: darkScoreColor(item.recommendationScore) }}>Score {item.recommendationScore}</span>
+                  <span style={{ color: "rgba(255,255,255,0.18)" }}>·</span>
+                  <span style={{ color: "var(--text-secondary)" }}>{TIER_LABELS[item.recommendationTier]}</span>
+                  <span style={{ color: "rgba(255,255,255,0.18)" }}>·</span>
+                  <span style={{ color: darkEvidenceColor(evidenceLevel({ strongEvidence: item.qualityFlags.includes("strong_evidence"), evScore: item.evScore, signals: item.relatedSignals?.length ?? 0, isOfficial: item.isOfficial }).label) }}>
+                    Evidence {evidenceLevel({ strongEvidence: item.qualityFlags.includes("strong_evidence"), evScore: item.evScore, signals: item.relatedSignals?.length ?? 0, isOfficial: item.isOfficial }).label}
+                  </span>
+                </div>
+                <h2 className="mt-2.5 max-w-[760px] pr-6 text-[24px] font-bold leading-[32px]" style={{ color: "var(--text-primary)" }}>
+                  {signalTitle}
+                </h2>
+                {originalTitleRef && (
+                  <p className="mt-1.5 text-[12px] leading-snug" style={{ color: "var(--text-tertiary)" }}>
+                    原文标题：{originalTitleRef}
                   </p>
                 )}
-
-                {/* SYSTEM NOTE */}
-                <SystemNote
-                  reason={systemNoteReason}
-                  risk={item.riskNote}
-                  isFallback={isFallback}
-                  model={dd?.model}
-                  provider={dd?.provider}
-                />
-
-                {/* EVIDENCE NOTE */}
-                <EvidenceNote
-                  sourceNotes={sourceNotes || undefined}
-                  evidenceGaps={evidenceGaps}
-                  followUps={followUps}
-                  displayCS={displayCS}
-                  sumLen={sumLen}
-                  fcLen={fcLen}
-                />
-
-                {/* RELATED SIGNALS — rule-based, 0-5 items, no LLM */}
-                {item.relatedSignals && item.relatedSignals.length > 0 && (
-                  <RelatedSignalsSection
-                    signals={item.relatedSignals}
-                    currentItemUrl={item.originalUrl}
-                  />
+                {signalDek && (
+                  <p className="mt-2.5 text-[16px] leading-[26px]" style={{ color: "var(--text-secondary)" }}>
+                    {signalDek}
+                  </p>
                 )}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Badge className={ddBadge.cls}>{ddBadge.text}</Badge>
+                  {csBadge && <Badge className={csBadge.cls}>{csBadge.text}</Badge>}
+                  {item.isUserCurated && (
+                    <Badge className="text-teal-700 border-teal-400/35 bg-teal-400/8 dark:text-teal-400">我的来源</Badge>
+                  )}
+                </div>
 
-                {/* AUDIT DRAWER — collapsed by default */}
-                <AuditDrawer item={item} dd={dd} />
+                {/* Two-column: main reading (left, 680px) + evidence rail (right) */}
+                <div className="mt-6 flex flex-col items-start gap-8 lg:flex-row">
+                  {/* Main content — prose capped at 680px, line-height 1.7, 16px gaps */}
+                  <div className="min-w-0 flex-1 space-y-7 lg:max-w-[680px]">
+                    {signalImage && <SignalImage url={signalImage} />}
 
+                    {sections.length > 0 ? (
+                      sections.map(sec => (
+                        <section key={sec.key} className="space-y-4">
+                          <h3 className="text-[12px] font-semibold uppercase tracking-[0.10em]"
+                              style={{ color: "var(--text-tertiary)" }}>
+                            {sec.label}
+                          </h3>
+                          {sec.paras.map((para, i) => (
+                            <p key={i} className="text-[15px] leading-[1.7]" style={{ color: "var(--text-secondary)" }}>
+                              {para}
+                            </p>
+                          ))}
+                        </section>
+                      ))
+                    ) : (
+                      <p className="text-[15px] leading-[1.7]" style={{ color: "var(--text-secondary)" }}>
+                        这条推荐已有基础判断，但还没有生成完整深度解读。可以稍后刷新推荐快照。
+                      </p>
+                    )}
+
+                    {followUps.length > 0 && (
+                      <section className="space-y-4">
+                        <h3 className="text-[12px] font-semibold uppercase tracking-[0.10em]"
+                            style={{ color: "var(--text-tertiary)" }}>
+                          后续可以看什么
+                        </h3>
+                        <div className="space-y-3">
+                          {followUps.map((line, i) => (
+                            <div key={i} className="flex items-start gap-2">
+                              <span className="mt-[7px] shrink-0 text-[11px]" style={{ color: "rgba(110,168,255,0.7)" }}>▸</span>
+                              <p className="text-[14px] leading-[1.7]" style={{ color: "var(--text-secondary)" }}>{line}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+
+                    <SystemNote
+                      reason={systemNoteReason}
+                      risk=""
+                      isFallback={isFallback}
+                      model={dd?.model}
+                      provider={dd?.provider}
+                    />
+
+                    {item.relatedSignals && item.relatedSignals.length > 0 && (
+                      <RelatedSignalsSection
+                        signals={item.relatedSignals}
+                        currentItemUrl={item.originalUrl}
+                      />
+                    )}
+                  </div>
+
+                  {/* Evidence rail */}
+                  <aside className="w-full shrink-0 lg:sticky lg:top-5 lg:w-[280px]">
+                    <EvidenceRail item={item} dd={dd} displayCS={displayCS} />
+                  </aside>
+                </div>
+
+                {/* AUDIT DRAWER — full width at the bottom (§15.7) */}
+                <div className="mt-7">
+                  <AuditDrawer item={item} dd={dd} />
+                </div>
               </div>
             </div>
 

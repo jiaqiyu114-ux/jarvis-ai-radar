@@ -73,8 +73,12 @@ function HealthCell({ source }: { source: SourceWithHealth }) {
   if (source.platform !== "rss") {
     const isPendingWeb = source.userSourceNote?.includes("pendingWeb:true")
     return (
-      <span className="text-[10px] text-muted-foreground/40">
-        {isPendingWeb ? "待网页抓取" : "非RSS"}
+      <span
+        className="inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full border border-sky-400/25 bg-sky-400/[0.07] text-sky-300/80"
+        title="该源不参与 RSS 抓取，等待网页抓取通道"
+      >
+        <span className="w-1.5 h-1.5 rounded-full bg-sky-400/70" />
+        {isPendingWeb ? "待网页抓取 · 不参与 RSS" : "非 RSS · 不参与抓取"}
       </span>
     )
   }
@@ -526,11 +530,13 @@ function SourceRow({ source, onEdit, onToggleBlock, onMarkCurated, onCopyUrl, on
   const isDemo  = source.dataOrigin === "demo"
   const fetchAt = source.lastSuccessAt ?? source.lastFetchAt
 
+  // Hierarchy is expressed via explicit text colors, NOT parent opacity
+  // (parent opacity would wash out the whole row and is banned this round).
+  const isDimmed = isDemo || source.isBlocked
+
   return (
     <tr className={cn(
       "border-b border-white/[0.05] last:border-0 transition-colors hover:bg-white/[0.025]",
-      isDemo           && "opacity-50",
-      source.isBlocked && "opacity-40",
       source.isUserCurated && "border-l-2 border-l-teal-500/50",
     )}>
       {/* 信源 */}
@@ -538,7 +544,7 @@ function SourceRow({ source, onEdit, onToggleBlock, onMarkCurated, onCopyUrl, on
         <div className="flex items-start gap-2 flex-wrap">
           <p className={cn(
             "text-sm font-medium leading-snug",
-            isDemo ? "text-muted-foreground" : "text-foreground",
+            isDimmed ? "text-muted-foreground/70" : "text-foreground",
           )}>
             {source.name}
           </p>
@@ -770,7 +776,26 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
     }
   }, [sources])
 
-  const filtered = useMemo(() => applyFilter(sources, filter), [sources, filter])
+  // Sort: healthy RSS first → degraded → non-RSS/pending → failing → blocked last.
+  const sortRank = useCallback((s: SourceWithHealth): number => {
+    if (s.isBlocked) return 90
+    if (s.platform !== "rss") return 50
+    switch (s.healthStatus) {
+      case "healthy":  return 10
+      case "unknown":  return 20
+      case "degraded": return 40
+      case "failing":  return 70
+      case "blocked":  return 90
+      default:         return 30
+    }
+  }, [])
+
+  const filtered = useMemo(
+    () => applyFilter(sources, filter)
+      .slice()
+      .sort((a, b) => sortRank(a) - sortRank(b) || b.healthScore - a.healthScore),
+    [sources, filter, sortRank],
+  )
 
   // Dialog key: changes whenever the target source changes, forcing a clean remount
   // — edit mode: key = source.id (unique per source)
@@ -841,11 +866,11 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
 
         {/* ── My curated banner ── */}
         {filter === "my" && filtered.length > 0 && (
-          <div className="mb-4 rounded border border-teal-400/30 bg-teal-50/50 dark:bg-teal-400/8 px-4 py-3">
-            <p className="text-sm font-medium text-teal-700 dark:text-teal-400 mb-1">
+          <div className="mb-4 rounded-xl border border-teal-400/25 bg-teal-400/[0.07] px-4 py-3">
+            <p className="text-sm font-medium text-teal-300 mb-1">
               你主动接入的信息源
             </p>
-            <p className="text-[11px] text-teal-700/70 dark:text-teal-400/60">
+            <p className="text-[11px] text-teal-300/65">
               系统提高观察优先级，但仍需证据评分与多源验证后才构成事实判断。
             </p>
           </div>

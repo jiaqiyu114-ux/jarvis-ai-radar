@@ -2,9 +2,8 @@
 
 import { useState } from "react"
 import { ExternalLink, ChevronDown } from "lucide-react"
-import { formatDistanceToNow } from "date-fns"
-import { zhCN } from "date-fns/locale"
 import { ScoreBadge } from "./score-badge"
+import { ClientRelativeTime } from "@/components/time/client-relative-time"
 import { SourceTierBadge } from "./source-tier-badge"
 import { SourceOriginBadge } from "@/components/sources/source-origin-badge"
 import { FeedbackActions } from "./feedback-actions"
@@ -50,11 +49,6 @@ export function InformationCard({
   const [open, setOpen] = useState(variant === 'expanded')
 
   const explanation = buildScoreExplanation(item.scoreBreakdown, item.finalScore, item.penalties)
-
-  const timeAgo = formatDistanceToNow(new Date(item.publishedAt), {
-    addSuffix: true,
-    locale:    zhCN,
-  })
 
   const categoryClass = categoryColors[item.category] ?? categoryColors['其他']
   const visibleTags   = item.tags.slice(0, 3)
@@ -120,7 +114,10 @@ export function InformationCard({
                 {item.category}
               </span>
               <span className="text-muted-foreground/40">·</span>
-              <span className="text-[11px] text-muted-foreground whitespace-nowrap">{timeAgo}</span>
+              <ClientRelativeTime
+                value={item.publishedAt}
+                className="text-[11px] text-muted-foreground whitespace-nowrap"
+              />
             </div>
           </div>
         </div>
@@ -257,7 +254,10 @@ export function InformationCard({
                   {item.category}
                 </span>
                 <span className="text-muted-foreground/40 text-[10px]">·</span>
-                <span className="text-[10px] text-muted-foreground whitespace-nowrap">{timeAgo}</span>
+                <ClientRelativeTime
+                  value={item.publishedAt}
+                  className="text-[10px] text-muted-foreground whitespace-nowrap"
+                />
 
                 {/* ExternalLink: the ONLY route to the original URL */}
                 <a

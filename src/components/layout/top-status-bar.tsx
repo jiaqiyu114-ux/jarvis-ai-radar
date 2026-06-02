@@ -1,7 +1,11 @@
 "use client"
 
+import { useEffect, useState } from "react"
+import Link from "next/link"
+import { Search, FileText, Settings, Mic } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { cleanDisplayText } from "@/lib/text/decode-html"
+import { ClientRelativeTime } from "@/components/time/client-relative-time"
 
 interface TopSignal {
   score:    number
@@ -10,8 +14,10 @@ interface TopSignal {
 }
 
 interface TopStatusBarProps {
-  lastFetchAt?:  string
-  todayCount?:   number
+  /** ISO timestamp of the latest snapshot / fetch — rendered client-only. */
+  lastUpdated?:  string | null
+  /** Number of items captured (real value passed from the page). */
+  capturedCount?: number
   systemStatus?: 'ok' | 'fetching' | 'error'
   topSignal?:    TopSignal
 }
@@ -28,63 +34,84 @@ const statusLabel: Record<string, string> = {
   error:    'ERR',
 }
 
+/** Client-only date — avoids SSR/client locale + timezone mismatch. */
+function ClientDate() {
+  const [text, setText] = useState("")
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setText(new Date().toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', weekday: 'short' }))
+  }, [])
+  return (
+    <span suppressHydrationWarning className="shrink-0 text-[10px] font-mono tracking-widest"
+          style={{ color: "var(--text-muted)" }}>
+      {text}
+    </span>
+  )
+}
+
 export function TopStatusBar({
-  todayCount   = 147,
+  lastUpdated,
+  capturedCount,
   systemStatus = 'ok',
   topSignal,
 }: TopStatusBarProps) {
-  /* Mock phase: stable static string — no Date.now() in render, no hydration mismatch.
-     Real-time relative time can be added later via a client-only useEffect. */
-  const relativeTime = "12m 前"
-
   return (
-    <header className="sticky top-0 h-10 z-30 backdrop-blur-md flex items-center px-5 gap-4"
-            style={{
-              background: "rgba(8,10,11,0.80)",
-              borderBottom: "1px solid rgba(255,255,255,0.08)",
-            }}>
+    <header className="rf-toolbar">
 
-      {/* LIVE dot */}
-      <div className="flex items-center gap-1.5 shrink-0">
-        <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", statusDot[systemStatus])} />
-        <span className="text-[9px] font-mono tracking-widest" style={{color:"rgba(244,241,234,0.45)"}}>
-          {statusLabel[systemStatus]}
-        </span>
-      </div>
-
-      <span className="shrink-0 select-none" style={{color:"rgba(255,255,255,0.12)"}}>|</span>
-
-      {/* Metrics */}
-      <div className="flex items-center gap-2 shrink-0 text-[10px] font-mono">
-        <span style={{color:"rgba(244,241,234,0.38)"}}>{relativeTime}</span>
-        <span style={{color:"rgba(255,255,255,0.12)"}}>·</span>
-        <span className="tabular-nums" style={{color:"rgba(244,241,234,0.68)"}}>{todayCount}</span>
-        <span style={{color:"rgba(244,241,234,0.30)"}}>条</span>
-      </div>
-
-      {/* Top signal ticker */}
-      {topSignal && (
-        <>
-          <span className="shrink-0 select-none" style={{color:"rgba(255,255,255,0.12)"}}>|</span>
-          <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden">
-            <span className="text-[8px] font-mono tracking-widest shrink-0" style={{color:"rgba(244,241,234,0.25)"}}>TOP</span>
-            <span className="text-[10px] font-bold font-mono shrink-0 tabular-nums" style={{color:"#E85D3D"}}>
-              {topSignal.score}
-            </span>
-            <span className="text-[10px] truncate" style={{color:"rgba(244,241,234,0.50)"}}>
-              {cleanDisplayText(topSignal.title)}
-            </span>
+      {/* ── Left: live status + snapshot meta ── */}
+      <div className="flex shrink-0 items-center gap-2.5">
+        <div className="flex items-center gap-1.5">
+          <div className={cn("h-1.5 w-1.5 rounded-full shadow-[0_0_12px_currentColor]", statusDot[systemStatus])} />
+          <span className="text-[10px] font-mono tracking-widest" style={{ color: "var(--text-tertiary)" }}>
+            {statusLabel[systemStatus]}
+          </span>
+        </div>
+        {(lastUpdated || capturedCount != null) && (
+          <div className="rf-breadcrumb">
+            <span style={{ color: "rgba(255,255,255,0.16)" }}>/</span>
+            {lastUpdated && <ClientRelativeTime value={lastUpdated} className="tabular-nums font-mono" fallback="—" />}
+            {capturedCount != null && (
+              <>
+                <span style={{ color: "rgba(255,255,255,0.16)" }}>·</span>
+                <span className="font-mono tabular-nums" style={{ color: "var(--text-tertiary)" }}>{capturedCount}</span>
+                <span>条</span>
+              </>
+            )}
           </div>
-        </>
+        )}
+      </div>
+
+      {/* ── Center: search ── */}
+      <Link href="/feed" className="rf-tool-search">
+        <Search className="h-3.5 w-3.5" />
+        <span className="flex-1">搜索信号、信源、事件簇…</span>
+        <Mic className="h-3.5 w-3.5" style={{ color: "var(--text-muted)" }} />
+      </Link>
+
+      {/* ── Top signal ticker ── */}
+      {topSignal && (
+        <div className="hidden min-w-0 items-center gap-2 lg:flex" style={{ maxWidth: "260px" }}>
+          <span className="shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-mono font-bold tracking-widest"
+                style={{ background: "var(--rf-purple-soft)", color: "#C5BCFF" }}>TOP</span>
+          <span className="shrink-0 font-mono text-[12px] font-bold tabular-nums" style={{ color: "var(--accent-purple)" }}>
+            {topSignal.score}
+          </span>
+          <span className="truncate text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+            {cleanDisplayText(topSignal.title)}
+          </span>
+        </div>
       )}
 
-      {/* Date */}
-      <div
-        suppressHydrationWarning
-        className="shrink-0 text-[9px] font-mono ml-auto tracking-widest"
-        style={{color:"rgba(244,241,234,0.28)"}}
-      >
-        {new Date().toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', weekday: 'short' })}
+      {/* ── Right: actions + date ── */}
+      <div className="ml-auto flex shrink-0 items-center gap-2">
+        <Link href="/reports" className="rf-icon-btn" aria-label="日报">
+          <FileText className="h-4 w-4" />
+        </Link>
+        <Link href="/settings" className="rf-icon-btn" aria-label="配置">
+          <Settings className="h-4 w-4" />
+          {systemStatus === 'error' && <span className="rf-icon-dot" />}
+        </Link>
+        <ClientDate />
       </div>
     </header>
   )

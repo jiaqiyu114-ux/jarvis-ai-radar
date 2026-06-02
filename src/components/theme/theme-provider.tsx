@@ -34,15 +34,6 @@ export function useJarvisTheme() {
 /* ── Helpers (pure — no side effects) ── */
 const STORAGE_KEY = "jarvis-theme"
 
-function getSystemResolved(): ResolvedTheme {
-  if (typeof window === "undefined") return "light"
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
-}
-
-function resolve(mode: ThemeMode): ResolvedTheme {
-  return mode === "system" ? getSystemResolved() : mode
-}
-
 /* ── Provider ── */
 export function ThemeProvider({ children }: { children: ReactNode }) {
   /* SSR-safe: both server and initial client render start with "dark".
@@ -51,7 +42,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme,   setThemeState] = useState<ThemeMode>("dark")
   const [mounted, setMounted]    = useState(false)
 
-  /* 1. Mount: read saved preference and apply to DOM.
+  /* 1. Mount: read saved preference and sync React state.
+     This round FORCES dark mode — the .dark class is kept on <html> at all
+     times so `dark:` utility variants never flip back to their light residue
+     (which would reintroduce warm-paper category colors on a dark background).
      setState-in-effect is unavoidable here — we must read localStorage
      (a client-only API) and sync React state. Suppress the strict rule. */
   useEffect(() => {
@@ -59,29 +53,19 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const initial: ThemeMode = saved ?? "dark"
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setThemeState(initial)
-    document.documentElement.classList.toggle("dark", resolve(initial) === "dark")
+    document.documentElement.classList.add("dark")
     setMounted(true)
   }, [])
 
-  /* 2. Theme change: update DOM and persist. No setState — pure side-effect. */
+  /* 2. Theme change: persist preference. The .dark class stays on regardless
+     (forced dark this round); only the stored preference changes. */
   useEffect(() => {
     if (!mounted) return
-    document.documentElement.classList.toggle("dark", resolve(theme) === "dark")
+    document.documentElement.classList.add("dark")
     localStorage.setItem(STORAGE_KEY, theme)
   }, [theme, mounted])
 
-  /* 3. Track OS preference when theme === "system". */
-  useEffect(() => {
-    if (!mounted || theme !== "system") return
-    const mq      = window.matchMedia("(prefers-color-scheme: dark)")
-    const handler = (e: MediaQueryListEvent) => {
-      document.documentElement.classList.toggle("dark", e.matches)
-    }
-    mq.addEventListener("change", handler)
-    return () => mq.removeEventListener("change", handler)
-  }, [mounted, theme])
-
-  const resolvedTheme: ResolvedTheme = mounted ? resolve(theme) : "light"
+  const resolvedTheme: ResolvedTheme = "dark"
 
   return (
     <ThemeContext.Provider value={{ theme, resolvedTheme, setTheme: setThemeState, mounted }}>
