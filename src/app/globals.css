@@ -48,56 +48,70 @@
 }
 
 /* ══════════════════════════════════════════
-   Dark Theme — JARVIS Dark Radar Console
+   Dark Theme — JARVIS Frosted Intelligence Console
    ══════════════════════════════════════════ */
 .dark {
-  --background:         #0b0d10;
-  --surface:            #11141a;
-  --card:               #13161d;
-  --sidebar:            #0d0f14;
-  --popover:            #13161d;
+  --background:         #0B0D0E;
+  --surface:            #101418;
+  --card:               #131820;
+  --sidebar:            #0D0F12;
+  --popover:            #131820;
 
-  --foreground:         #f4f4f5;
-  --card-foreground:    #f4f4f5;
-  --popover-foreground: #f4f4f5;
+  --foreground:         #f0f0f2;
+  --card-foreground:    #f0f0f2;
+  --popover-foreground: #f0f0f2;
 
-  --primary:            #6d5dfc;
+  --primary:            #E85D3D;
   --primary-foreground: #ffffff;
-  --primary-soft:       #2d2458;
-  --primary-hover:      #8474ff;
+  --primary-soft:       rgba(232,93,61,0.16);
+  --primary-hover:      #f07452;
 
-  --secondary:          #1a1d26;
-  --secondary-foreground: #f4f4f5;
+  --secondary:          #1a1f28;
+  --secondary-foreground: #f0f0f2;
 
-  --muted:              #1e2436;
-  --muted-foreground:   #a1a1aa;
-  --subtle-foreground:  #71717a;
+  --muted:              #1c2230;
+  --muted-foreground:   #8b9ab0;
+  --subtle-foreground:  #536070;
 
-  --accent:             #1a1d26;
-  --accent-foreground:  #f4f4f5;
+  --accent:             #1a1f28;
+  --accent-foreground:  #f0f0f2;
 
-  --border:             #1e2334;
-  --input:              #1c1f2c;
-  --ring:               #6d5dfc;
+  --border:             #1f2838;
+  --input:              #1c2230;
+  --ring:               #E85D3D;
 
-  --destructive:        #ef4444;
+  --destructive:        #f87171;
   --destructive-foreground: #ffffff;
 
-  --success:            #22c55e;
-  --warning:            #f97316;
-  --danger:             #ef4444;
+  --success:            #4ADE80;
+  --warning:            #F4C95D;
+  --danger:             #f87171;
 
-  --tag-bg:             #1a1d26;
+  --tag-bg:             #1a1f28;
 }
 
-/* JARVIS glass panel palette — opt-in custom vars */
+/* JARVIS Frosted Console — design token palette */
 .dark {
-  --jarvis-panel:        rgba(255,255,255,0.04);
-  --jarvis-panel-strong: rgba(255,255,255,0.07);
-  --jarvis-border:       rgba(255,255,255,0.08);
-  --jarvis-accent:       #6d5dfc;
-  --jarvis-accent-2:     #38bdf8;
-  --jarvis-warn:         #fb923c;
+  --bg-page:             #0B0D0E;
+  --bg-deep:             #060708;
+  --bg-panel:            rgba(255,255,255,0.075);
+  --bg-panel-strong:     rgba(255,255,255,0.105);
+  --bg-card:             rgba(18,22,26,0.72);
+  --bg-card-hover:       rgba(255,255,255,0.10);
+
+  --accent-primary:      #E85D3D;
+  --accent-cyan:         #39D6D0;
+  --accent-blue:         #6BA6FF;
+  --accent-green:        #4ADE80;
+  --accent-yellow:       #F4C95D;
+  --accent-red:          #F87171;
+
+  --border-glass:        rgba(255,255,255,0.13);
+  --border-glass-strong: rgba(255,255,255,0.20);
+
+  --radius-panel:        28px;
+  --radius-card:         20px;
+  --radius-pill:         999px;
 }
 
 /* ══════════════════════════════════════════
@@ -152,12 +166,12 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Dark Radar Console — ambient radial glow background */
+/* Frosted Intelligence Console — ambient glow: cyan upper-left, orange lower-right */
 .dark body {
   background-image:
-    radial-gradient(ellipse 70% 45% at 0% 0%,   rgba(109, 93,252,0.09) 0%, transparent 55%),
-    radial-gradient(ellipse 55% 35% at 100% 0%,  rgba( 56,189,248,0.07) 0%, transparent 50%),
-    radial-gradient(ellipse 40% 25% at 50% 100%, rgba(251,146, 60,0.04) 0%, transparent 60%);
+    radial-gradient(ellipse 65% 50% at 2% 3%,    rgba( 57,214,208,0.065) 0%, transparent 58%),
+    radial-gradient(ellipse 50% 40% at 97% 95%,  rgba(232, 93, 61,0.080) 0%, transparent 55%),
+    radial-gradient(ellipse 35% 28% at 50% 50%,  rgba(255,255,255,0.010) 0%, transparent 100%);
 }
 
 ::selection {
@@ -257,102 +271,112 @@ body {
 }
 
 /* ══════════════════════════════════════════
-   JARVIS Dark Radar Console — Utility Classes
+   JARVIS Frosted Intelligence Console — Utility Classes
    ══════════════════════════════════════════ */
 
-/* Glass panel — primary */
+/* Frosted glass panel — primary (sidebar, panels) */
 .jarvis-glass {
-  background: rgba(255,255,255,0.045);
-  border: 1px solid rgba(255,255,255,0.10);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border-radius: 1rem;
+  background: rgba(255,255,255,0.055);
+  border: 1px solid rgba(255,255,255,0.12);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border-radius: 20px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.06);
 }
 
-/* Glass panel — stronger (side panels, modals) */
+/* Frosted glass — stronger (modals, overlays) */
 .jarvis-glass-strong {
-  background: rgba(255,255,255,0.07);
-  border: 1px solid rgba(255,255,255,0.13);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border-radius: 1rem;
-  box-shadow: 0 20px 80px rgba(0,0,0,0.4);
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.16);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border-radius: 24px;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.10);
 }
 
-/* Card — glass card with shadow */
+/* Intelligence card */
 .jarvis-card {
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 1rem;
-  box-shadow: 0 4px 32px rgba(0,0,0,0.3);
-  transition: border-color 0.2s, box-shadow 0.2s;
+  background: rgba(18,22,26,0.72);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 20px;
+  box-shadow: 0 4px 32px rgba(0,0,0,0.35);
+  transition: border-color 0.18s, box-shadow 0.18s, transform 0.18s;
 }
 
-/* Card hover state — apply with jarvis-card */
 .jarvis-card-hover:hover {
-  border-color: rgba(255,255,255,0.16);
-  background: rgba(255,255,255,0.06);
-  box-shadow: 0 8px 40px rgba(0,0,0,0.35);
+  border-color: rgba(255,255,255,0.18);
+  background: rgba(26,32,38,0.80);
+  box-shadow: 0 8px 48px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.06);
   transform: translateY(-1px);
 }
 
-/* Score orb — 80+ warm glow */
+/* Score orb — 80+ : orange signal */
 .jarvis-score-hot {
-  border-color: rgba(251,146,60,0.45);
-  color: #fca67a;
-  background: rgba(251,146,60,0.09);
+  border-color: rgba(232,93,61,0.55);
+  color: #f0886a;
+  background: rgba(232,93,61,0.12);
 }
-.jarvis-score-hot:hover, .group:hover .jarvis-score-hot {
-  box-shadow: 0 0 18px rgba(251,146,60,0.40);
-}
-
-/* Score orb — 65-79 cyan glow */
-.jarvis-score-mid {
-  border-color: rgba(56,189,248,0.4);
-  color: #7dd3fc;
-  background: rgba(56,189,248,0.08);
-}
-.jarvis-score-mid:hover, .group:hover .jarvis-score-mid {
-  box-shadow: 0 0 18px rgba(56,189,248,0.35);
+.group:hover .jarvis-score-hot {
+  box-shadow: 0 0 22px rgba(232,93,61,0.50);
 }
 
-/* Score orb — observe / low */
+/* Score orb — 72-79 : cyan signal */
+.jarvis-score-cyan {
+  border-color: rgba(57,214,208,0.50);
+  color: #6de8e4;
+  background: rgba(57,214,208,0.10);
+}
+.group:hover .jarvis-score-cyan {
+  box-shadow: 0 0 20px rgba(57,214,208,0.45);
+}
+
+/* Score orb — 65-71 : blue signal */
+.jarvis-score-blue {
+  border-color: rgba(107,166,255,0.40);
+  color: #9ab8ff;
+  background: rgba(107,166,255,0.09);
+}
+.group:hover .jarvis-score-blue {
+  box-shadow: 0 0 16px rgba(107,166,255,0.35);
+}
+
+/* Score orb — observe / dim */
 .jarvis-score-dim {
   border-color: rgba(255,255,255,0.10);
-  color: #71717a;
+  color: #536070;
   background: rgba(255,255,255,0.03);
 }
 
-/* Console monospace text */
+/* Console monospace label */
 .jarvis-console-text {
   font-family: var(--font-mono);
   letter-spacing: 0.09em;
   text-transform: uppercase;
   font-size: 0.625rem;
-  color: rgba(161,161,170,0.7);
+  color: rgba(139,154,176,0.65);
 }
 
-/* Section label */
+/* Section title */
 .jarvis-section-title {
   font-size: 0.6875rem;
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: rgba(244,244,245,0.45);
+  color: rgba(240,240,242,0.40);
 }
 
-/* Muted helper */
+/* Muted text */
 .jarvis-muted {
-  color: rgba(161,161,170,0.75);
+  color: rgba(139,154,176,0.75);
 }
 
-/* Horizontal divider */
+/* Horizontal rule */
 .jarvis-divider {
   height: 1px;
   background: rgba(255,255,255,0.06);
 }
 
-/* Pill / tag */
+/* Pill / tag chip */
 .jarvis-pill {
   display: inline-flex;
   align-items: center;
@@ -360,10 +384,10 @@ body {
   font-size: 0.625rem;
   font-weight: 600;
   padding: 0.1rem 0.5rem;
-  border-radius: 9999px;
-  border: 1px solid rgba(255,255,255,0.11);
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
   background: rgba(255,255,255,0.06);
-  color: rgba(244,244,245,0.7);
+  color: rgba(240,240,242,0.70);
   letter-spacing: 0.02em;
   white-space: nowrap;
 }

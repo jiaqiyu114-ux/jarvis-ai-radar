@@ -108,18 +108,23 @@ function StatusBar({
   const isStale = freshness?.severity === 'stale' || freshness?.severity === 'missing'
 
   return (
-    <div className="mb-5 grid grid-cols-4 gap-3">
+    <div className="mb-6 grid grid-cols-4 gap-3">
       {[
         { label: "今日推荐", value: String(todayCount), sub: "条重点信息", accent: todayCount > 0, warn: false },
         { label: "近72h捕捉", value: String(capturedTotal), sub: "条抓取", accent: false, warn: false },
         { label: "可用信源", value: `${healthySrc}/${activeSrc}`, sub: hasFailing ? "部分失败" : "参与抓取", accent: false, warn: hasFailing },
         { label: "快照状态", value: snapshotAge, sub: isStale ? "建议刷新" : "状态正常", accent: false, warn: isStale },
       ].map(({ label, value, sub, accent, warn }) => (
-        <div key={label} className="rounded-xl border border-white/[0.07] bg-white/[0.03] px-4 py-3 flex flex-col gap-1">
-          <span className="text-[10px] text-muted-foreground/60 font-mono tracking-widest uppercase">{label}</span>
+        <div key={label} className={cn(
+          "rounded-2xl border px-4 py-4 flex flex-col gap-1.5 transition-all duration-200",
+          "bg-[rgba(18,22,26,0.72)] border-white/[0.09]",
+          "hover:border-white/[0.16] hover:bg-[rgba(26,32,38,0.80)]",
+          accent && "border-primary/30 bg-[rgba(232,93,61,0.06)]",
+        )}>
+          <span className="text-[9px] text-muted-foreground/50 font-mono tracking-[0.15em] uppercase">{label}</span>
           <span className={cn(
-            "text-2xl font-bold tabular-nums leading-none",
-            accent ? "text-primary" : warn ? "text-warning" : "text-foreground",
+            "text-[1.75rem] font-bold tabular-nums leading-none font-mono",
+            accent ? "text-primary" : warn ? "text-warning" : "text-foreground/90",
           )}>{value}</span>
           <span className="text-[10px] text-muted-foreground/40">{sub}</span>
         </div>
@@ -384,7 +389,7 @@ export default async function DashboardPage() {
             )}
 
             {/* Today's recommendations */}
-            <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-card">
+            <div className="overflow-hidden rounded-2xl border border-white/[0.09]" style={{background:"rgba(18,22,26,0.72)"}}>
               {hasEngineSnapshot ? (
                 <>
                   {(engineMustRead.length > 0 || engineHighValue.length > 0) ? (
@@ -435,7 +440,7 @@ export default async function DashboardPage() {
                     <span className="ml-auto text-[10px] text-muted-foreground/40">显示前 30 条</span>
                   )}
                 </div>
-                <div className="overflow-hidden rounded-xl border border-sky-500/20 bg-card">
+                <div className="overflow-hidden rounded-2xl border border-white/[0.07]" style={{background:"rgba(18,22,26,0.65)"}}>
                   <EngineSectionBlock title="" items={engineObserveBacklog.slice(0, 30)} empty="" />
                   {engineObserveBacklog.length > 30 && (
                     <div className="px-4 py-2 border-t border-border/50 text-center">
@@ -450,24 +455,27 @@ export default async function DashboardPage() {
           </main>
 
           {/* ── Aside ── */}
-          <aside className="col-span-1 space-y-4">
+          <aside className="col-span-1 space-y-3">
 
-            {/* Candidate reference — items below today threshold */}
+            {/* Candidate reference */}
             {candidateRef.length > 0 && (
-              <section className="border border-white/[0.08] rounded-xl bg-white/[0.03] px-3 py-3">
-                <h2 className="text-[9px] font-bold text-slate-400 uppercase tracking-widest font-mono mb-0.5">候选参考</h2>
-                <p className="text-[10px] text-slate-500 mb-2.5 leading-relaxed">
-                  分数 {thresholds.observe}–{thresholds.highValue - 1}，未进今日推荐，供排查比对
+              <section className="rounded-2xl border border-white/[0.09] px-4 py-3.5" style={{background:"rgba(18,22,26,0.65)"}}>
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="w-1 h-1 rounded-full bg-warning/60 shrink-0" />
+                  <h2 className="text-[9px] font-bold text-foreground/50 uppercase tracking-[0.14em] font-mono">候选参考</h2>
+                </div>
+                <p className="text-[10px] text-muted-foreground/45 mb-3 leading-relaxed">
+                  分数 {thresholds.observe}–{thresholds.highValue - 1}，未进推荐，横向对比用
                 </p>
-                <div className="space-y-0">
+                <div>
                   {candidateRef.map(item => (
-                    <div key={item.id} className="border-b border-white/[0.05] last:border-0 py-2 flex items-start gap-2">
-                      <span className="text-[11px] font-mono font-bold text-slate-400 shrink-0 pt-0.5 w-7 text-right tabular-nums">
+                    <div key={item.id} className="border-b border-white/[0.05] last:border-0 py-2.5 flex items-start gap-2.5">
+                      <span className="text-[11px] font-mono font-bold text-foreground/45 shrink-0 pt-0.5 w-7 text-right tabular-nums">
                         {item.recommendationScore}
                       </span>
                       <div className="min-w-0">
-                        <p className="text-[11px] text-slate-300 line-clamp-2 leading-snug">{item.title}</p>
-                        <p className="text-[10px] text-slate-500 mt-0.5 truncate">{item.source}</p>
+                        <p className="text-[11px] text-foreground/75 line-clamp-2 leading-snug">{item.title}</p>
+                        <p className="text-[10px] text-muted-foreground/50 mt-0.5 truncate">{item.source}</p>
                       </div>
                     </div>
                   ))}
@@ -477,16 +485,18 @@ export default async function DashboardPage() {
 
             {/* Clusters */}
             {eventClusters.length > 0 && (
-              <section className="border border-white/[0.06] rounded-xl bg-card/60 px-3 py-2.5">
-                <h2 className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider mb-1.5">多源追踪</h2>
+              <section className="rounded-2xl border border-white/[0.07] px-4 py-3" style={{background:"rgba(18,22,26,0.55)"}}>
+                <h2 className="text-[9px] font-bold text-foreground/35 uppercase tracking-[0.14em] font-mono mb-2">多源追踪</h2>
                 {eventClusters.map(c => <MiniCluster key={c.id} cluster={c} />)}
               </section>
             )}
 
             {/* Feed shortcut */}
-            <section className="border border-white/[0.06] rounded-xl bg-card/40 px-3 py-2.5">
-              <p className="text-[11px] text-muted-foreground/70 mb-1.5">查看系统原始捕捉的所有内容（不代表推荐）</p>
-              <Link href="/feed" className="text-[10px] text-primary/70 hover:text-primary border border-primary/20 bg-primary/5 rounded px-2 py-1 transition-colors inline-flex">
+            <section className="rounded-2xl border border-white/[0.07] px-4 py-3" style={{background:"rgba(18,22,26,0.45)"}}>
+              <p className="text-[11px] text-muted-foreground/55 mb-2 leading-relaxed">
+                全量捕捉，不代表推荐
+              </p>
+              <Link href="/feed" className="text-[10px] text-primary/70 hover:text-primary border border-primary/20 rounded-lg px-3 py-1.5 transition-colors inline-flex hover:bg-primary/[0.06]">
                 打开全量流 →
               </Link>
             </section>

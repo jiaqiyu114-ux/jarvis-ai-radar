@@ -16,10 +16,12 @@ interface AppShellProps {
 export function AppShell({ children, topSignal }: AppShellProps) {
   return (
     <div className="min-h-screen bg-background relative">
-      {/* Ambient glow — fixed, zero performance cost, no images */}
+      {/* Ambient glow — cyan upper-left, orange lower-right */}
       <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden>
-        <div className="absolute -top-1/3 -left-1/4 h-[600px] w-[600px] rounded-full bg-violet-900/[0.18] blur-[130px]" />
-        <div className="absolute -bottom-1/4 right-0 h-[500px] w-[500px] rounded-full bg-sky-900/[0.12] blur-[110px]" />
+        <div className="absolute -top-[20%] -left-[10%] h-[520px] w-[520px] rounded-full blur-[140px]"
+             style={{background:"rgba(57,214,208,0.055)"}} />
+        <div className="absolute -bottom-[20%] -right-[5%] h-[480px] w-[480px] rounded-full blur-[120px]"
+             style={{background:"rgba(232,93,61,0.07)"}} />
       </div>
       <div className="relative z-10">
         <SidebarNav />

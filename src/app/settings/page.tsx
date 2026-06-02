@@ -67,16 +67,16 @@ function Section({ title, desc, children }: { title: string; desc?: string; chil
 function Collapsible({ title, children }: { title: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false)
   return (
-    <div className="rounded-lg border border-border bg-card overflow-hidden">
+    <div className="rounded-2xl border border-white/[0.08] overflow-hidden" style={{background:"rgba(18,22,26,0.55)"}}>
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
         className="w-full flex items-center justify-between px-4 py-3 text-left"
       >
-        <span className="text-xs font-medium text-muted-foreground">{title}</span>
-        <span className="text-muted-foreground/50 text-xs">{open ? '▲ 收起' : '▼ 展开'}</span>
+        <span className="text-[11px] font-medium text-muted-foreground/70">{title}</span>
+        <span className="text-muted-foreground/40 text-[10px] font-mono">{open ? '▲' : '▼'}</span>
       </button>
-      {open && <div className="border-t border-border px-4 py-4 space-y-4">{children}</div>}
+      {open && <div className="border-t border-white/[0.06] px-4 py-4 space-y-4">{children}</div>}
     </div>
   )
 }
@@ -129,7 +129,7 @@ export default function SettingsPage() {
 
         {/* ── Appearance ── */}
         <Section title="外观">
-          <div className="flex items-center justify-between p-4 rounded-lg border border-border bg-card">
+          <div className="flex items-center justify-between p-4 rounded-2xl border border-white/[0.09]" style={{background:"rgba(18,22,26,0.65)"}}>
             <div>
               <p className="text-sm font-medium text-foreground">界面主题</p>
               <p className="text-xs text-muted-foreground mt-0.5">浅色 / 深色 / 跟随系统</p>
@@ -143,7 +143,7 @@ export default function SettingsPage() {
         {/* ── Recommendation intensity — auto-save on click ── */}
         <Section
           title="推荐强度"
-          desc="选择你每天想看的信息密度。进入「今日推荐」的内容必须达到当前档位阈值；分数不够但有观察价值的内容会进入「近期观察」。"
+          desc="选择每天想看的信息密度。达到当前档位阈值的内容进入「今日推荐」；接近但未达标的进入「近期观察」。"
         >
           <div className="space-y-2">
             {PROFILE_PRESETS.map(preset => (
@@ -152,34 +152,41 @@ export default function SettingsPage() {
                 type="button"
                 onClick={() => handleProfileChange(preset.id)}
                 className={cn(
-                  "w-full text-left px-4 py-3 rounded-lg border transition-colors",
+                  "w-full text-left px-4 py-3 rounded-2xl border transition-all duration-150",
                   profileId === preset.id
-                    ? "border-primary bg-primary/8 text-foreground"
-                    : "border-border bg-card text-muted-foreground hover:border-border/80 hover:text-foreground",
+                    ? "border-primary/40 text-foreground"
+                    : "border-white/[0.07] text-muted-foreground hover:border-white/[0.13] hover:text-foreground",
                 )}
+                style={profileId === preset.id
+                  ? {background:"rgba(232,93,61,0.08)"}
+                  : {background:"rgba(18,22,26,0.55)"}
+                }
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     <span className={cn(
-                      "w-3 h-3 rounded-full shrink-0 border-2",
+                      "w-2.5 h-2.5 rounded-full shrink-0 border-2 transition-all",
                       profileId === preset.id
-                        ? "border-primary bg-primary"
-                        : "border-muted-foreground/40 bg-transparent",
+                        ? "border-primary bg-primary shadow-[0_0_8px_rgba(232,93,61,0.5)]"
+                        : "border-muted-foreground/25 bg-transparent",
                     )} />
                     <div>
                       <span className="text-sm font-medium">{preset.label}</span>
-                      <span className="text-xs text-muted-foreground ml-2">{preset.desc}</span>
+                      <span className="text-xs text-muted-foreground/70 ml-2">{preset.desc}</span>
                     </div>
                   </div>
-                  <span className="text-[10px] text-muted-foreground/60 shrink-0">{preset.daily}</span>
+                  <span className="text-[10px] text-muted-foreground/50 shrink-0 font-mono">{preset.daily}</span>
                 </div>
               </button>
             ))}
           </div>
 
-          {/* Auto-save status */}
+          {/* Auto-save toast */}
           {saveMsg && (
-            <p className="text-[11px] text-success">{saveMsg}</p>
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-success/20 bg-success/[0.06]">
+              <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />
+              <p className="text-[11px] text-success/80">{saveMsg}</p>
+            </div>
           )}
 
           {/* Advanced thresholds */}

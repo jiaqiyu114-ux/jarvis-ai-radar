@@ -35,19 +35,21 @@ const TIER_BADGE: Record<string, { cls: string; tip: string }> = {
   },
 }
 
-// ── Score orb — colored glow by score level ───────────────────────────────────
+// ── Score orb — three-tier colored glow ──────────────────────────────────────
 
 function ScoreOrb({ score }: { score: number }) {
-  const isHot = score >= 80
-  const isMid = score >= 65 && score < 80
+  const isHot  = score >= 80
+  const isCyan = score >= 72 && score < 80
+  const isBlue = score >= 65 && score < 72
   return (
     <div className={cn(
-      "shrink-0 flex items-center justify-center w-10 h-10 rounded-xl",
+      "shrink-0 flex items-center justify-center w-10 h-10 rounded-2xl",
       "border font-bold text-[13px] font-mono tabular-nums select-none",
       "transition-all duration-300",
-      isHot && "jarvis-score-hot",
-      isMid && "jarvis-score-mid",
-      !isHot && !isMid && "jarvis-score-dim",
+      isHot  && "jarvis-score-hot",
+      isCyan && "jarvis-score-cyan",
+      isBlue && "jarvis-score-blue",
+      !isHot && !isCyan && !isBlue && "jarvis-score-dim",
     )}>
       {score}
     </div>
@@ -186,11 +188,11 @@ export function EngineRecommendationCard({ item, enableDetail = false }: Props) 
   return (
     <>
       <article className={cn(
-        "group border-b border-white/[0.05] last:border-0",
-        "transition-colors duration-150 hover:bg-white/[0.025]",
+        "group border-b border-white/[0.06] last:border-0",
+        "transition-all duration-200 hover:bg-white/[0.03]",
         enableDetail ? "cursor-pointer" : "cursor-default",
       )}>
-        <div className="flex items-start gap-3 px-4 py-4">
+        <div className="flex items-start gap-4 px-5 py-4">
           {/* Score orb */}
           <ScoreOrb score={item.recommendationScore} />
 

@@ -50,19 +50,21 @@ export function SidebarNav() {
               key={href}
               href={href}
               className={cn(
-                "flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm transition-all duration-150",
+                "relative flex items-center gap-2.5 px-3 py-2 rounded-xl text-[13px] transition-all duration-150 overflow-hidden",
                 active
-                  ? "bg-primary/12 text-primary font-medium border border-primary/20"
-                  : "text-muted-foreground/70 hover:bg-white/[0.05] hover:text-foreground border border-transparent"
+                  ? "bg-white/[0.07] text-foreground font-medium"
+                  : "text-muted-foreground/60 hover:bg-white/[0.04] hover:text-foreground/80"
               )}
             >
-              <Icon className={cn("h-[15px] w-[15px] shrink-0", active ? "text-primary" : "opacity-50")} />
-              <span className="text-[13px]">{label}</span>
+              {/* Orange left signal bar */}
               {active && (
-                <span className="ml-auto flex items-center gap-1">
-                  <span className="w-1 h-1 rounded-full bg-primary/70" />
-                </span>
+                <span className="absolute left-0 top-2 bottom-2 w-[2.5px] rounded-r-full bg-primary" />
               )}
+              <Icon className={cn(
+                "h-[15px] w-[15px] shrink-0 transition-colors",
+                active ? "text-primary" : "opacity-40"
+              )} />
+              <span>{label}</span>
             </Link>
           )
         })}

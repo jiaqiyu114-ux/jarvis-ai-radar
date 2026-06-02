@@ -225,7 +225,7 @@ export default function FeedClient({
         </div>
 
         {/* ── Feed list — no heavy blur, lightweight rows ── */}
-        <div className="bg-card rounded-xl overflow-hidden border border-white/[0.07]">
+        <div className="rounded-2xl overflow-hidden border border-white/[0.08]" style={{background:"rgba(18,22,26,0.70)"}}>
           {filtered.length > 0
             ? filtered.map(item => <InformationCard key={item.id} item={item} contextPage="feed" />)
             : (
