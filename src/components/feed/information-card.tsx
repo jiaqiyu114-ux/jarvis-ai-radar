@@ -59,14 +59,11 @@ export function InformationCard({
     .filter(d => !d.includes('分惩罚'))
     .slice(0, 1)
 
-  // Lightweight analysis gate badge for the list view
+  // Only show user-meaningful analysis indicators (not system routing flags)
   const ag = item.analysisGate
-  const analysisBadge = ag?.analysisTier === 'deep'    ? '可深读'
+  const analysisBadge = ag?.analysisTier === 'deep'    ? '深度解读'
     : ag?.analysisTier === 'cluster'                   ? '事件追踪'
-    : ag?.shouldEnterDailyReport                       ? '进日报'
-    : ag?.shouldEnterTopicPool                         ? '进选题池'
-    : ag?.analysisTier === 'standard'                  ? null   // don't clutter list for standard
-    : null
+    : null   // 进日报/进选题池 are system routing flags — hide from users
 
   // Lightweight evidence badge for the list view
   const ep = item.evidenceProfile
@@ -222,16 +219,7 @@ export function InformationCard({
                       ↓ {d}
                     </span>
                   ))}
-                  {foldedPositive.length === 0 && foldedNegative.length === 0 && explanation.isRuleBasedOnly && (
-                    <span className="text-[10px] text-muted-foreground/55 px-1 py-px rounded border border-border/40 whitespace-nowrap">
-                      规则基线
-                    </span>
-                  )}
-                  {(foldedPositive.length > 0 || foldedNegative.length > 0) && explanation.isRuleBasedOnly && (
-                    <span className="text-[9px] text-muted-foreground/40 whitespace-nowrap">
-                      · 规则基线
-                    </span>
-                  )}
+                  {/* "规则基线" removed — technical label, not user-meaningful */}
                   {evidenceBadge && (
                     <span className="text-[9px] text-muted-foreground/55 border border-border/40 rounded px-1 py-px whitespace-nowrap">
                       {evidenceBadge}

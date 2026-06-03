@@ -1,6 +1,8 @@
 import { TopStatusBar } from "./top-status-bar"
 import { SidebarNav } from "./sidebar-nav"
 import { ExperimentalNotice } from "./experimental-notice"
+import { UpdateNotice } from "./update-notice"
+import { AccountModal } from "./account-modal"
 
 export type TopSignalData = {
   score:    number
@@ -23,6 +25,8 @@ interface AppShellProps {
 export function AppShell({ children, topSignal, lastUpdated, capturedCount }: AppShellProps) {
   return (
     <div className="rf-shell">
+      <UpdateNotice />
+      <AccountModal />
       <div className="rf-app-panel">
         <SidebarNav />
         <div className="rf-content">

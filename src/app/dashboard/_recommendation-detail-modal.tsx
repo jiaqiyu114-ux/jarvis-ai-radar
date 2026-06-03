@@ -178,8 +178,9 @@ function buildReadingSections(
     return v
   }
   const sections: ReadingSection[] = []
+  const PARA_CAP = 2   // max paragraphs per section — keeps the modal scannable
   const add = (key: string, label: string, ...cands: (string | null | undefined)[]) => {
-    const paras = cands.map(fresh).filter((v): v is string => v != null)
+    const paras = cands.map(fresh).filter((v): v is string => v != null).slice(0, PARA_CAP)
     if (paras.length) sections.push({ key, label, paras })
   }
 
@@ -187,22 +188,13 @@ function buildReadingSections(
   add("why", "为什么重要", dd?.whyItMatters)
   add("use", "对我有什么用", dd?.userValue || dd?.userInsight || dd?.userTakeaway)
 
-  // Risk & uncertainty — uncertainty + risk note + content-quality caveat + gaps
-  const riskParas: string[] = []
-  const pushRisk = (t: string | null | undefined) => { const v = fresh(t); if (v) riskParas.push(v) }
-  pushRisk(dd?.uncertainty)
-  pushRisk(item.riskNote)
-  const qualityNote = (() => {
-    if (!displayCS || displayCS === "full_article") return ""
-    if (displayCS === "rss_summary") return `当前内容来自 RSS 摘要（约 ${sumLen ?? "?"} 字），尚缺完整原文，以上推断需保守解读。`
-    if (displayCS === "partial")     return `当前只获取到部分正文（约 ${fcLen ?? "?"} 字），分析不完整，建议查看原文补充细节。`
-    if (displayCS === "title_only" || displayCS === "missing") return "当前仅有标题信息，深度解读基于极有限输入，请以原文为准。"
-    return ""
-  })()
-  if (qualityNote) riskParas.push(qualityNote)
-  const gaps = (dd?.evidenceGaps ?? []).filter(Boolean)
-  if (gaps.length) riskParas.push(`待补充：${gaps.join("；")}`)
-  if (riskParas.length) sections.push({ key: "risk", label: "风险和不确定性", paras: riskParas })
+  // Risk section — only show the AI's own uncertainty statement.
+  // Removed: riskNote (often contains internal field references), qualityNote
+  // (meta-commentary), and evidenceGaps (engineering audit data, not user-facing).
+  const uncertainty = fresh(dd?.uncertainty)
+  if (uncertainty) {
+    sections.push({ key: "risk", label: "风险和不确定性", paras: [uncertainty] })
+  }
 
   // Fallback: no structured content at all → show the summary as "这是什么"
   if (sections.length === 0) {
@@ -214,10 +206,10 @@ function buildReadingSections(
 
 function buildFollowUps(item: RecommendedItem): string[] {
   const dd = item.deepDive
-  if (dd?.followUp && dd.followUp.length > 0) return dd.followUp.slice(0, 4)
+  if (dd?.followUp && dd.followUp.length > 0) return dd.followUp.slice(0, 3)
   const raw = dd?.followUpSuggestion || item.nextStep || ""
   if (!raw) return []
-  const lines = raw.split(/\r?\n|[;；]/g).map(l => l.trim()).filter(Boolean).slice(0, 4)
+  const lines = raw.split(/\r?\n|[;；]/g).map(l => l.trim()).filter(Boolean).slice(0, 3)
   return lines.length > 0 ? lines : [raw]
 }
 
@@ -606,7 +598,7 @@ function RailScore({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex items-center gap-2">
       <span className="text-[12px] w-14 shrink-0" style={{ color: "var(--text-tertiary)" }}>{label}</span>
-      <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.10)" }}>
+      <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "var(--overlay-3)" }}>
         <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, value))}%`, background: color }} />
       </div>
       <span className="text-[12px] font-mono tabular-nums w-7 text-right" style={{ color }}>{value}</span>
@@ -645,12 +637,9 @@ function EvidenceRail({
   return (
     <div className="space-y-3.5 rounded-xl p-4"
          style={{
-           background:
-             "linear-gradient(145deg, rgba(255,255,255,0.105), rgba(255,255,255,0.024)), rgba(7,13,20,0.42)",
-           border: "1px solid rgba(255,255,255,0.12)",
-           boxShadow: "0 18px 54px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.12)",
-           backdropFilter: "blur(24px) saturate(155%)",
-           WebkitBackdropFilter: "blur(24px) saturate(155%)",
+           background: "var(--bg-card-soft)",
+           border: "1px solid var(--border-subtle)",
+           boxShadow: "var(--shadow-soft)",
          }}>
       <RailGroup title="来源">
         <RailRow label="Provider" value={dd?.provider || "RSS"} />
@@ -704,11 +693,16 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
   // Signal title derivation (memoized — item ref is stable during modal lifetime)
   const { signalTitle, originalTitleRef, signalDek, systemNoteReason } = useMemo(() => {
     const rawOneSentence = (dd?.oneSentence ?? "").trim()
+    // Qualifier prefixes the AI uses when it lacks confidence — these make the title
+    // read like a meta-comment, not an actual headline. Reject and fall back to original.
+    const QUALIFIER_RE = /^(基于有限|基于|根据|仅基于|当前仅|分析显示|注意|由于|综合|鉴于)/
+    const hasQualifier = QUALIFIER_RE.test(rawOneSentence)
     const useJudgment = (
       isLlmGenerated &&
       rawOneSentence.length > 20 &&
       rawOneSentence !== item.title &&
-      !rawOneSentence.startsWith("该条目")
+      !rawOneSentence.startsWith("该条目") &&
+      !hasQualifier
     )
     return {
       signalTitle:      useJudgment ? rawOneSentence : item.title,
@@ -739,22 +733,16 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
         {/* Overlay: a calm scrim, not a heavy black fog */}
         <DialogPrimitive.Overlay
           className="fixed inset-0 z-50 backdrop-blur-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
-          style={{
-            background:
-              "radial-gradient(ellipse at 26% 18%, rgba(108,92,231,0.18), transparent 34%), radial-gradient(ellipse at 78% 70%, rgba(142,139,242,0.12), transparent 30%), rgba(10,9,16,0.78)",
-          }}
+          style={{ background: "rgba(8,8,14,0.62)" }}
         />
 
         {/* Content: strong dark glass reading surface, 1040px */}
         <DialogPrimitive.Content
           className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-32px)] max-w-[1040px] -translate-x-1/2 -translate-y-1/2 rounded-[28px] focus:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
           style={{
-            background:
-              "linear-gradient(145deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03)), radial-gradient(ellipse at 82% 10%, rgba(108,92,231,0.12), transparent 38%), rgba(24,22,32,0.82)",
-            border: "1px solid rgba(255,255,255,0.12)",
-            boxShadow: "0 44px 140px rgba(0,0,0,0.70), 0 0 80px rgba(108,92,231,0.10), inset 0 1px 0 rgba(255,255,255,0.14), inset 0 -1px 0 rgba(255,255,255,0.04)",
-            backdropFilter: "blur(34px) saturate(160%) contrast(1.06)",
-            WebkitBackdropFilter: "blur(34px) saturate(160%) contrast(1.06)",
+            background: "var(--bg-glass-strong)",
+            border: "1px solid var(--border-subtle)",
+            boxShadow: "var(--shadow-card)",
           }}
         >
           <DialogPrimitive.Title className="sr-only">{item.title}</DialogPrimitive.Title>
@@ -767,7 +755,7 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
             type="button"
             onClick={() => onOpenChange(false)}
             className="absolute right-4 top-4 z-10 inline-flex h-8 w-8 items-center justify-center rounded-lg border text-muted-foreground transition-colors hover:text-foreground"
-            style={{ borderColor: "rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.09)", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12)" }}
+            style={{ borderColor: "var(--border-subtle)", background: "var(--overlay-3)" }}
             aria-label="关闭详情"
           >
             <X className="h-4 w-4" />
@@ -779,8 +767,8 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
             <header
               className="shrink-0 px-7 pt-5 pb-4"
               style={{
-                borderBottom: "1px solid rgba(255,255,255,0.10)",
-                background: "linear-gradient(180deg, rgba(255,255,255,0.045), transparent)",
+                borderBottom: "1px solid var(--border-subtle)",
+                background: "var(--overlay-1)",
               }}
             >
               <div className="flex items-center justify-between gap-3 pr-10">
@@ -789,9 +777,9 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
                         style={{ color: item.sourceTier === "S" ? "var(--dg-orange)" : item.sourceTier === "A" ? "var(--dg-cyan)" : "var(--text-secondary)" }}>
                     Source {item.sourceTier}
                   </span>
-                  <span style={{ color: "rgba(255,255,255,0.18)" }}>·</span>
+                  <span style={{ color: "var(--hairline)" }}>·</span>
                   <span className="truncate max-w-[200px]">{item.source}</span>
-                  <span style={{ color: "rgba(255,255,255,0.18)" }}>·</span>
+                  <span style={{ color: "var(--hairline)" }}>·</span>
                   <span>{item.category}</span>
                   {age && (<><span style={{ color: "rgba(255,255,255,0.18)" }}>·</span><span>{age}</span></>)}
                   {item.isOfficial && (<><span style={{ color: "rgba(255,255,255,0.18)" }}>·</span><span style={{ color: "var(--dg-amber)" }}>Official</span></>)}
@@ -816,14 +804,14 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
                 {/* Title block (§15.4) */}
                 <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12px] font-semibold tracking-[0.04em]">
                   <span style={{ color: darkScoreColor(item.recommendationScore) }}>Score {item.recommendationScore}</span>
-                  <span style={{ color: "rgba(255,255,255,0.18)" }}>·</span>
+                  <span style={{ color: "var(--hairline)" }}>·</span>
                   <span style={{ color: "var(--text-secondary)" }}>{TIER_LABELS[item.recommendationTier]}</span>
-                  <span style={{ color: "rgba(255,255,255,0.18)" }}>·</span>
+                  <span style={{ color: "var(--hairline)" }}>·</span>
                   <span style={{ color: darkEvidenceColor(evidenceLevel({ strongEvidence: item.qualityFlags.includes("strong_evidence"), evScore: item.evScore, signals: item.relatedSignals?.length ?? 0, isOfficial: item.isOfficial }).label) }}>
                     Evidence {evidenceLevel({ strongEvidence: item.qualityFlags.includes("strong_evidence"), evScore: item.evScore, signals: item.relatedSignals?.length ?? 0, isOfficial: item.isOfficial }).label}
                   </span>
                 </div>
-                <h2 className="mt-2.5 max-w-[760px] pr-6 text-[24px] font-bold leading-[32px]" style={{ color: "var(--text-primary)" }}>
+                <h2 className="mt-2.5 max-w-[760px] pr-6 text-[20px] font-bold leading-[28px]" style={{ color: "var(--text-primary)", letterSpacing: "-0.012em" }}>
                   {signalTitle}
                 </h2>
                 {originalTitleRef && (
@@ -832,7 +820,7 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
                   </p>
                 )}
                 {signalDek && (
-                  <p className="mt-2.5 text-[16px] leading-[26px]" style={{ color: "var(--text-secondary)" }}>
+                  <p className="mt-2 text-[14px] leading-[22px]" style={{ color: "var(--text-secondary)" }}>
                     {signalDek}
                   </p>
                 )}
@@ -858,14 +846,14 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
                             {sec.label}
                           </h3>
                           {sec.paras.map((para, i) => (
-                            <p key={i} className="text-[15px] leading-[1.7]" style={{ color: "var(--text-secondary)" }}>
+                            <p key={i} className="text-[14px] leading-[1.68]" style={{ color: "var(--text-secondary)" }}>
                               {para}
                             </p>
                           ))}
                         </section>
                       ))
                     ) : (
-                      <p className="text-[15px] leading-[1.7]" style={{ color: "var(--text-secondary)" }}>
+                      <p className="text-[14px] leading-[1.68]" style={{ color: "var(--text-secondary)" }}>
                         这条推荐已有基础判断，但还没有生成完整深度解读。可以稍后刷新推荐快照。
                       </p>
                     )}
@@ -880,7 +868,7 @@ export function RecommendationDetailModal({ item, open, onOpenChange }: Recommen
                           {followUps.map((line, i) => (
                             <div key={i} className="flex items-start gap-2">
                               <span className="mt-[7px] shrink-0 text-[11px]" style={{ color: "rgba(110,168,255,0.7)" }}>▸</span>
-                              <p className="text-[14px] leading-[1.7]" style={{ color: "var(--text-secondary)" }}>{line}</p>
+                              <p className="text-[13.5px] leading-[1.65]" style={{ color: "var(--text-secondary)" }}>{line}</p>
                             </div>
                           ))}
                         </div>

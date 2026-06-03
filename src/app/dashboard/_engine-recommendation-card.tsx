@@ -98,7 +98,7 @@ export function EngineRecommendationCard({ item, enableDetail = false, variant =
           onKeyDown={handleKeyDown}
           aria-label={enableDetail ? `打开解读：${title}` : undefined}
         >
-          <span className="rf-mcard-score">{item.recommendationScore}</span>
+          <span className={cn("rf-mcard-score", band.cls)}>{item.recommendationScore}</span>
 
           <div style={{ paddingRight: 46 }}>
             <div className="rf-mcard-kicker truncate">
@@ -170,9 +170,9 @@ export function EngineRecommendationCard({ item, enableDetail = false, variant =
               <span className="font-semibold" style={{ color: tierColor }} title={TIER_TIP[item.sourceTier]}>
                 Source {item.sourceTier}
               </span>
-              <span style={{ color: "rgba(255,255,255,0.18)" }}>·</span>
+              <span style={{ color: "var(--hairline)" }}>·</span>
               <span style={{ color: evidenceColor }}>Evidence {evidence.label}</span>
-              <span style={{ color: "rgba(255,255,255,0.18)" }}>·</span>
+              <span style={{ color: "var(--hairline)" }}>·</span>
               <ClientRelativeTime value={item.publishedAt ?? item.fetchedAt}
                                   className="text-[12px]" fallback="" />
             </div>

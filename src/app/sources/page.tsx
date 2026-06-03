@@ -1,4 +1,5 @@
 import { getSourcesWithHealth } from "@/lib/data/sources-adapter"
+import { getRole, isAdmin } from "@/lib/auth-server"
 import SourcesClient from "./_sources-client"
 
 export const dynamic = "force-dynamic"
@@ -15,7 +16,7 @@ const HEALTH_ORDER: Record<string, number> = {
 const TIER_ORDER: Record<string, number> = { S: 0, A: 1, B: 2, C: 3, D: 4 }
 
 export default async function SourcesPage() {
-  const rawSources = await getSourcesWithHealth()
+  const [rawSources, role] = await Promise.all([getSourcesWithHealth(), getRole()])
   // Sort: healthy sources first, failing/blocked last; within tier: higher tier first
   const sources = [...rawSources].sort((a, b) => {
     const ao = HEALTH_ORDER[a.healthStatus ?? 'unknown'] ?? 2
@@ -25,5 +26,5 @@ export default async function SourcesPage() {
     const bt = TIER_ORDER[b.tier ?? 'C'] ?? 3
     return at - bt
   })
-  return <SourcesClient sources={sources} />
+  return <SourcesClient sources={sources} isAdmin={isAdmin(role)} />
 }

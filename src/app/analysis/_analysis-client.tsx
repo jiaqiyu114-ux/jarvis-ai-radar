@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback } from "react"
-import { Loader2, Play, Eye } from "lucide-react"
+import { Loader2, Play, Eye, Zap } from "lucide-react"
 import { AppShell } from "@/components/layout/app-shell"
 import { InformationCard } from "@/components/feed/information-card"
 import { cn } from "@/lib/utils"
@@ -173,6 +173,8 @@ export default function AnalysisClient({ initialSummary, initialItems, topSignal
   const [batchError, setBatchError]   = useState<string | null>(null)
   const [nextCursor, setNextCursor]   = useState<string | null>(null)
   const [hasMore, setHasMore]   = useState(false)
+  const [flashResult, setFlashResult] = useState<{ processed: number; passed: number; rejected: number; errors: string[] } | null>(null)
+  const [flashRunning, setFlashRunning] = useState(false)
 
   // Refresh queue data
   const refreshQueue = useCallback(async (tier = tierFilter) => {
@@ -191,6 +193,28 @@ export default function AnalysisClient({ initialSummary, initialItems, topSignal
       setLoading(false)
     }
   }, [tierFilter])
+
+  // Run flash filter (DeepSeek-chat pre-filter)
+  const runFlashFilter = useCallback(async () => {
+    setFlashRunning(true)
+    setFlashResult(null)
+    try {
+      const res = await fetch('/api/pipeline/flash-filter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maxItems: 150 }),
+      })
+      const data = await res.json() as { ok: boolean; processed?: number; passed?: number; rejected?: number; errors?: string[] }
+      if (data.ok) {
+        setFlashResult({ processed: data.processed ?? 0, passed: data.passed ?? 0, rejected: data.rejected ?? 0, errors: data.errors ?? [] })
+        await refreshQueue()
+      }
+    } catch (e) {
+      console.error('[flash-filter]', e)
+    } finally {
+      setFlashRunning(false)
+    }
+  }, [refreshQueue])
 
   // Run batch
   const runBatch = useCallback(async (dryRun: boolean, cursor?: string | null) => {
@@ -246,6 +270,16 @@ export default function AnalysisClient({ initialSummary, initialItems, topSignal
         {/* ── Actions ── */}
         <div className="flex items-center gap-3 mb-4 flex-wrap">
           <button
+            onClick={runFlashFilter}
+            disabled={flashRunning || loading}
+            className="flex items-center gap-1.5 text-sm bg-accent-blue/10 border border-accent-blue/30 text-accent-blue rounded-md px-4 py-1.5 hover:bg-accent-blue/20 transition-colors disabled:opacity-50"
+            style={{ color: "var(--accent-blue)", borderColor: "color-mix(in srgb, var(--accent-blue) 30%, transparent)", background: "color-mix(in srgb, var(--accent-blue) 10%, transparent)" }}
+            title="用 DeepSeek-chat 快速批量过滤，自动标记低价值内容，每3小时也会自动运行"
+          >
+            {flashRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+            Flash 初筛（自动）
+          </button>
+          <button
             onClick={() => runBatch(true)}
             disabled={loading}
             className="flex items-center gap-1.5 text-sm border border-border rounded-md px-4 py-1.5 hover:bg-accent transition-colors disabled:opacity-50"
@@ -271,6 +305,25 @@ export default function AnalysisClient({ initialSummary, initialItems, topSignal
             </button>
           )}
         </div>
+
+        {/* ── Flash filter result ── */}
+        {flashResult && (
+          <div className="mb-4 border rounded-md p-3 text-sm space-y-1"
+               style={{ borderColor: "color-mix(in srgb, var(--accent-blue) 30%, transparent)", background: "color-mix(in srgb, var(--accent-blue) 8%, transparent)" }}>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] px-2 py-0.5 rounded border font-medium"
+                    style={{ color: "var(--accent-blue)", borderColor: "color-mix(in srgb, var(--accent-blue) 30%, transparent)", background: "color-mix(in srgb, var(--accent-blue) 12%, transparent)" }}>
+                Flash 初筛完成
+              </span>
+              <span style={{ color: "var(--text-muted)" }}>处理 {flashResult.processed} 条</span>
+              <span style={{ color: "var(--accent-lime)" }}>· 通过 {flashResult.passed} 条</span>
+              <span style={{ color: "var(--dg-red)" }}>· 过滤 {flashResult.rejected} 条</span>
+            </div>
+            {flashResult.errors.length > 0 && (
+              <p className="text-[11px]" style={{ color: "var(--dg-red)" }}>错误：{flashResult.errors[0]}</p>
+            )}
+          </div>
+        )}
 
         {/* ── Batch result ── */}
         {batchError && (

@@ -8,6 +8,7 @@ import { InformationCard } from "@/components/feed/information-card"
 import { Input } from "@/components/ui/input"
 import type { Category, InformationItem, SourceTier } from "@/types"
 import { cn } from "@/lib/utils"
+import { normalizeDisplayText } from "@/lib/text/normalize-display-text"
 
 // ── Smart filter definitions ──────────────────────────────────────────────────
 // Replaced 8 category + 4 tier chips with 6 meaningful user-facing filters.
@@ -36,6 +37,35 @@ function matchSmartFilter(item: InformationItem, f: SmartFilterId): boolean {
   }
 }
 
+function normalizeSearchTerm(value: unknown): string {
+  return normalizeDisplayText(String(value ?? '')).toLowerCase()
+}
+
+function matchesFeedSearch(item: InformationItem, normalizedQuery: string): boolean {
+  if (!normalizedQuery) return true
+
+  const article = item.articleContent
+  const fields: unknown[] = [
+    item.title,
+    item.summary,
+    item.source,
+    item.sourceTier,
+    item.category,
+    item.originalUrl,
+    item.userSourceLabel,
+    item.userSourceNote,
+    ...item.tags,
+    article?.articleTitle,
+    article?.excerpt,
+    article?.cleanText,
+    article?.authorName,
+    article?.siteName,
+    article?.canonicalUrl,
+  ]
+
+  return fields.some(field => normalizeSearchTerm(field).includes(normalizedQuery))
+}
+
 // ── Category filter kept for "更多筛选"; tier shown in primary bar ────────────
 const ALL_CATEGORIES: Category[] = ['AI技术', '商业动态', '产品发布', '监管政策', '融资并购', '行业趋势', '开源项目', '研究报告']
 const ALL_TIERS: SourceTier[] = ['S', 'A', 'B', 'C']
@@ -51,22 +81,25 @@ export default function FeedClient({
   items,
   mode = 'real',
   topSignal,
+  initialSearch = '',
 }: {
   items:       InformationItem[]
   mode?:       'real' | 'all'
   topSignal?:  TopSignalData
+  initialSearch?: string
 }) {
-  const [search, setSearch]             = useState('')
+  const [search, setSearch]             = useState(initialSearch)
   const [smartFilter, setSmartFilter]   = useState<SmartFilterId>('all')
   const [sortBy, setSortBy]             = useState<'time' | 'score'>('time')
   // Advanced filters — collapsed by default
   const [showAdvanced, setShowAdvanced]       = useState(false)
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null)
   const [selectedTier, setSelectedTier]         = useState<SourceTier | null>(null)
+  const normalizedSearch = normalizeSearchTerm(search)
 
   const filtered = items
     .filter(item => {
-      if (search && !item.title.includes(search) && !item.summary?.includes(search)) return false
+      if (normalizedSearch && !matchesFeedSearch(item, normalizedSearch)) return false
       if (!matchSmartFilter(item, smartFilter)) return false
       if (selectedCategory && item.category !== selectedCategory) return false
       if (selectedTier && item.sourceTier !== selectedTier) return false
@@ -105,22 +138,25 @@ export default function FeedClient({
           </p>
         </div>
 
-        {/* ── Primary filter bar ── */}
-        <div className="mb-3 space-y-2">
+        {/* ── Filter bar — sticky so it stays visible when scrolling ── */}
+        <div
+          className="sticky top-0 z-10 -mx-6 md:-mx-8 px-6 md:px-8 pb-3 pt-2 mb-3 space-y-2"
+          style={{ background: "var(--bg-deep)", borderBottom: "1px solid var(--border-subtle)" }}
+        >
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Search */}
+            {/* Search — wider, clearer placeholder */}
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
-                placeholder="搜索..."
+                placeholder="搜索标题或摘要…"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="pl-8 h-7 w-40 text-xs bg-background"
+                className="pl-8 h-7 w-52 text-xs bg-background"
               />
             </div>
 
             {/* Sort */}
-            <div className="flex items-center gap-px border border-white/[0.08] rounded-lg overflow-hidden h-7">
+            <div className="flex items-center gap-px border border-border rounded-lg overflow-hidden h-7">
               {(['time', 'score'] as const).map(s => (
                 <button
                   key={s}
@@ -129,7 +165,7 @@ export default function FeedClient({
                     "px-2.5 text-xs h-full transition-colors",
                     sortBy === s
                       ? "bg-primary/15 text-primary font-medium"
-                      : "text-muted-foreground hover:text-foreground hover:bg-white/[0.05]"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent"
                   )}
                 >
                   {s === 'score' ? '分数' : '时间'}
@@ -148,7 +184,7 @@ export default function FeedClient({
                     "text-[10px] px-2.5 py-1 rounded-lg border transition-colors",
                     smartFilter === f.id
                       ? "bg-primary/15 text-primary border-primary/25 font-medium"
-                      : "text-muted-foreground border-white/[0.06] hover:border-white/[0.12] hover:text-foreground"
+                      : "text-muted-foreground border-border hover:border-border/80 hover:text-foreground"
                   )}
                 >
                   {f.label}
@@ -156,24 +192,30 @@ export default function FeedClient({
               ))}
             </div>
 
+            {/* Active filter summary + clear */}
+            {hasAnyFilter && (
+              <button
+                onClick={() => { setSmartFilter('all'); setSelectedCategory(null); setSelectedTier(null); setSearch('') }}
+                className="ml-auto text-[10px] text-primary/80 hover:text-primary border border-primary/20 bg-primary/5 px-2 py-1 rounded-lg transition-colors"
+              >
+                清除筛选
+              </button>
+            )}
+
             {/* More filters toggle */}
-            <button
-              onClick={() => setShowAdvanced(v => !v)}
-              className={cn(
-                "text-[10px] px-2 py-1 rounded-lg border transition-colors ml-auto",
-                hasAdvancedFilter
-                  ? "text-primary border-primary/20 bg-primary/5"
-                  : "text-muted-foreground/40 border-white/[0.05] hover:text-muted-foreground",
-              )}
-            >
-              {showAdvanced ? '收起' : '分类'}
-              {hasAdvancedFilter && ' ·'}
-            </button>
+            {!hasAnyFilter && (
+              <button
+                onClick={() => setShowAdvanced(v => !v)}
+                className="ml-auto text-[10px] text-muted-foreground border border-border rounded-lg px-2 py-1 transition-colors hover:text-foreground"
+              >
+                {showAdvanced ? '收起' : '更多'}
+              </button>
+            )}
           </div>
 
-          {/* Tier filter — primary (always visible) */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-[9px] text-muted-foreground/40 font-mono tracking-widest uppercase shrink-0">信源</span>
+          {/* Tier + category filters */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[9px] text-muted-foreground font-mono tracking-widest uppercase shrink-0">信源</span>
             {ALL_TIERS.map(tier => (
               <button
                 key={tier}
@@ -183,65 +225,61 @@ export default function FeedClient({
                   "text-[10px] px-2 py-0.5 rounded border font-mono font-medium transition-colors",
                   selectedTier === tier
                     ? "bg-primary/15 text-primary border-primary/25"
-                    : "text-muted-foreground/50 border-white/[0.06] hover:border-white/[0.12] hover:text-foreground"
+                    : "text-muted-foreground border-border hover:border-border/80 hover:text-foreground"
                 )}
               >
                 {tier}
               </button>
             ))}
+
+            {showAdvanced && (
+              <>
+                <span className="text-border mx-1">|</span>
+                <span className="text-[9px] text-muted-foreground font-mono tracking-widest uppercase shrink-0">分类</span>
+                {ALL_CATEGORIES.map(cat => (
+                  <button
+                    key={cat}
+                    onClick={() => setSelectedCategory(selectedCategory === cat ? null : cat)}
+                    className={cn(
+                      "text-[10px] px-2 py-0.5 rounded border transition-colors",
+                      selectedCategory === cat
+                        ? "bg-primary/10 text-primary border-primary/20 font-medium"
+                        : "text-muted-foreground border-border hover:border-border/80"
+                    )}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </>
+            )}
           </div>
-
-          {/* Advanced filters — category only */}
-          {showAdvanced && (
-            <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-white/[0.06]">
-              <span className="text-[10px] text-muted-foreground/60">分类：</span>
-              {ALL_CATEGORIES.map(cat => (
-                <button
-                  key={cat}
-                  onClick={() => setSelectedCategory(selectedCategory === cat ? null : cat)}
-                  className={cn(
-                    "text-[10px] px-2 py-0.5 rounded border transition-colors",
-                    selectedCategory === cat
-                      ? "bg-primary/10 text-primary border-primary/20 font-medium"
-                      : "text-muted-foreground border-white/[0.06] hover:border-white/[0.12]"
-                  )}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {hasAnyFilter && (
-            <div className="flex items-center justify-end">
-              <button
-                onClick={() => { setSmartFilter('all'); setSelectedCategory(null); setSelectedTier(null); setSearch('') }}
-                className="text-[10px] text-primary/70 hover:text-primary"
-              >
-                清除全部筛选
-              </button>
-            </div>
-          )}
         </div>
 
         {/* ── Feed list — lightweight rows, minimal glass ── */}
         <div className="rounded-2xl overflow-hidden"
              style={{
-               background: "linear-gradient(135deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))",
-               border: "1px solid rgba(255,255,255,0.11)",
-               backdropFilter: "blur(14px)",
+               background: "var(--bg-card)",
+               border: "1px solid var(--border-subtle)",
+               boxShadow: "var(--shadow-soft)",
              }}>
           {filtered.length > 0
             ? filtered.map(item => <InformationCard key={item.id} item={item} contextPage="feed" />)
             : (
-              <div className="py-10 text-center">
-                <p className="text-sm text-muted-foreground">没有符合条件的内容</p>
+              <div className="py-14 text-center space-y-3">
+                <p className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+                  {hasAnyFilter ? "当前筛选条件下没有内容" : "暂无内容"}
+                </p>
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  {hasAnyFilter
+                    ? "尝试放宽筛选条件，或清除全部筛选"
+                    : "信源尚未抓取到内容，请在信源管理中检查信源状态"}
+                </p>
                 {hasAnyFilter && (
                   <button
                     onClick={() => { setSmartFilter('all'); setSelectedCategory(null); setSelectedTier(null); setSearch('') }}
-                    className="mt-2 text-xs text-primary/70 hover:text-primary"
+                    className="text-xs text-primary/80 hover:text-primary underline"
                   >
-                    清除筛选查看全部
+                    清除全部筛选
                   </button>
                 )}
               </div>

@@ -1,12 +1,14 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import {
   LayoutDashboard, Rss, Radio, Settings, Layers,
-  FileText, Lightbulb, MessageSquare, Star, Search, Plus,
+  FileText, Lightbulb, MessageSquare, Star, Search, Plus, LogOut, Megaphone,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { ROLE_COOKIE } from "@/lib/auth"
+import { useEffect, useState } from "react"
 
 // Primary entries (OVERVIEW). 今日雷达 is the home signal view.
 const overview = [
@@ -27,33 +29,76 @@ const streamGroup = {
 
 // Secondary section.
 const workspace = [
-  { href: "/reports",  label: "日报",     icon: FileText },
-  { href: "/topics",   label: "选题池",   icon: Lightbulb },
-  { href: "/feedback", label: "反馈记录", icon: MessageSquare },
-  { href: "/settings", label: "配置",     icon: Settings },
+  { href: "/reports",  label: "日报",   icon: FileText },
+  { href: "/topics",   label: "选题池", icon: Lightbulb },
+  // { href: "/feedback", label: "反馈记录", icon: MessageSquare },  // hidden for now
+  { href: "/settings", label: "配置",   icon: Settings },
 ]
+
+function readRoleCookie(): string | null {
+  if (typeof document === 'undefined') return null
+  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${ROLE_COOKIE}=([^;]*)`))
+  return match ? decodeURIComponent(match[1]) : null
+}
 
 export function SidebarNav() {
   const pathname = usePathname()
+  const router   = useRouter()
   const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/")
   const streamActive = streamGroup.children.some(c => isActive(c.href))
+
+  const [role, setRole] = useState<string | null>(null)
+  useEffect(() => { setRole(readRoleCookie()) }, [pathname])
+
+  const isAdmin = role === 'admin'
+
+  async function handleLogout() {
+    await fetch('/api/auth/logout', { method: 'POST' })
+    router.push('/login')
+    router.refresh()
+  }
 
   return (
     <aside className="rf-sidebar">
 
-      {/* ── Identity card ── */}
+      {/* ── Identity card — click avatar to open account modal ── */}
       <div className="rf-id-card">
-        <div className="rf-id-avatar">JV</div>
-        <div className="min-w-0">
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new CustomEvent("jarvis:open-account"))}
+          title="查看账号详情"
+          className="rf-id-avatar shrink-0 transition-opacity hover:opacity-80 cursor-pointer"
+        >
+          JV
+        </button>
+        <div className="min-w-0 flex-1">
           <div className="truncate text-[14px] font-bold tracking-[0.04em]" style={{ color: "var(--text-primary)" }}>
             J.A.R.V.I.S
           </div>
           <div className="flex items-center gap-1.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
             <span>Personal Radar</span>
-            <span className="rounded px-1 py-px text-[8.5px] font-semibold tracking-wider"
-                  style={{ background: "var(--rf-purple-soft)", color: "#C5BCFF" }}>PRO</span>
+            {role && (
+              <span className="rounded px-1 py-px text-[8.5px] font-semibold tracking-wider"
+                    style={{
+                      background: isAdmin ? "var(--primary-soft)" : "rgba(255,255,255,0.06)",
+                      color:      isAdmin ? "var(--primary-on-soft)" : "var(--text-muted)",
+                    }}>
+                {isAdmin ? 'ADMIN' : 'GUEST'}
+              </span>
+            )}
           </div>
         </div>
+        {role && (
+          <button
+            type="button"
+            onClick={() => void handleLogout()}
+            title="退出登录"
+            className="shrink-0 rounded-lg p-1.5 transition-colors hover:bg-white/[0.08]"
+            style={{ color: "var(--text-muted)" }}
+          >
+            <LogOut className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
       {/* ── Search (links to full feed) ── */}
@@ -77,11 +122,11 @@ export function SidebarNav() {
           </Link>
         ))}
 
-        {/* Stream group — expanded tree */}
-        <div className={cn("rf-nav-item", streamActive && !isActive("/feed") && "")} aria-hidden={false}>
+        {/* Stream group — parent links to /feed (the "all signals" view) */}
+        <Link href="/feed" className={cn("rf-nav-item", streamActive && "active")}>
           <streamGroup.icon className="rf-nav-ico h-[16px] w-[16px]" />
           <span className="flex-1">{streamGroup.label}</span>
-        </div>
+        </Link>
         <div className="space-y-0.5">
           {streamGroup.children.map(({ href, label }) => (
             <Link key={href} href={href} className={cn("rf-nav-sub", isActive(href) && "active")}
@@ -103,19 +148,31 @@ export function SidebarNav() {
         ))}
       </nav>
 
-      {/* ── Add source CTA ── */}
-      <Link href="/sources" className="rf-add-card">
-        <span className="rf-add-ico"><Plus className="h-4 w-4" /></span>
-        <span>新增信源</span>
-        <span className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>扩展你的雷达覆盖</span>
-      </Link>
+      {/* ── Changelog entry ── */}
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new CustomEvent('jarvis:open-changelog'))}
+        className={cn("rf-nav-item w-full text-left")}
+      >
+        <Megaphone className="rf-nav-ico h-[15px] w-[15px]" />
+        <span className="flex-1">更新说明</span>
+      </button>
+
+      {/* ── Add source CTA — admin only ── */}
+      {isAdmin && (
+        <Link href="/sources?add=true" className="rf-add-card">
+          <span className="rf-add-ico"><Plus className="h-4 w-4" /></span>
+          <span>新增信源</span>
+          <span className="text-[10.5px]" style={{ color: "var(--text-muted)" }}>扩展你的雷达覆盖</span>
+        </Link>
+      )}
 
       {/* ── Footer ── */}
       <div className="mt-3 flex items-center gap-1.5 px-2">
         <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--success)", boxShadow: "0 0 10px var(--success)" }} />
         <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>Pipeline ready</span>
         <span className="ml-auto text-[9px] font-mono uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
-          v0.1
+          v1.3.1
         </span>
       </div>
     </aside>

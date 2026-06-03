@@ -9,17 +9,21 @@ import { RefreshRecommendationsButton } from "./_refresh-button"
  * manual snapshot, 重点精选, 推荐强度 (current preset), 全量流.
  * Native <details> dropdown, no JS state.
  */
-export function DashboardMoreMenu({ presetLabel }: { presetLabel: string }) {
+export function DashboardMoreMenu({ presetLabel, isAdmin }: { presetLabel: string; isAdmin: boolean }) {
   return (
     <details className="more-menu shrink-0">
       <summary>
         更多 <ChevronDown className="h-3.5 w-3.5" />
       </summary>
       <div className="more-menu-panel">
-        <p className="more-menu-label">手动操作</p>
-        <div className="px-1.5 pb-1">
-          <RefreshRecommendationsButton />
-        </div>
+        {isAdmin && (
+          <>
+            <p className="more-menu-label">手动操作</p>
+            <div className="px-1.5 pb-1">
+              <RefreshRecommendationsButton />
+            </div>
+          </>
+        )}
         <p className="more-menu-label">前往</p>
         <Link href="/selected" className="more-menu-item">
           <Star className="h-4 w-4" /> 重点精选

@@ -1,0 +1,98 @@
+[
+  {
+    "name": "Lilian Weng Blog",
+    "url": "https://lilianweng.github.io/index.xml",
+    "platform": "rss",
+    "tier": "A",
+    "company": "OpenAI",
+    "role": "ai_research_kol",
+    "official": false,
+    "enabled": true,
+    "priority": 1,
+    "notes": "Research-heavy AI systems, agents, RL, and alignment writing."
+  },
+  {
+    "name": "Chip Huyen Blog",
+    "url": "https://huyenchip.com/feed.xml",
+    "platform": "rss",
+    "tier": "A",
+    "company": "Independent",
+    "role": "ai_engineering_kol",
+    "official": false,
+    "enabled": true,
+    "priority": 1,
+    "notes": "Applied ML systems, AI engineering, evaluation, and production workflows."
+  },
+  {
+    "name": "Eugene Yan Blog",
+    "url": "https://eugeneyan.com/rss/",
+    "platform": "rss",
+    "tier": "A",
+    "company": "Independent",
+    "role": "ai_engineering_kol",
+    "official": false,
+    "enabled": true,
+    "priority": 1,
+    "notes": "Recommendation systems, LLM applications, evaluation, and applied ML notes."
+  },
+  {
+    "name": "Interconnects",
+    "url": "https://www.interconnects.ai/feed",
+    "platform": "rss",
+    "tier": "A",
+    "company": "Independent",
+    "role": "ai_research_kol",
+    "official": false,
+    "enabled": true,
+    "priority": 1,
+    "notes": "Frontier model analysis, open models, RLHF, policy, and research interpretation."
+  },
+  {
+    "name": "Latent Space",
+    "url": "https://www.latent.space/feed",
+    "platform": "rss",
+    "tier": "A",
+    "company": "Independent",
+    "role": "ai_builder_kol",
+    "official": false,
+    "enabled": true,
+    "priority": 2,
+    "notes": "AI builder ecosystem, agents, developer tooling, and market-moving interviews."
+  },
+  {
+    "name": "SemiAnalysis",
+    "url": "https://www.semianalysis.com/feed/",
+    "platform": "rss",
+    "tier": "A",
+    "company": "SemiAnalysis",
+    "role": "analyst_kol",
+    "official": false,
+    "enabled": true,
+    "priority": 2,
+    "notes": "AI infrastructure, chips, datacenters, and market structure analysis."
+  },
+  {
+    "name": "Andrej Karpathy Blog",
+    "url": "https://karpathy.github.io/feed.xml",
+    "platform": "rss",
+    "tier": "A",
+    "company": "Independent",
+    "role": "ai_research_kol",
+    "official": false,
+    "enabled": true,
+    "priority": 2,
+    "notes": "AI education, model training intuition, agents, and software 2.0 commentary."
+  },
+  {
+    "name": "Jay Alammar Blog",
+    "url": "https://jalammar.github.io/feed.xml",
+    "platform": "rss",
+    "tier": "B",
+    "company": "Independent",
+    "role": "ai_education_kol",
+    "official": false,
+    "enabled": true,
+    "priority": 3,
+    "notes": "Clear technical explainers for transformers, embeddings, and AI systems."
+  }
+]

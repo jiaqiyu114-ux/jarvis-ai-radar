@@ -219,11 +219,12 @@ const ENGINE_SELECT = [
 
 // Candidate pool pre-filter — intentionally loose.
 // The in-memory engine handles strict quality classification.
-// final_score >= 50 captures items from reputable sources scored by ingest defaults.
-// Items with final_score < 50 are genuine low-quality and excluded early.
+// Threshold lowered to 35 to include items that are newly fetched but have older
+// published_at dates (e.g. first-fetch of KOL blogs with infrequent posting schedules).
+// The engine's computeRecommendationScore applies a fetch-recency boost to surface these.
 const RECOMMENDATION_OR = [
   'should_enter_daily_report.eq.true',
-  'final_score.gte.50',
+  'final_score.gte.35',
   'analysis_tier.in.(standard,deep,cluster)',
   'ev_score.gte.40',
 ].join(',')
@@ -382,6 +383,17 @@ function computeRecommendationScore(
   // recommendation is enforced by the daily hard gate in daily-gate.ts (applied
   // during the refresh pipeline), not by penalising scores. Score reflects
   // objective quality; the gate controls scheduling.
+
+  // First-fetch recovery: items just fetched (< 24h) but with old published_at have their
+  // final_score heavily penalised by the freshness multiplier at ingest time. Compensate so
+  // first-discovered articles from reputable sources surface at the right tier.
+  const pubMs2     = row.published_at ? new Date(row.published_at).getTime() : 0
+  const pubHoursAgo = pubMs2 > 0 ? (Date.now() - pubMs2) / 3_600_000 : 0
+  if (hoursAgo < 24 && pubHoursAgo >= 72) {
+    const tier2 = String(row.sources?.source_tier ?? 'C').toUpperCase()
+    if (tier2 === 'S' || tier2 === 'A') score += 18
+    else if (tier2 === 'B')             score += 10
+  }
 
   // Signal flags
   if (b(row.should_enter_daily_report)) score += 5

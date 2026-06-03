@@ -10,6 +10,33 @@ const themes: Array<{ value: ThemeMode; icon: typeof Sun; label: string }> = [
   { value: "system", icon: Monitor, label: "系统" },
 ]
 
+/**
+ * Compact icon-only toggle for the top toolbar. Toggles light ↔ dark only.
+ * "System" preference lives in the settings page ThemeToggle.
+ */
+export function ThemeToggleButton({ className }: { className?: string }) {
+  const { theme, setTheme, mounted } = useJarvisTheme()
+  const resolvedDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches)
+  const next = () => setTheme(resolvedDark ? "light" : "dark")
+  const Icon = resolvedDark ? Moon : Sun
+  const label = resolvedDark ? "深色" : "浅色"
+
+  return (
+    <button
+      type="button"
+      onClick={next}
+      className={cn("rf-icon-btn", className)}
+      aria-label={`切换到${resolvedDark ? "浅色" : "深色"}模式`}
+      title={`当前：${label}（点击切换）`}
+    >
+      <span suppressHydrationWarning>
+        <Icon className="h-4 w-4" />
+      </span>
+      <span className="sr-only">{mounted ? label : "主题"}</span>
+    </button>
+  )
+}
+
 interface ThemeToggleProps {
   className?: string
 }

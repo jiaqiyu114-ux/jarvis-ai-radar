@@ -13,6 +13,17 @@ export const metadata: Metadata = {
   description: "Personal AI-era information radar system",
 }
 
+// Pre-paint theme: set the `.dark` class on <html> before React hydrates so the
+// page never flashes the wrong palette. Defaults to dark; honours a saved
+// preference and "system". Mirrors the logic in ThemeProvider.
+const themeInitScript = `
+(function(){try{
+  var m=localStorage.getItem('jarvis-theme')||'dark';
+  var dark=m==='dark'||(m==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.classList.toggle('dark',dark);
+}catch(e){document.documentElement.classList.add('dark');}})();
+`
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -24,6 +35,9 @@ export default function RootLayout({
       className={`dark ${GeistSans.variable} ${GeistMono.variable}`}
       suppressHydrationWarning
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body className="antialiased">
         <ThemeProvider>
           {children}

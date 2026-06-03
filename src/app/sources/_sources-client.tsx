@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useMemo, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { AppShell } from "@/components/layout/app-shell"
 import { SourceTierBadge } from "@/components/feed/source-tier-badge"
 import { SourceOriginBadge } from "@/components/sources/source-origin-badge"
@@ -21,7 +22,7 @@ import {
 import { cn } from "@/lib/utils"
 import type { SourceWithHealth } from "@/lib/data/sources-adapter"
 import type { SourceHealthStatus } from "@/types/database"
-import { Ban, Check, Copy, MoreHorizontal, Pencil, Plus, Star } from "lucide-react"
+import { Ban, Check, Copy, MoreHorizontal, Pencil, Plus, Search, Star } from "lucide-react"
 
 // ── Time formatting ────────────────────────────────────────────────────────────
 
@@ -105,24 +106,57 @@ function HealthCell({ source }: { source: SourceWithHealth }) {
 
 // ── Filter types ──────────────────────────────────────────────────────────────
 
-type FilterKey = "all" | "my" | "failing" | "rss" | "blocked"
+type FilterKey = "all" | "my" | "official" | "kol" | "never_fetched" | "web" | "failing" | "rss" | "blocked"
 
 const FILTERS: { key: FilterKey; label: string }[] = [
-  { key: "all",     label: "全部" },
-  { key: "my",      label: "我的源" },
-  { key: "failing", label: "失败" },
-  { key: "rss",     label: "RSS" },
-  { key: "blocked", label: "停用/移出" },
+  { key: "all",           label: "全部" },
+  { key: "my",            label: "我的源" },
+  { key: "official",      label: "官方" },
+  { key: "kol",           label: "KOL" },
+  { key: "never_fetched", label: "未抓取" },
+  { key: "web",           label: "Web待抓" },
+  { key: "failing",       label: "失败" },
+  { key: "rss",           label: "RSS" },
+  { key: "blocked",       label: "停用/移出" },
 ]
+
+function isKolSource(source: SourceWithHealth): boolean {
+  const note = source.userSourceNote?.toLowerCase() ?? ""
+  return note.includes("sourcepack:ai-kol-sources-v1")
+    || note.includes("role:key_person")
+    || note.includes("role:kol")
+    || note.includes("role:ai_research_kol")
+    || note.includes("role:ai_engineering_kol")
+    || note.includes("role:ai_infra_kol")
+    || note.includes("role:analyst_kol")
+}
 
 function applyFilter(sources: SourceWithHealth[], filter: FilterKey): SourceWithHealth[] {
   switch (filter) {
-    case "my":      return sources.filter(s => s.isUserCurated)
-    case "failing": return sources.filter(s => s.healthStatus === "failing" || s.healthStatus === "degraded")
-    case "rss":     return sources.filter(s => s.platform === "rss")
-    case "blocked": return sources.filter(s => s.isBlocked)
-    default:        return sources
+    case "my":            return sources.filter(s => s.isUserCurated)
+    case "official":      return sources.filter(s => s.isOfficial)
+    case "kol":           return sources.filter(isKolSource)
+    case "never_fetched": return sources.filter(s => !s.lastFetchAt && !s.isBlocked)
+    case "web":           return sources.filter(s => s.platform !== "rss" && !s.isBlocked)
+    case "failing":       return sources.filter(s => s.healthStatus === "failing" || s.healthStatus === "degraded")
+    case "rss":           return sources.filter(s => s.platform === "rss")
+    case "blocked":       return sources.filter(s => s.isBlocked)
+    default:              return sources
   }
+}
+
+function matchesSourceSearch(source: SourceWithHealth, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  return [
+    source.name,
+    source.url,
+    source.platform,
+    source.tier,
+    source.category,
+    source.userSourceLabel,
+    source.userSourceNote,
+  ].some(value => String(value ?? "").toLowerCase().includes(q))
 }
 
 // ── Form state ────────────────────────────────────────────────────────────────
@@ -518,7 +552,7 @@ function SourceFormDialog({
 
 // ── Source row ────────────────────────────────────────────────────────────────
 
-function SourceRow({ source, onEdit, onToggleBlock, onMarkCurated, onCopyUrl, onRemove, copiedId }: {
+function SourceRow({ source, onEdit, onToggleBlock, onMarkCurated, onCopyUrl, onRemove, copiedId, isAdmin = false }: {
   source:        SourceWithHealth
   onEdit:        (s: SourceWithHealth) => void
   onToggleBlock: (s: SourceWithHealth) => Promise<void>
@@ -526,6 +560,7 @@ function SourceRow({ source, onEdit, onToggleBlock, onMarkCurated, onCopyUrl, on
   onCopyUrl:     (s: SourceWithHealth) => void
   onRemove:      (s: SourceWithHealth) => Promise<void>
   copiedId:      string | null
+  isAdmin?:      boolean
 }) {
   const isDemo  = source.dataOrigin === "demo"
   const fetchAt = source.lastSuccessAt ?? source.lastFetchAt
@@ -600,66 +635,79 @@ function SourceRow({ source, onEdit, onToggleBlock, onMarkCurated, onCopyUrl, on
 
       {/* 操作 */}
       <td className="px-3 py-3.5">
-        <div className="flex items-center gap-0.5">
-          <Button
-            variant="ghost" size="sm"
-            className="h-7 px-2 text-xs gap-1 text-muted-foreground hover:text-foreground"
-            onClick={() => onEdit(source)}
-          >
-            <Pencil className="w-3 h-3" />
-            编辑
-          </Button>
+        {isAdmin ? (
+          <div className="flex items-center gap-0.5">
+            <Button
+              variant="ghost" size="sm"
+              className="h-7 px-2 text-xs gap-1 text-muted-foreground hover:text-foreground"
+              onClick={() => onEdit(source)}
+            >
+              <Pencil className="w-3 h-3" />
+              编辑
+            </Button>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground">
-                <MoreHorizontal className="w-3.5 h-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-44">
-              {!source.isUserCurated && (
-                <DropdownMenuItem
-                  className="text-xs gap-2 cursor-pointer text-teal-600 dark:text-teal-400 focus:text-teal-600 dark:focus:text-teal-400"
-                  onSelect={() => onMarkCurated(source)}
-                >
-                  <Star className="w-3.5 h-3.5" />
-                  标记为我的源
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem
-                className="text-xs gap-2 cursor-pointer"
-                onSelect={() => onCopyUrl(source)}
-              >
-                {copiedId === source.id
-                  ? <Check className="w-3.5 h-3.5 text-success" />
-                  : <Copy className="w-3.5 h-3.5" />}
-                {copiedId === source.id ? '已复制' : '复制 URL'}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                className={cn(
-                  "text-xs gap-2 cursor-pointer",
-                  source.isBlocked
-                    ? "text-muted-foreground"
-                    : "text-warning focus:text-warning",
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground">
+                  <MoreHorizontal className="w-3.5 h-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                {!source.isUserCurated && (
+                  <DropdownMenuItem
+                    className="text-xs gap-2 cursor-pointer text-teal-600 dark:text-teal-400 focus:text-teal-600 dark:focus:text-teal-400"
+                    onSelect={() => onMarkCurated(source)}
+                  >
+                    <Star className="w-3.5 h-3.5" />
+                    标记为我的源
+                  </DropdownMenuItem>
                 )}
-                onSelect={() => onToggleBlock(source)}
-              >
-                <Ban className="w-3.5 h-3.5" />
-                {source.isBlocked ? '取消屏蔽' : '屏蔽此源'}
-              </DropdownMenuItem>
-              {!source.isBlocked && (
                 <DropdownMenuItem
-                  className="text-xs gap-2 cursor-pointer text-danger focus:text-danger"
-                  onSelect={() => onRemove(source)}
+                  className="text-xs gap-2 cursor-pointer"
+                  onSelect={() => onCopyUrl(source)}
+                >
+                  {copiedId === source.id
+                    ? <Check className="w-3.5 h-3.5 text-success" />
+                    : <Copy className="w-3.5 h-3.5" />}
+                  {copiedId === source.id ? '已复制' : '复制 URL'}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className={cn(
+                    "text-xs gap-2 cursor-pointer",
+                    source.isBlocked
+                      ? "text-muted-foreground"
+                      : "text-warning focus:text-warning",
+                  )}
+                  onSelect={() => onToggleBlock(source)}
                 >
                   <Ban className="w-3.5 h-3.5" />
-                  移出信源库
+                  {source.isBlocked ? '取消屏蔽' : '屏蔽此源'}
                 </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+                {!source.isBlocked && (
+                  <DropdownMenuItem
+                    className="text-xs gap-2 cursor-pointer text-danger focus:text-danger"
+                    onSelect={() => onRemove(source)}
+                  >
+                    <Ban className="w-3.5 h-3.5" />
+                    移出信源库
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        ) : (
+          <Button
+            variant="ghost" size="sm"
+            className="h-7 px-2 text-xs gap-1 text-muted-foreground hover:text-muted-foreground cursor-default"
+            onClick={() => onCopyUrl(source)}
+          >
+            {copiedId === source.id
+              ? <Check className="w-3 h-3 text-success" />
+              : <Copy className="w-3 h-3" />}
+            复制
+          </Button>
+        )}
       </td>
     </tr>
   )
@@ -668,10 +716,13 @@ function SourceRow({ source, onEdit, onToggleBlock, onMarkCurated, onCopyUrl, on
 
 // ── Main client component ─────────────────────────────────────────────────────
 
-export default function SourcesClient({ sources: initialSources }: { sources: SourceWithHealth[] }) {
+export default function SourcesClient({ sources: initialSources, isAdmin = false }: { sources: SourceWithHealth[]; isAdmin?: boolean }) {
+  const searchParams = useSearchParams()
+  const shouldAutoOpenAdd = searchParams.get("add") === "true"
   const [sources,    setSources]    = useState<SourceWithHealth[]>(initialSources)
   const [filter,     setFilter]     = useState<FilterKey>("all")
-  const [dialogOpen, setDialogOpen] = useState(false)
+  const [sourceSearch, setSourceSearch] = useState(() => searchParams.get("search") ?? "")
+  const [dialogOpen, setDialogOpen] = useState(shouldAutoOpenAdd)
   const [editSource, setEditSource] = useState<SourceWithHealth | null>(null)
   const [copiedId,   setCopiedId]   = useState<string | null>(null)
   const [busyId,     setBusyId]     = useState<string | null>(null)
@@ -768,6 +819,9 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
     return {
       total:      sources.length,
       myCurated:  sources.filter(s => s.isUserCurated).length,
+      official:   sources.filter(s => s.isOfficial).length,
+      kol:        sources.filter(isKolSource).length,
+      neverFetched: sources.filter(s => !s.lastFetchAt && !s.isBlocked).length,
       rssOk:      rss.filter(s => s.healthStatus === "healthy").length,
       failing:    rss.filter(s => s.healthStatus === "failing" || s.healthStatus === "degraded").length,
       blocked:    sources.filter(s => s.isBlocked).length,
@@ -792,9 +846,10 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
 
   const filtered = useMemo(
     () => applyFilter(sources, filter)
+      .filter(source => matchesSourceSearch(source, sourceSearch))
       .slice()
       .sort((a, b) => sortRank(a) - sortRank(b) || b.healthScore - a.healthScore),
-    [sources, filter, sortRank],
+    [sources, filter, sourceSearch, sortRank],
   )
 
   // Dialog key: changes whenever the target source changes, forcing a clean remount
@@ -811,22 +866,34 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
         <div className="mb-6">
           <p className="text-[9px] font-mono tracking-[0.2em] text-slate-500 uppercase mb-2">Source Library</p>
           <div className="flex items-end justify-between">
-            <h1 className="text-[2rem] font-bold tracking-tight text-slate-50">信源管理</h1>
-            <Button size="sm" onClick={openAdd} className="h-8 gap-1.5 text-xs mb-1">
-              <Plus className="w-3.5 h-3.5" />
-              添加信源
-            </Button>
+            <div className="flex items-center gap-3 mb-1">
+              <h1 className="text-[2rem] font-bold tracking-tight text-slate-50">信源管理</h1>
+              {!isAdmin && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full border"
+                      style={{ borderColor: "var(--border-subtle)", color: "var(--text-muted)" }}>
+                  访客只读
+                </span>
+              )}
+            </div>
+            {isAdmin && (
+              <Button size="sm" onClick={openAdd} className="h-8 gap-1.5 text-xs mb-1">
+                <Plus className="w-3.5 h-3.5" />
+                添加信源
+              </Button>
+            )}
           </div>
         </div>
 
         {/* ── Stats cards ── */}
-        <div className="grid grid-cols-5 gap-3 mb-5">
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-5">
           {[
             { label: "总信源",    value: stats.total,      color: "text-slate-200" },
             { label: "正常",      value: stats.rssOk,      color: "text-green-400" },
+            { label: "官方",      value: stats.official,   color: "text-sky-400" },
+            { label: "KOL",       value: stats.kol,        color: "text-teal-300" },
+            { label: "未抓取",    value: stats.neverFetched, color: stats.neverFetched > 0 ? "text-amber-400" : "text-slate-500" },
             { label: "不稳定",    value: stats.failing,    color: stats.failing > 0 ? "text-amber-400" : "text-slate-500" },
             { label: "屏蔽",      value: stats.blocked,    color: stats.blocked > 0 ? "text-red-400" : "text-slate-500" },
-            { label: "待网页抓取", value: stats.pendingWeb, color: "text-sky-400/80" },
           ].map(({ label, value, color }) => (
             <div key={label} className="rounded-xl border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
               <p className="text-[9px] font-mono tracking-widest text-slate-500 uppercase mb-1">{label}</p>
@@ -836,7 +903,16 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
         </div>
 
         {/* ── Filter bar ── */}
-        <div className="flex items-center gap-1.5 mb-4">
+        <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+          <div className="relative mr-1">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={sourceSearch}
+              onChange={e => setSourceSearch(e.target.value)}
+              placeholder="搜索信源、URL、角色..."
+              className="h-8 w-56 pl-8 text-xs bg-background"
+            />
+          </div>
           {FILTERS.map(({ key, label }) => (
             <button
               key={key}
@@ -852,12 +928,24 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
               {key === "failing" && stats.failing > 0 && (
                 <span className="ml-1.5 font-mono text-[10px] text-amber-400/80">{stats.failing}</span>
               )}
+              {key === "official" && stats.official > 0 && (
+                <span className="ml-1.5 font-mono text-[10px] text-sky-400/80">{stats.official}</span>
+              )}
+              {key === "kol" && stats.kol > 0 && (
+                <span className="ml-1.5 font-mono text-[10px] text-teal-300/80">{stats.kol}</span>
+              )}
+              {key === "never_fetched" && stats.neverFetched > 0 && (
+                <span className="ml-1.5 font-mono text-[10px] text-amber-400/80">{stats.neverFetched}</span>
+              )}
+              {key === "web" && stats.pendingWeb > 0 && (
+                <span className="ml-1.5 font-mono text-[10px] text-sky-400/80">{stats.pendingWeb}</span>
+              )}
               {key === "blocked" && stats.blocked > 0 && (
                 <span className="ml-1.5 font-mono text-[10px] text-red-400/80">{stats.blocked}</span>
               )}
             </button>
           ))}
-          {filter !== "all" && (
+          {(filter !== "all" || sourceSearch) && (
             <span className="ml-2 text-[11px] text-slate-500">
               {filtered.length} / {sources.length}
             </span>
@@ -910,6 +998,7 @@ export default function SourcesClient({ sources: initialSources }: { sources: So
                   onCopyUrl={handleCopyUrl}
                   onRemove={handleRemove}
                   copiedId={copiedId}
+                  isAdmin={isAdmin}
                 />
               ))}
             </tbody>

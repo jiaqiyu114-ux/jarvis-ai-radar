@@ -440,6 +440,9 @@ async function writeItems(
   const artCfg = getArticleFetchConfig()
   acc.articleFetch.enabled = artCfg.enabled
 
+  // Collect items needing article content — fetched in background after write phase
+  const pendingFetches: Array<{ id: string; url: string }> = []
+
   // Pre-resolve unique source IDs (one DB call per unique source URL)
   const sourceUrlToId = new Map<string, string | null>()
   const uniqueUrls    = [...new Set(items.map(i => i.originalSourceUrl).filter((u): u is string => !!u))]
@@ -478,22 +481,29 @@ async function writeItems(
       mentionCount:       1,
     })
     const dims = defaultDimensions(sourceId !== null, item.providerTrustScore ?? 65)
-    const { finalScore: rawScore } = calculateFinalScore(dims, item.publishedAt ?? new Date().toISOString())
+    // Use fetch time (now) for freshness — items inserted for the first time are "new to us"
+    // regardless of their original published_at. This prevents old-published-but-just-fetched
+    // articles (e.g. from newly added KOL blogs) from being scored invisibly low.
+    // The recommendation engine re-applies fetched_at recency at query time.
+    const { finalScore: rawScore } = calculateFinalScore(dims, new Date().toISOString())
 
-    // ── Source tier floor: prevent high-quality fresh content from scoring invisibly low ──
-    // The freshness multiplier (0.70–0.95) can push S/A tier items below the
-    // recommendation engine's candidate-pool threshold (50). Apply a floor so
-    // genuinely good sources always enter the recommendation candidate pool.
-    // Guards: item must be recent (< 72h), have title+URL, and not be spam-heavy.
+    // ── Source tier floor: ensure reputable sources always enter the candidate pool ──
     const trustScore    = item.providerTrustScore ?? 65
     const publishedMs   = item.publishedAt ? new Date(item.publishedAt).getTime() : 0
     const hoursOld      = publishedMs > 0 ? (Date.now() - publishedMs) / 3_600_000 : 999
     const isFresh72h    = hoursOld < 72
     const hasTitleUrl   = !!(item.title?.trim() && item.url?.trim())
     let finalScore = rawScore
-    if (isFresh72h && hasTitleUrl) {
-      if (trustScore >= 88) finalScore = Math.max(finalScore, 68)  // S-tier: min 68
-      else if (trustScore >= 78) finalScore = Math.max(finalScore, 60)  // A-tier: min 60
+    if (hasTitleUrl) {
+      if (isFresh72h) {
+        if (trustScore >= 88) finalScore = Math.max(finalScore, 68)  // S-tier, fresh
+        else if (trustScore >= 78) finalScore = Math.max(finalScore, 60)  // A-tier, fresh
+        else if (trustScore >= 65) finalScore = Math.max(finalScore, 52)  // B-tier, fresh
+      } else {
+        // Older published items: visibility floor so they enter the candidate pool
+        if (trustScore >= 78) finalScore = Math.max(finalScore, 52)  // A/S-tier, older
+        else if (trustScore >= 65) finalScore = Math.max(finalScore, 50)  // B-tier, older
+      }
     }
 
     const row = buildItemPayload(item, sourceId, providerSignal, finalScore, dims)
@@ -503,56 +513,16 @@ async function writeItems(
       if (upserted.status === 'inserted') acc.items.insertedItems++
       else                                acc.items.reusedItems++
 
-      // ── Article content (best-effort, only for newly inserted items) ─────────
+      // ── Article content: queue for background fetch, write RSS fallback now ──
       if (upserted.status === 'inserted') {
         const fetchUrl = item.canonicalUrl || item.url
-        const timeLeft = deadline - Date.now()
-        const canFetchArticle =
-          artCfg.enabled &&
-          fetchUrl.startsWith('http') &&
-          acc.articleFetch.attempted < artCfg.maxItemsPerRun &&
-          timeLeft > artCfg.timeoutMs + 8_000  // leave 8s buffer beyond fetch timeout
-
-        let articleContentWritten = false
-
-        if (canFetchArticle) {
-          acc.articleFetch.attempted++
-          const artResult = await fetchArticleContent(fetchUrl, artCfg)
-          if (artResult.ok && artResult.textContent && artResult.textContent.length >= 100) {
-            articleContentWritten = true
-            acc.articleFetch.succeeded++
-            acc.articleFetch.totalContentLength += artResult.contentLength
-            updateItemArticleContent(upserted.id, {
-              finalUrl:      artResult.finalUrl ?? fetchUrl,
-              title:         artResult.title ?? null,
-              siteName:      artResult.siteName ?? null,
-              author:        artResult.byline ?? null,
-              publishedAt:   artResult.publishedTime ?? null,
-              excerpt:       artResult.excerpt ?? null,
-              cleanText:     artResult.textContent,
-              wordCount:     artResult.wordCount ?? 0,
-              coverImageUrl: artResult.coverImageUrl ?? null,
-              mediaUrls:     artResult.mediaUrls ?? [],
-              contentHash:   `${artResult.contentLength}_${fetchUrl.length}`,
-            }).catch(() => {})
-          } else {
-            acc.articleFetch.failed++
-            markItemContentFetchFailed(
-              upserted.id,
-              artResult.error ?? 'no_text_extracted',
-              fetchUrl,
-            ).catch(() => {})
-          }
-        } else if (artCfg.enabled && fetchUrl.startsWith('http')) {
-          acc.articleFetch.skipped++
+        if (artCfg.enabled && fetchUrl.startsWith('http')) {
+          pendingFetches.push({ id: upserted.id, url: fetchUrl })
         }
-
-        // Fallback: write RSS content:encoded if article fetch didn't happen
-        if (!articleContentWritten) {
-          const rfc = item.rssFullContent
-          if (rfc && rfc.length >= 200) {
-            updateItemRssContent(upserted.id, rfc).catch(() => {})
-          }
+        // RSS content:encoded is already in memory — write immediately, no network
+        const rfc = item.rssFullContent
+        if (rfc && rfc.length >= 200) {
+          updateItemRssContent(upserted.id, rfc).catch(() => {})
         }
       }
 
@@ -573,6 +543,42 @@ async function writeItems(
     `reused=${acc.items.reusedItems} skipped=${acc.items.skippedWrite} ` +
     `duration=${acc.stages.writeMs}ms`
   )
+
+  // Fire-and-forget article content fetching — runs after write phase, doesn't block pipeline
+  const fetchLimit = Math.min(artCfg.maxItemsPerRun, pendingFetches.length)
+  acc.articleFetch.attempted = fetchLimit
+  if (fetchLimit > 0) {
+    console.log(`[rss ingest] article-content: queuing ${fetchLimit}/${pendingFetches.length} items for background fetch`)
+    void backgroundFetchArticleContent(pendingFetches.slice(0, fetchLimit), artCfg)
+  }
+}
+
+async function backgroundFetchArticleContent(
+  items: Array<{ id: string; url: string }>,
+  artCfg: ReturnType<typeof getArticleFetchConfig>,
+): Promise<void> {
+  for (const { id, url } of items) {
+    try {
+      const artResult = await fetchArticleContent(url, artCfg)
+      if (artResult.ok && artResult.textContent && artResult.textContent.length >= 100) {
+        updateItemArticleContent(id, {
+          finalUrl:      artResult.finalUrl ?? url,
+          title:         artResult.title ?? null,
+          siteName:      artResult.siteName ?? null,
+          author:        artResult.byline ?? null,
+          publishedAt:   artResult.publishedTime ?? null,
+          excerpt:       artResult.excerpt ?? null,
+          cleanText:     artResult.textContent,
+          wordCount:     artResult.wordCount ?? 0,
+          coverImageUrl: artResult.coverImageUrl ?? null,
+          mediaUrls:     artResult.mediaUrls ?? [],
+          contentHash:   `${artResult.contentLength}_${url.length}`,
+        }).catch(() => {})
+      } else {
+        markItemContentFetchFailed(id, artResult.error ?? 'no_text_extracted', url).catch(() => {})
+      }
+    } catch { /* background errors are silent */ }
+  }
 }
 
 // ── Main orchestrator ─────────────────────────────────────────────────────────

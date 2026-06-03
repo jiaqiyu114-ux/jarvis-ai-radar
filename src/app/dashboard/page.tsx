@@ -6,7 +6,8 @@ import { cookies } from "next/headers"
 import { AppShell } from "@/components/layout/app-shell"
 import { TodayRecommendationCard } from "./_today-recommendation-card"
 import { EngineRecommendationCard } from "./_engine-recommendation-card"
-import { TopSignalCard } from "./_top-signal-card"
+import { SignalTimeline } from "./_signal-timeline"
+import { buildSignalTimeline } from "@/lib/recommendations/signal-timeline"
 import { DashboardMoreMenu } from "./_dashboard-more-menu"
 import { ProfileSync } from "./_profile-sync"
 import { listEventClusters, type EventClusterListItem } from "@/lib/db/event-clusters"
@@ -31,6 +32,8 @@ import {
 import { GlassPanel } from "@/components/ui/glass-panel"
 import { ClientRelativeTime } from "@/components/time/client-relative-time"
 import { cleanDisplayText, safeSourceName } from "@/lib/text/decode-html"
+import { getRole, isAdmin as checkAdmin } from "@/lib/auth-server"
+import { AutoPipelineTrigger } from "./_auto-pipeline-trigger"
 import type { RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import type { DailyRecommendationSnapshotItem } from "@/lib/data/daily-recommendation-snapshot"
 import type { TopSignalData } from "@/components/layout/app-shell"
@@ -54,7 +57,7 @@ function LegacySectionBlock({ title, items, empty }: {
   }
   return (
     <section className="border-b last:border-b-0" style={{ borderColor: "var(--border-subtle)" }}>
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b" style={{ borderColor: "var(--border-subtle)", background: "rgba(255,255,255,0.045)" }}>
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b" style={{ borderColor: "var(--border-subtle)", background: "var(--overlay-2)" }}>
         <h2 className="section-title">{title}</h2>
         <span className="meta-text">{items.length} 条</span>
       </div>
@@ -147,9 +150,9 @@ function candidateSourceLine(item: RecommendedItem): string {
 function Stat({ value, label }: { value: string | number; label: string }) {
   return (
     <div className="rounded-xl px-3 py-2.5"
-         style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--border-subtle)" }}>
-      <div className="rf-stat-num text-[20px] leading-none">{value}</div>
-      <div className="mt-1.5 text-[11px]" style={{ color: "var(--text-muted)" }}>{label}</div>
+         style={{ background: "var(--overlay-2)", border: "1px solid var(--border-subtle)" }}>
+      <div className="rf-stat-num">{value}</div>
+      <div className="mt-1.5" style={{ fontSize: "var(--fs-nano)", color: "var(--text-muted)", fontWeight: "var(--fw-nano)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
     </div>
   )
 }
@@ -157,6 +160,9 @@ function Stat({ value, label }: { value: string | number; label: string }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default async function DashboardPage() {
+  const role    = await getRole()
+  const adminOk = checkAdmin(role)
+
   // Read current profile from cookie (set by settings page after save)
   const cookieStore = await cookies()
   const profileId = cookieStore.get(PROFILE_COOKIE)?.value ?? DEFAULT_PROFILE_ID
@@ -240,11 +246,10 @@ export default async function DashboardPage() {
   const todayHVCount = engineHighValue.length
   const todayTotal   = todayMRCount + todayHVCount
 
-  // The single top recommendation becomes the hero TopSignalCard; the rest fill
-  // the standard recommendation list below it.
-  const topRecommendation = engineMustRead[0] ?? engineHighValue[0] ?? null
-  const restMustRead  = engineMustRead.filter(i => i.id !== topRecommendation?.id)
-  const restHighValue = engineHighValue.filter(i => i.id !== topRecommendation?.id)
+  // Dashboard is a live timeline: the curated signals ordered by publish time
+  // ("what happened, and when"). Built from the whole scored snapshot pool.
+  const timelineGroups = buildSignalTimeline(engineItems, { limit: 50 })
+  const timelineCount  = timelineGroups.reduce((n, g) => n + g.entries.length, 0)
 
   // Score distribution across all engine candidates (for explaining gaps)
   const scoreDist = hasEngineSnapshot ? {
@@ -280,10 +285,10 @@ export default async function DashboardPage() {
     : undefined
 
   const snapshotAge = freshness?.ageMinutes != null ? formatSnapshotAge(freshness.ageMinutes) : '—'
-  const titleSub = todayTotal > 0
-    ? `今天先看 ${todayTotal} 条高价值信号`
+  const titleSub = timelineCount > 0
+    ? `按发布时间排列，看看此刻正在发生什么`
     : hasEngineSnapshot
-      ? '今日暂无达到推荐线的信号'
+      ? '暂无带时间的信号，稍后刷新快照'
       : '点击「更多 → 手动操作」生成今日推荐'
 
   return (
@@ -300,42 +305,43 @@ export default async function DashboardPage() {
           profileId={profileId}
         />
 
+        {/* Auto-trigger pipeline when snapshot is stale (> 1h) or missing */}
+        <AutoPipelineTrigger snapshotGeneratedAt={engineSnapshot?.generated_at ?? null} />
+
         {/* ── Title row ── */}
-        <header className="mb-4 flex items-start justify-between gap-4">
+        <header className="mb-6 flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full"
-                    style={{ background: "var(--rf-purple)", boxShadow: "0 0 12px var(--rf-purple)" }} />
-              <h1 className="text-[22px] font-bold tracking-[-0.01em]" style={{ color: "var(--text-primary)" }}>
-                今日雷达
-              </h1>
+            <div className="mb-2 flex items-center gap-2">
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--primary)" }} />
+              <span className="page-kicker">Today&apos;s Radar</span>
             </div>
-            <p className="mt-1.5 text-[13.5px]" style={{ color: "var(--text-secondary)" }}>{titleSub}</p>
+            <h1 className="editorial-title">今日雷达</h1>
+            <p className="page-subtitle mt-2">{titleSub}</p>
           </div>
-          <DashboardMoreMenu presetLabel={activePreset.label} />
+          <DashboardMoreMenu presetLabel={activePreset.label} isAdmin={adminOk} />
         </header>
 
         {/* ── Tabs + snapshot meta ── */}
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <div className="rf-tabs">
             <span className="rf-tab active">
-              今日推荐{todayMRCount > 0 && <span className="rf-tab-dot" />}
+              时间线{todayMRCount > 0 && <span className="rf-tab-dot" />}
             </span>
             <Link href="/feed" className="rf-tab">全量流</Link>
             <Link href="/selected" className="rf-tab">精选流</Link>
           </div>
           <div className="flex items-center gap-2 text-[12px]" style={{ color: "var(--text-tertiary)" }}>
             <span>Snapshot</span>
-            <span style={{ color: "rgba(255,255,255,0.18)" }}>·</span>
+            <span style={{ color: "var(--hairline)" }}>·</span>
             <ClientRelativeTime value={engineSnapshot?.generated_at} fallback="尚未生成" />
-            <span style={{ color: "rgba(255,255,255,0.18)" }}>·</span>
+            <span style={{ color: "var(--hairline)" }}>·</span>
             <span>real data only</span>
           </div>
         </div>
 
         {snapshotIsStale && (
           <div className="mb-4 rounded-lg px-4 py-2 text-[12px]"
-               style={{ border: "1px solid rgba(242,212,92,0.28)", background: "rgba(242,212,92,0.10)", color: "var(--warning)" }}>
+               style={{ border: "1px solid color-mix(in srgb, var(--warning) 28%, transparent)", background: "color-mix(in srgb, var(--warning) 10%, transparent)", color: "var(--warning)" }}>
             快照已超过 24 小时，建议在「更多 → 手动操作」刷新。
           </div>
         )}
@@ -346,56 +352,131 @@ export default async function DashboardPage() {
           </div>
         )}
 
-        <main className="space-y-5">
+        {/* ── Two-column body: timeline (left) + stats sidebar (right) ── */}
+        <div className="flex gap-7 items-start">
 
-          {/* ── Multicolor recommendation card grid (event-card form) ── */}
-          {hasEngineSnapshot && topRecommendation && (
-            <section>
-              <div className="mb-2.5 flex items-center gap-2">
-                <h2 className="text-[12px] font-semibold uppercase tracking-[0.10em]" style={{ color: "var(--text-tertiary)" }}>
-                  重点信号
-                </h2>
-                <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-                  {todayTotal} 条 · 分数 ≥ {thresholds.highValue}
-                </span>
-              </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                <TopSignalCard item={topRecommendation} />
-                {[...restMustRead, ...restHighValue].map((item, i) => (
-                  <EngineRecommendationCard key={item.id} item={item} enableDetail variant="color" colorIndex={i + 1} />
-                ))}
-              </div>
-            </section>
-          )}
+          {/* ══ LEFT: main timeline column ══ */}
+          <main className="min-w-0 flex-1 space-y-6">
 
-          {/* ── Empty state ── */}
-          {hasEngineSnapshot && todayTotal === 0 && (
-            <div className="rf-panel space-y-2">
-              <p className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
-                今日暂无新推荐（档位：{activePreset.label}，推荐线 {thresholds.highValue} 分）
-              </p>
-              <div className="space-y-1 text-[12px]" style={{ color: "var(--text-tertiary)" }}>
-                {capturedTotal === 0 && <p>· 快照无捕获信息，请点击「刷新推荐」触发抓取。</p>}
-                {capturedTotal > 0 && demoterToObserve.length > 0 && (
-                  <p>· 有 {demoterToObserve.length} 条信息接近推荐线但未达到 {thresholds.highValue} 分，已进入近期观察。</p>
+            {/* ── Signal timeline — curated signals by publish time ── */}
+            {hasEngineSnapshot && timelineCount > 0 && (
+              <section>
+                <div className="mb-3 flex items-center gap-2">
+                  <h2 className="text-[12px] font-semibold uppercase tracking-[0.10em]" style={{ color: "var(--text-tertiary)" }}>
+                    信号时间线
+                  </h2>
+                  <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+                    {timelineCount} 条 · 按发布时间 · 分数 ≥ {thresholds.observe}
+                  </span>
+                </div>
+                <SignalTimeline groups={timelineGroups} />
+              </section>
+            )}
+
+            {/* ── No engine snapshot: legacy / first-run states ── */}
+            {!hasEngineSnapshot && (
+              hasLegacySnapshot ? (
+                <GlassPanel className="overflow-hidden">
+                  <LegacySectionBlock title="重点推荐" items={legacySnapshot.grouped.must_read} empty="无 must_read 内容" />
+                  <LegacySectionBlock title="今日推荐" items={legacySnapshot.grouped.high_value} empty="无 high_value 内容" />
+                </GlassPanel>
+              ) : (
+                <GlassPanel className="px-6 py-10 text-center space-y-3">
+                  <p className="text-sm text-muted-foreground">尚无推荐快照</p>
+                  <p className="text-xs text-muted-foreground/60">
+                    点击右上角「刷新推荐」生成首个快照，或先在{' '}
+                    <Link href="/sources" className="underline">信源管理</Link> 中导入信源。
+                  </p>
+                </GlassPanel>
+              )
+            )}
+
+            {/* ── Demoted content, collapsed below the fold ── */}
+            {hasEngineSnapshot && (
+              <div>
+                {(engineObserve.length > 0 || engineObserveBacklog.length > 0) && (
+                  <details className="fold">
+                    <summary>
+                      <ChevronRight className="chev h-4 w-4" /> 近期观察
+                      <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+                        {engineObserve.length + engineObserveBacklog.length} 条 · 分数 {thresholds.observe}–{thresholds.highValue - 1}
+                      </span>
+                    </summary>
+                    <div className="space-y-3 pb-2 pt-3">
+                      {engineObserve.length > 0 && (
+                        <EngineSectionBlock title="" items={engineObserve} enableDetail empty="" />
+                      )}
+                      {engineObserveBacklog.length > 0 && (
+                        <EngineSectionBlock title="" items={engineObserveBacklog.slice(0, 30)} enableDetail empty="" />
+                      )}
+                      {engineObserveBacklog.length > 30 && (
+                        <div className="text-center">
+                          <Link href="/feed" className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>
+                            还有 {engineObserveBacklog.length - 30} 条 · 查看全量流 →
+                          </Link>
+                        </div>
+                      )}
+                    </div>
+                  </details>
                 )}
-                {engineObserveBacklog.length > 0 && <p>· 近期观察有 {engineObserveBacklog.length} 条，见下方。</p>}
-              </div>
-              <Link href="/settings" className="text-[11px] text-primary/80 hover:text-primary underline">调整推荐强度 →</Link>
-            </div>
-          )}
 
-          {/* ── Insights row: signal overview + score distribution ── */}
+                {candidateRef.length > 0 && (
+                  <details className="fold">
+                    <summary>
+                      <ChevronRight className="chev h-4 w-4" /> 候选参考
+                      <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>{candidateRef.length} 条</span>
+                    </summary>
+                    <div className="space-y-2 pb-2 pt-3">
+                      <p className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>未进入今日推荐，仅供排查和对比。</p>
+                      {candidateRef.map(item => (
+                        <div key={item.id} className="candidate-item flex items-start gap-3">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg font-mono text-[14px] font-semibold tabular-nums"
+                                style={{ color: "var(--accent-gold)", background: "rgba(242,212,92,0.12)", border: "1px solid rgba(242,212,92,0.26)" }}>
+                            {item.recommendationScore}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="line-clamp-2 text-[13px] font-medium leading-[18px]" style={{ color: "var(--text-secondary)" }}>
+                              {cleanDisplayText(item.title)}
+                            </p>
+                            <p className="mt-1 truncate text-[11.5px]" style={{ color: "var(--text-tertiary)" }}>
+                              {candidateSourceLine(item)} · {candidateObservationLabel(item, thresholds)}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                      <Link href="/feed" className="glass-btn mt-1 text-[12px]">打开全量流 →</Link>
+                    </div>
+                  </details>
+                )}
+
+                {eventClusters.length > 0 && (
+                  <details className="fold">
+                    <summary>
+                      <ChevronRight className="chev h-4 w-4" /> 多源追踪
+                      <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>{eventClusters.length}</span>
+                    </summary>
+                    <div className="pb-2 pt-1">
+                      {eventClusters.map(c => <MiniCluster key={c.id} cluster={c} />)}
+                    </div>
+                  </details>
+                )}
+              </div>
+            )}
+          </main>
+
+          {/* ══ RIGHT: sticky stats sidebar ══ */}
           {hasEngineSnapshot && (
-            <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <aside className="w-[268px] shrink-0 sticky top-4 space-y-4">
+
+              {/* Signal overview */}
               <div className="rf-panel">
                 <div className="mb-3 flex items-center justify-between">
                   <span className="rf-panel-title">信号概览</span>
-                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>近 72h</span>
+                  <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>快照</span>
                 </div>
-                <div className="grid grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-3 gap-2">
                   <Stat value={capturedTotal} label="捕捉" />
-                  <Stat value={todayTotal} label="推荐" />
+                  <Stat value={timelineCount} label="时间线" />
                   <Stat value={todayMRCount} label="必看" />
                   <Stat value={candidateRef.length} label="候选" />
                   <Stat value={engineObserveBacklog.length} label="观察" />
@@ -403,18 +484,19 @@ export default async function DashboardPage() {
                 </div>
               </div>
 
+              {/* Score distribution */}
               {scoreDist && (
                 <div className="rf-panel">
                   <div className="mb-3 flex items-center justify-between">
                     <span className="rf-panel-title">分数分布</span>
                     <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                      引擎候选 {engineSnapshot?.recommendation_candidates ?? 0}
+                      {engineSnapshot?.recommendation_candidates ?? 0} 候选
                     </span>
                   </div>
                   <div className="rf-barchart">
                     {(Object.entries(scoreDist) as [string, number][]).map(([range, count]) => (
                       <div key={range} className="rf-bar-col">
-                        <span className="font-mono text-[11px]" style={{ color: "var(--text-tertiary)" }}>{count}</span>
+                        <span className="font-mono text-[10px]" style={{ color: "var(--text-tertiary)" }}>{count}</span>
                         <div className="rf-bar" style={{ height: `${Math.max(4, (count / distMax) * 88)}%` }} />
                         <span className="rf-bar-label">{range}</span>
                       </div>
@@ -422,99 +504,20 @@ export default async function DashboardPage() {
                   </div>
                 </div>
               )}
-            </section>
+
+              {/* Source health */}
+              <div className="rf-panel">
+                <span className="rf-panel-title">信源状态</span>
+                <div className="mt-3 space-y-2 text-[12px]">
+                  <div className="flex justify-between"><span style={{ color: "var(--text-tertiary)" }}>正常</span><span style={{ color: "var(--accent-lime)" }} className="font-mono font-bold">{healthySrc}</span></div>
+                  <div className="flex justify-between"><span style={{ color: "var(--text-tertiary)" }}>不稳定</span><span style={{ color: failingSrc > 0 ? "var(--accent-gold)" : "var(--text-muted)" }} className="font-mono font-bold">{failingSrc}</span></div>
+                  <div className="flex justify-between"><span style={{ color: "var(--text-tertiary)" }}>活跃信源</span><span style={{ color: "var(--text-secondary)" }} className="font-mono font-bold">{activeSrc}</span></div>
+                </div>
+              </div>
+
+            </aside>
           )}
-
-          {/* ── No engine snapshot: legacy / first-run states ── */}
-          {!hasEngineSnapshot && (
-            hasLegacySnapshot ? (
-              <GlassPanel className="overflow-hidden">
-                <LegacySectionBlock title="重点推荐" items={legacySnapshot.grouped.must_read} empty="无 must_read 内容" />
-                <LegacySectionBlock title="今日推荐" items={legacySnapshot.grouped.high_value} empty="无 high_value 内容" />
-              </GlassPanel>
-            ) : (
-              <GlassPanel className="px-6 py-10 text-center space-y-3">
-                <p className="text-sm text-muted-foreground">尚无推荐快照</p>
-                <p className="text-xs text-muted-foreground/60">
-                  点击右上角「刷新推荐」生成首个快照，或先在{' '}
-                  <Link href="/sources" className="underline">信源管理</Link> 中导入信源。
-                </p>
-              </GlassPanel>
-            )
-          )}
-
-          {/* ── Demoted content, collapsed below the fold ── */}
-          {hasEngineSnapshot && (
-            <div>
-              {(engineObserve.length > 0 || engineObserveBacklog.length > 0) && (
-                <details className="fold">
-                  <summary>
-                    <ChevronRight className="chev h-4 w-4" /> 近期观察
-                    <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-                      {engineObserve.length + engineObserveBacklog.length} 条 · 分数 {thresholds.observe}–{thresholds.highValue - 1}
-                    </span>
-                  </summary>
-                  <div className="space-y-3 pb-2 pt-3">
-                    {engineObserve.length > 0 && (
-                      <EngineSectionBlock title="" items={engineObserve} enableDetail empty="" />
-                    )}
-                    {engineObserveBacklog.length > 0 && (
-                      <EngineSectionBlock title="" items={engineObserveBacklog.slice(0, 30)} enableDetail empty="" />
-                    )}
-                    {engineObserveBacklog.length > 30 && (
-                      <div className="text-center">
-                        <Link href="/feed" className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>
-                          还有 {engineObserveBacklog.length - 30} 条 · 查看全量流 →
-                        </Link>
-                      </div>
-                    )}
-                  </div>
-                </details>
-              )}
-
-              {candidateRef.length > 0 && (
-                <details className="fold">
-                  <summary>
-                    <ChevronRight className="chev h-4 w-4" /> 候选参考
-                    <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>{candidateRef.length} 条</span>
-                  </summary>
-                  <div className="space-y-2 pb-2 pt-3">
-                    <p className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>未进入今日推荐，仅供排查和对比。</p>
-                    {candidateRef.map(item => (
-                      <div key={item.id} className="candidate-item flex items-start gap-3">
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg font-mono text-[14px] font-semibold tabular-nums"
-                              style={{ color: "var(--accent-gold)", background: "rgba(242,212,92,0.12)", border: "1px solid rgba(242,212,92,0.26)" }}>
-                          {item.recommendationScore}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p className="line-clamp-2 text-[13px] font-medium leading-[18px]" style={{ color: "var(--text-secondary)" }}>
-                            {cleanDisplayText(item.title)}
-                          </p>
-                          <p className="mt-1 truncate text-[11.5px]" style={{ color: "var(--text-tertiary)" }}>
-                            {candidateSourceLine(item)} · {candidateObservationLabel(item, thresholds)}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                    <Link href="/feed" className="glass-btn mt-1 text-[12px]">打开全量流 →</Link>
-                  </div>
-                </details>
-              )}
-
-              {eventClusters.length > 0 && (
-                <details className="fold">
-                  <summary>
-                    <ChevronRight className="chev h-4 w-4" /> 多源追踪
-                    <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>{eventClusters.length}</span>
-                  </summary>
-                  <div className="pb-2 pt-1">
-                    {eventClusters.map(c => <MiniCluster key={c.id} cluster={c} />)}
-                  </div>
-                </details>
-              )}
-            </div>
-          )}
-        </main>
+        </div>
 
         {/* ── System debug fold ── */}
         <details className="mt-8 overflow-hidden rounded-2xl border" style={{ borderColor: "var(--border-subtle)" }}>
@@ -523,7 +526,7 @@ export default async function DashboardPage() {
             <span className="text-[9px] opacity-50">（默认折叠）</span>
           </summary>
           <div className="space-y-1 border-t px-4 py-3 font-mono text-[11px] text-muted-foreground/55"
-               style={{ borderColor: "var(--border-subtle)", background: "rgba(255,255,255,0.045)" }}>
+               style={{ borderColor: "var(--border-subtle)", background: "var(--overlay-2)" }}>
             <p>快照生成于：{formatTime(engineSnapshot?.generated_at)}</p>
             <p>近72h捕捉：{capturedTotal} 条 / 引擎候选：{engineSnapshot?.recommendation_candidates ?? 0} 条</p>
             <p>今日推荐：MR={todayMRCount} HV={todayHVCount} / 观察榜：{engineObserveBacklog.length} 条</p>

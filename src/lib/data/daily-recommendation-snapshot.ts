@@ -2,6 +2,7 @@ import { supabaseServer, isServerSupabaseConfigured } from '@/lib/supabase/serve
 import { getTodaySnapshot, type TodayRecommendationItem } from '@/lib/data/today-adapter'
 import { normalizeDisplayText } from '@/lib/text/normalize-display-text'
 import { detectLowValueNoise, type NoiseResult } from '@/lib/scoring/noise'
+import { localDayBoundaries } from '@/lib/recommendations/daily-gate'
 import type {
   AnalysisGate,
   AnalysisPriority,
@@ -28,7 +29,6 @@ import type {
 const DEFAULT_LIMIT = 12
 const DEFAULT_WINDOW_HOURS = 24
 const FALLBACK_WINDOW_HOURS = 72
-const MIN_RECOMMENDATIONS_BEFORE_FALLBACK = 8
 const MAX_POOL_LIMIT = 300
 
 const RECOMMENDATION_OR = [
@@ -275,10 +275,6 @@ function toSourceTier(value: DbSourceTier | string | null | undefined): SourceTi
 
 function toCategory(value: string | null | undefined): Category {
   return (value ?? '其他') as Category
-}
-
-function windowStart(hours: number, now = new Date()): string {
-  return new Date(now.getTime() - hours * 60 * 60 * 1000).toISOString()
 }
 
 function isMissingRelationError(error: { code?: string | null; message?: string | null }): boolean {
@@ -612,29 +608,32 @@ function groupedItems(items: DailyRecommendationSnapshotItem[]): DailyRecommenda
   }
 }
 
-async function candidateCount(startIso: string): Promise<number> {
+async function candidateCount(startIso: string, endIso?: string): Promise<number> {
   if (!supabaseServer) return 0
-  const { count, error } = await supabaseServer
+  let query = supabaseServer
     .from('items')
     .select('id', { count: 'exact', head: true })
     .eq('data_origin', 'real')
     .gte('fetched_at', startIso)
-    .or(RECOMMENDATION_OR)
+  if (endIso) query = query.lt('fetched_at', endIso)
+  const { count, error } = await query.or(RECOMMENDATION_OR)
 
   if (error) throw new Error(`[daily-recommendation] count candidates: ${error.message}`)
   return count ?? 0
 }
 
-async function fetchCandidateRows(startIso: string, limit: number): Promise<{ rows: CandidateRow[]; total: number }> {
+async function fetchCandidateRows(startIso: string, limit: number, endIso?: string): Promise<{ rows: CandidateRow[]; total: number }> {
   if (!supabaseServer) return { rows: [], total: 0 }
 
   const poolLimit = Math.min(Math.max(limit * 10, 80), MAX_POOL_LIMIT)
+  let query = supabaseServer
+    .from('items')
+    .select(ITEM_SELECT)
+    .eq('data_origin', 'real')
+    .gte('fetched_at', startIso)
+  if (endIso) query = query.lt('fetched_at', endIso)
   const [{ data, error }, total] = await Promise.all([
-    supabaseServer
-      .from('items')
-      .select(ITEM_SELECT)
-      .eq('data_origin', 'real')
-      .gte('fetched_at', startIso)
+    query
       .or(RECOMMENDATION_OR)
       .order('should_enter_daily_report', { ascending: false })
       .order('should_track_event', { ascending: false })
@@ -644,15 +643,20 @@ async function fetchCandidateRows(startIso: string, limit: number): Promise<{ ro
       .order('source_trace_score', { ascending: false, nullsFirst: false })
       .order('fetched_at', { ascending: false, nullsFirst: false })
       .limit(poolLimit),
-    candidateCount(startIso),
+    candidateCount(startIso, endIso),
   ])
 
   if (error) throw new Error(`[daily-recommendation] fetch candidates: ${error.message}`)
   return { rows: sortCandidates((data ?? []) as unknown as CandidateRow[]), total }
 }
 
-async function selectRowsForSnapshot(
-  windowHours: number,
+/**
+ * Select candidates for one calendar day (00:00 → 24:00 in JARVIS_TIMEZONE).
+ * Unlike the old rolling window, the daily report covers a fixed day — sparse
+ * days produce sparse reports, which is the intended, honest behaviour.
+ */
+async function selectRowsForDay(
+  date:  string,
   limit: number,
 ): Promise<{
   rows: CandidateRow[]
@@ -662,30 +666,15 @@ async function selectRowsForSnapshot(
   windowStart: string
   windowEnd: string
 }> {
-  const now = new Date()
-  const startIso = windowStart(windowHours, now)
-  const first = await fetchCandidateRows(startIso, limit)
-
-  if (first.rows.length >= MIN_RECOMMENDATIONS_BEFORE_FALLBACK || windowHours >= FALLBACK_WINDOW_HOURS) {
-    return {
-      rows: first.rows.slice(0, limit),
-      totalCandidates: first.total,
-      fallbackWindow: false,
-      windowHours,
-      windowStart: startIso,
-      windowEnd: now.toISOString(),
-    }
-  }
-
-  const fallbackStartIso = windowStart(FALLBACK_WINDOW_HOURS, now)
-  const fallback = await fetchCandidateRows(fallbackStartIso, limit)
+  const { startIso, endIso } = localDayBoundaries(date)
+  const { rows, total } = await fetchCandidateRows(startIso, limit, endIso)
   return {
-    rows: fallback.rows.slice(0, limit),
-    totalCandidates: fallback.total,
-    fallbackWindow: true,
-    windowHours: FALLBACK_WINDOW_HOURS,
-    windowStart: fallbackStartIso,
-    windowEnd: now.toISOString(),
+    rows: rows.slice(0, limit),
+    totalCandidates: total,
+    fallbackWindow: false,
+    windowHours: 24,
+    windowStart: startIso,
+    windowEnd: endIso,
   }
 }
 
@@ -991,7 +980,7 @@ export async function generateDailyRecommendationSnapshot(
     }
   }
 
-  const selected = await selectRowsForSnapshot(requestedWindowHours, limit)
+  const selected = await selectRowsForDay(date, limit)
   const dryRunMarker = {
     id: existingRun?.id ?? 'dry-run',
     generated_at: new Date().toISOString(),

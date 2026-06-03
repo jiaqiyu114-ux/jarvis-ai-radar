@@ -57,6 +57,50 @@ export function todayKey(tz = JARVIS_TIMEZONE): string {
   return getLocalDateKey(new Date(), tz) ?? new Date().toISOString().slice(0, 10)
 }
 
+/**
+ * Offset (in minutes) such that local time = UTC + offset, for the given tz at
+ * the given instant. Uses Intl so it is correct for any zone (incl. DST).
+ */
+function tzOffsetMinutes(at: Date, tz: string): number {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  })
+  const p: Record<string, string> = {}
+  for (const part of dtf.formatToParts(at)) p[part.type] = part.value
+  const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second)
+  return (asUTC - at.getTime()) / 60_000
+}
+
+/** UTC ISO of local midnight (00:00) for a YYYY-MM-DD day key in the given tz. */
+function localMidnightIso(dateKey: string, tz: string): string {
+  const guess  = new Date(dateKey + 'T00:00:00Z').getTime()
+  const offset = tzOffsetMinutes(new Date(guess), tz)
+  return new Date(guess - offset * 60_000).toISOString()
+}
+
+/** The calendar day after the given YYYY-MM-DD key. */
+export function nextDayKey(dateKey: string): string {
+  return new Date(new Date(dateKey + 'T00:00:00Z').getTime() + 86_400_000)
+    .toISOString().slice(0, 10)
+}
+
+/**
+ * UTC [startIso, endIso) bounds of a local calendar day (00:00 → 24:00) in the
+ * configured timezone. Used by the daily report so it covers a full day, not a
+ * rolling 24h window.
+ */
+export function localDayBoundaries(
+  dateKey: string,
+  tz = JARVIS_TIMEZONE,
+): { startIso: string; endIso: string } {
+  return {
+    startIso: localMidnightIso(dateKey, tz),
+    endIso:   localMidnightIso(nextDayKey(dateKey), tz),
+  }
+}
+
 /** Returns how many calendar days ago the date was (in the given timezone). */
 export function calendarDaysAgo(
   date: Date | string | null | undefined,

@@ -5,8 +5,8 @@ import { AppShell } from "@/components/layout/app-shell"
 import { ThemeToggle } from "@/components/theme/theme-toggle"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
-import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
+import { Eye, EyeOff, Zap, Clock, Database, Sliders } from "lucide-react"
 import {
   PROFILE_PRESETS,
   DEFAULT_PROFILE_ID,
@@ -17,251 +17,440 @@ import {
   type ProfileId,
 } from "@/lib/recommendations/recommendation-thresholds"
 
-// ── Persistence ────────────────────────────────────────────────────────────────
+// ── Persistence ───────────────────────────────────────────────────────────────
 
 type SavedSettings = {
-  profileId:              ProfileId
-  autoScore:              boolean
-  interests:              string
-  blocklist:              string
-  profileUpdatedAt?:      string  // ISO timestamp when profile last changed
+  profileId:         ProfileId
+  autoScore:         boolean
+  interests:         string
+  blocklist:         string
+  profileUpdatedAt?: string
 }
 
 function loadSettings(): SavedSettings {
-  if (typeof window === 'undefined') {
-    return { profileId: DEFAULT_PROFILE_ID, autoScore: true, interests: '', blocklist: '' }
+  if (typeof window === "undefined") {
+    return { profileId: DEFAULT_PROFILE_ID, autoScore: true, interests: "", blocklist: "" }
   }
   try {
     const raw = localStorage.getItem(SETTINGS_STORAGE_KEY)
     if (raw) return JSON.parse(raw) as SavedSettings
   } catch {}
-  return { profileId: DEFAULT_PROFILE_ID, autoScore: true, interests: '大语言模型, AI工具, 内容创作', blocklist: '' }
+  return { profileId: DEFAULT_PROFILE_ID, autoScore: true, interests: "大语言模型, AI工具, 内容创作", blocklist: "" }
 }
 
-function persistSettings(s: SavedSettings) {
+function persistSettings(s: SavedSettings, cb?: () => void) {
   try {
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(s))
-    // Also write cookies so the server-rendered dashboard can read the profile
-    const exp = '; max-age=31536000; path=/; SameSite=Strict'
+    const exp = "; max-age=31536000; path=/; SameSite=Strict"
     document.cookie = `${PROFILE_COOKIE}=${encodeURIComponent(s.profileId)}${exp}`
     if (s.profileUpdatedAt) {
       document.cookie = `${PROFILE_UPDATED_AT_COOKIE}=${encodeURIComponent(s.profileUpdatedAt)}${exp}`
     }
+    cb?.()
   } catch {}
 }
 
-// ── Layout helpers ────────────────────────────────────────────────────────────
+// ── Shared primitives ─────────────────────────────────────────────────────────
 
-function Section({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
+function SettingCard({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <section className="space-y-4">
-      <div>
-        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-        {desc && <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>}
-      </div>
+    <div
+      className={cn("rounded-xl border p-4 space-y-4", className)}
+      style={{ background: "var(--bg-card)", borderColor: "var(--border-subtle)", boxShadow: "var(--shadow-soft)" }}
+    >
       {children}
-    </section>
-  )
-}
-
-function Collapsible({ title, children }: { title: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <div className="rounded-2xl border border-white/[0.08] overflow-hidden" style={{background:"rgba(18,22,26,0.55)"}}>
-      <button
-        type="button"
-        onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between px-4 py-3 text-left"
-      >
-        <span className="text-[11px] font-medium text-muted-foreground/70">{title}</span>
-        <span className="text-muted-foreground/40 text-[10px] font-mono">{open ? '▲' : '▼'}</span>
-      </button>
-      {open && <div className="border-t border-white/[0.06] px-4 py-4 space-y-4">{children}</div>}
     </div>
   )
 }
 
+function SettingRow({ label, desc, children }: { label: string; desc?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="min-w-0">
+        <p className="text-[13px] font-medium" style={{ color: "var(--text-primary)" }}>{label}</p>
+        {desc && <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{desc}</p>}
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  )
+}
+
+function Divider() {
+  return <div className="h-px" style={{ background: "var(--border-subtle)" }} />
+}
+
+function SavedBadge({ msg }: { msg: string | null }) {
+  if (!msg) return null
+  return (
+    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium"
+         style={{ background: "color-mix(in srgb, var(--accent-lime) 10%, transparent)", color: "var(--accent-lime)", border: "1px solid color-mix(in srgb, var(--accent-lime) 24%, transparent)" }}>
+      <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: "var(--accent-lime)" }} />
+      {msg}
+    </div>
+  )
+}
+
+/** Parse comma-separated string into trimmed non-empty tag list */
+function parseTags(s: string): string[] {
+  return s.split(",").map(t => t.trim()).filter(Boolean)
+}
+
+function TagPreview({ raw }: { raw: string }) {
+  const tags = parseTags(raw)
+  if (tags.length === 0) return null
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-2">
+      {tags.map(t => (
+        <span key={t} className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium"
+              style={{ background: "var(--overlay-3)", color: "var(--text-tertiary)", border: "1px solid var(--border-subtle)" }}>
+          {t}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function InfoRow({ label, value, accent }: { label: string; value: string; accent?: string }) {
+  return (
+    <div className="flex items-center justify-between text-[12px]">
+      <span style={{ color: "var(--text-tertiary)" }}>{label}</span>
+      <span className="font-mono font-semibold" style={{ color: accent ?? "var(--text-secondary)" }}>{value}</span>
+    </div>
+  )
+}
+
+// ── Tab definitions ───────────────────────────────────────────────────────────
+
+type Tab = "外观" | "推荐" | "数据" | "模型"
+
+const TABS: { id: Tab; icon: typeof Sliders }[] = [
+  { id: "外观",  icon: Eye },
+  { id: "推荐",  icon: Sliders },
+  { id: "数据",  icon: Database },
+  { id: "模型",  icon: Zap },
+]
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
-  const [profileId, setProfileId]   = useState<ProfileId>(() => loadSettings().profileId)
-  const [autoScore, setAutoScore]   = useState(() => loadSettings().autoScore)
-  const [interests, setInterests]   = useState(() => loadSettings().interests)
-  const [blocklist, setBlocklist]   = useState(() => loadSettings().blocklist)
-  const [saveMsg, setSaveMsg]       = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<Tab>("外观")
 
-  /** Auto-save when user selects a profile — no button required. */
+  const [profileId,  setProfileId]  = useState<ProfileId>(() => loadSettings().profileId)
+  const [autoScore,  setAutoScore]  = useState(() => loadSettings().autoScore)
+  const [interests,  setInterests]  = useState(() => loadSettings().interests)
+  const [blocklist,  setBlocklist]  = useState(() => loadSettings().blocklist)
+  const [showKey,    setShowKey]    = useState(false)
+  const [saveMsg,    setSaveMsg]    = useState<string | null>(null)
+
+  function flash(msg: string) {
+    setSaveMsg(msg)
+    setTimeout(() => setSaveMsg(null), 2500)
+  }
+
   function handleProfileChange(id: ProfileId) {
     setProfileId(id)
     const now = new Date().toISOString()
-    const s: SavedSettings = { profileId: id, autoScore, interests, blocklist, profileUpdatedAt: now }
-    persistSettings(s)
-    setSaveMsg('已自动保存，回到今日雷达后自动生效')
-    setTimeout(() => setSaveMsg(null), 3000)
+    persistSettings({ profileId: id, autoScore, interests, blocklist, profileUpdatedAt: now },
+      () => flash("档位已保存，回到今日雷达生效"))
   }
 
-  /** Save other settings (interests, blocklist, autoScore). */
-  function handleMiscSave() {
-    const s: SavedSettings = {
-      profileId,
-      autoScore,
-      interests,
-      blocklist,
-      profileUpdatedAt: loadSettings().profileUpdatedAt,
-    }
-    persistSettings(s)
-    setSaveMsg('其他设置已保存')
-    setTimeout(() => setSaveMsg(null), 2000)
+  function handleSave() {
+    persistSettings({ profileId, autoScore, interests, blocklist,
+      profileUpdatedAt: loadSettings().profileUpdatedAt },
+      () => flash("已保存"))
   }
 
-  const activePreset   = PROFILE_PRESETS.find(p => p.id === profileId) ?? PROFILE_PRESETS[2]
+  const activePreset     = PROFILE_PRESETS.find(p => p.id === profileId) ?? PROFILE_PRESETS[2]
   const activeThresholds = getProfileThresholds(profileId)
 
   return (
     <AppShell>
-      <div className="p-8 max-w-[660px] space-y-8">
+      <div className="mx-auto max-w-[680px] px-6 py-8">
 
-        <div>
-          <p className="page-kicker mb-1">Preferences</p>
-          <h1 className="editorial-title text-3xl">配置</h1>
-          <p className="text-muted-foreground text-sm mt-2">外观、推荐强度和模型设置</p>
+        {/* ── Header ── */}
+        <div className="mb-7">
+          <p className="page-kicker mb-1.5">Preferences</p>
+          <h1 className="editorial-title">配置</h1>
         </div>
 
-        {/* ── Appearance ── */}
-        <Section title="外观">
-          <div className="flex items-center justify-between p-4 rounded-2xl"
-               style={{
-                 background:"linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04))",
-                 border:"1px solid rgba(255,255,255,0.12)",
-               }}>
-            <div>
-              <p className="text-sm font-medium text-foreground">界面主题</p>
-              <p className="text-xs text-muted-foreground mt-0.5">浅色 / 深色 / 跟随系统</p>
-            </div>
-            <ThemeToggle />
+        {/* ── Tab bar ── */}
+        <div className="mb-6 flex items-center gap-1 p-1 rounded-xl"
+             style={{ background: "var(--overlay-2)", border: "1px solid var(--border-subtle)" }}>
+          {TABS.map(({ id, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setActiveTab(id)}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[13px] font-medium transition-all",
+                activeTab === id ? "shadow-sm" : "hover:opacity-75",
+              )}
+              style={activeTab === id
+                ? { background: "var(--bg-card)", color: "var(--text-primary)", boxShadow: "var(--shadow-soft)" }
+                : { color: "var(--text-tertiary)" }}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {id}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Save badge (global) ── */}
+        {saveMsg && (
+          <div className="mb-4">
+            <SavedBadge msg={saveMsg} />
           </div>
-        </Section>
+        )}
 
-        <Separator />
-
-        {/* ── Recommendation intensity — auto-save on click ── */}
-        <Section
-          title="推荐强度"
-          desc="选择每天想看的信息密度。达到当前档位阈值的内容进入「今日推荐」；接近但未达标的进入「近期观察」。"
-        >
-          <div className="space-y-2">
-            {PROFILE_PRESETS.map(preset => (
-              <button
-                key={preset.id}
-                type="button"
-                onClick={() => handleProfileChange(preset.id)}
-                className={cn(
-                  "w-full text-left px-4 py-3 rounded-2xl border transition-all duration-150",
-                  profileId === preset.id
-                    ? "border-primary/40 text-foreground"
-                    : "border-white/[0.07] text-muted-foreground hover:border-white/[0.13] hover:text-foreground",
-                )}
-                style={profileId === preset.id
-                  ? {background:"rgba(232,93,61,0.08)"}
-                  : {background:"rgba(18,22,26,0.55)"}
-                }
+        {/* ════════════════════════════════════════════════
+            外观 tab
+            ════════════════════════════════════════════════ */}
+        {activeTab === "外观" && (
+          <div className="space-y-4">
+            <SettingCard>
+              <SettingRow
+                label="界面主题"
+                desc="浅色 / 深色 / 跟随系统（跟随系统时由操作系统决定）"
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <span className={cn(
-                      "w-2.5 h-2.5 rounded-full shrink-0 border-2 transition-all",
-                      profileId === preset.id
-                        ? "border-primary bg-primary shadow-[0_0_8px_rgba(232,93,61,0.5)]"
-                        : "border-muted-foreground/25 bg-transparent",
-                    )} />
-                    <div>
-                      <span className="text-sm font-medium">{preset.label}</span>
-                      <span className="text-xs text-muted-foreground/70 ml-2">{preset.desc}</span>
+                <ThemeToggle />
+              </SettingRow>
+            </SettingCard>
+
+            {/* Placeholder cards for future */}
+            <SettingCard>
+              <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+                更多外观设置（信息密度、字号）将在后续版本加入。
+              </p>
+            </SettingCard>
+          </div>
+        )}
+
+        {/* ════════════════════════════════════════════════
+            推荐 tab
+            ════════════════════════════════════════════════ */}
+        {activeTab === "推荐" && (
+          <div className="space-y-5">
+
+            {/* Presets */}
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.10em] mb-3"
+                 style={{ color: "var(--text-tertiary)" }}>推荐强度</p>
+              <p className="text-[12px] mb-3" style={{ color: "var(--text-muted)" }}>
+                达到阈值的内容进入今日推荐；接近但未达标的进入近期观察。
+              </p>
+              <div className="space-y-1.5">
+                {PROFILE_PRESETS.map(preset => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => handleProfileChange(preset.id)}
+                    className="w-full text-left px-3.5 py-2.5 rounded-xl border transition-all duration-150"
+                    style={profileId === preset.id
+                      ? { background: "var(--primary-soft)", borderColor: "color-mix(in srgb, var(--primary-color) 35%, transparent)" }
+                      : { background: "var(--overlay-1)", borderColor: "var(--border-subtle)" }}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0 border-2 transition-all"
+                          style={profileId === preset.id
+                            ? { background: "var(--primary-color)", borderColor: "var(--primary-color)" }
+                            : { background: "transparent", borderColor: "var(--text-muted)" }}
+                        />
+                        <span className="text-[13px] font-medium" style={{ color: profileId === preset.id ? "var(--primary-on-soft)" : "var(--text-secondary)" }}>
+                          {preset.label}
+                        </span>
+                        <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{preset.desc}</span>
+                      </div>
+                      <span className="text-[10px] font-mono shrink-0" style={{ color: "var(--text-muted)" }}>{preset.daily}</span>
                     </div>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground/50 shrink-0 font-mono">{preset.daily}</span>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          {/* Auto-save toast */}
-          {saveMsg && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-success/20 bg-success/[0.06]">
-              <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />
-              <p className="text-[11px] text-success/80">{saveMsg}</p>
-            </div>
-          )}
-
-          {/* Advanced thresholds */}
-          <Collapsible title={`高级：当前档位「${activePreset.label}」的阈值详情`}>
-            <div className="grid grid-cols-3 gap-3 text-xs">
-              {[
-                { label: '重点推荐门槛', val: activeThresholds.mustRead },
-                { label: '今日推荐门槛', val: activeThresholds.highValue },
-                { label: '近期观察门槛', val: activeThresholds.observe },
-              ].map(({ label, val }) => (
-                <div key={label} className="text-center p-2 rounded border border-border">
-                  <p className="text-muted-foreground text-[10px] mb-1">{label}</p>
-                  <p className="font-mono font-bold text-lg text-foreground">{val}</p>
-                </div>
-              ))}
-            </div>
-            <p className="text-[10px] text-muted-foreground/60">
-              分数 ≥ {activeThresholds.highValue}：进入今日推荐 ·{' '}
-              {activeThresholds.observe}–{activeThresholds.highValue - 1}：进入近期观察 ·{' '}
-              低于 {activeThresholds.observe}：不显示
-            </p>
-          </Collapsible>
-        </Section>
-
-        <Separator />
-
-        {/* ── Model config ── */}
-        <Section title="模型配置">
-          <div className="space-y-3 p-4 rounded-lg border border-border bg-card">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-foreground">自动评分</p>
-                <p className="text-xs text-muted-foreground">抓取后自动调用模型打分</p>
+                  </button>
+                ))}
               </div>
-              <Switch checked={autoScore} onCheckedChange={v => { setAutoScore(v); handleMiscSave() }} />
             </div>
-            <Separator />
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-foreground">API Key</label>
-              <Input type="password" placeholder="sk-••••••••••••••••" className="h-8 text-xs font-mono" />
+
+            {/* Advanced thresholds — collapsible inline */}
+            <details className="rounded-xl border overflow-hidden"
+                     style={{ borderColor: "var(--border-subtle)", background: "var(--overlay-1)" }}>
+              <summary className="flex items-center justify-between px-4 py-2.5 cursor-pointer list-none text-[11px]"
+                       style={{ color: "var(--text-muted)" }}>
+                <span>高级：当前档位「{activePreset.label}」的阈值详情</span>
+                <span className="font-mono text-[10px]">▼</span>
+              </summary>
+              <div className="border-t px-4 py-3 space-y-3"
+                   style={{ borderColor: "var(--border-subtle)" }}>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { label: "重点推荐", val: activeThresholds.mustRead },
+                    { label: "今日推荐", val: activeThresholds.highValue },
+                    { label: "近期观察", val: activeThresholds.observe },
+                  ].map(({ label, val }) => (
+                    <div key={label} className="text-center p-2 rounded-lg"
+                         style={{ background: "var(--overlay-2)", border: "1px solid var(--border-subtle)" }}>
+                      <p className="text-[10px] mb-1" style={{ color: "var(--text-muted)" }}>{label}</p>
+                      <p className="font-mono font-bold text-lg" style={{ color: "var(--text-primary)" }}>{val}</p>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                  ≥ {activeThresholds.highValue} 进入今日推荐 · {activeThresholds.observe}–{activeThresholds.highValue - 1} 进入近期观察 · 低于 {activeThresholds.observe} 不显示
+                </p>
+              </div>
+            </details>
+
+            {/* Interest profile */}
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.10em] mb-3"
+                 style={{ color: "var(--text-tertiary)" }}>兴趣画像</p>
+              <SettingCard className="space-y-3">
+                <div className="space-y-1.5">
+                  <label className="text-[12px] font-medium" style={{ color: "var(--text-secondary)" }}>
+                    关注关键词 <span style={{ color: "var(--text-muted)" }}>（逗号分隔，提升相关内容权重）</span>
+                  </label>
+                  <Input
+                    value={interests}
+                    onChange={e => setInterests(e.target.value)}
+                    onBlur={handleSave}
+                    placeholder="大语言模型, AI工具, 独立开发..."
+                    className="text-[12px] h-8"
+                  />
+                  <TagPreview raw={interests} />
+                </div>
+                <Divider />
+                <div className="space-y-1.5">
+                  <label className="text-[12px] font-medium" style={{ color: "var(--text-secondary)" }}>
+                    屏蔽关键词 <span style={{ color: "var(--text-muted)" }}>（逗号分隔，降低匹配内容权重）</span>
+                  </label>
+                  <Input
+                    value={blocklist}
+                    onChange={e => setBlocklist(e.target.value)}
+                    onBlur={handleSave}
+                    placeholder="广告, 营销号..."
+                    className="text-[12px] h-8"
+                  />
+                  <TagPreview raw={blocklist} />
+                </div>
+              </SettingCard>
             </div>
           </div>
-        </Section>
+        )}
 
-        <Separator />
+        {/* ════════════════════════════════════════════════
+            数据 tab
+            ════════════════════════════════════════════════ */}
+        {activeTab === "数据" && (
+          <div className="space-y-5">
 
-        {/* ── Interest profile ── */}
-        <Section title="个人兴趣画像" desc="影响 AI 相关性评分，逗号分隔关键词">
-          <div className="space-y-3 p-4 rounded-lg border border-border bg-card">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-foreground">关注关键词</label>
-              <Input
-                value={interests}
-                onChange={e => setInterests(e.target.value)}
-                onBlur={handleMiscSave}
-                placeholder="大语言模型, AI工具, 独立开发..."
-                className="text-xs h-8"
-              />
+            {/* Pipeline automation */}
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.10em] mb-3"
+                 style={{ color: "var(--text-tertiary)" }}>自动化管道</p>
+              <SettingCard>
+                <div className="space-y-3">
+                  <InfoRow label="Flash 初筛（DeepSeek-chat）" value="每 3 小时" accent="var(--accent-blue)" />
+                  <InfoRow label="信号抓取 + 推荐快照"          value="每 6 小时" accent="var(--accent-lime)" />
+                  <InfoRow label="日报时间窗口"                  value="00:00 – 24:00" />
+                  <Divider />
+                  <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                    以上均由 Vercel Cron 自动触发。本地开发时请在处理队列页手动运行。
+                  </p>
+                </div>
+              </SettingCard>
             </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-foreground">屏蔽关键词</label>
-              <Input
-                value={blocklist}
-                onChange={e => setBlocklist(e.target.value)}
-                onBlur={handleMiscSave}
-                placeholder="逗号分隔，匹配到的内容将被降权..."
-                className="text-xs h-8"
-              />
+
+            {/* Flash filter info */}
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.10em] mb-3"
+                 style={{ color: "var(--text-tertiary)" }}>Flash 初筛说明</p>
+              <SettingCard>
+                <div className="space-y-2.5">
+                  <InfoRow label="初筛模型"   value="deepseek-chat" accent="var(--accent-blue)" />
+                  <InfoRow label="批量大小"   value="25 条/次" />
+                  <InfoRow label="最低分数"   value="≥ 3 / 5（通过）" />
+                  <InfoRow label="预估成本"   value="~¥0.015 / 100 条" />
+                  <Divider />
+                  <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                    Flash 初筛通过的内容再经规则分级（none/light/standard/deep），
+                    仅 deep/cluster 级别才会调用 deepseek-reasoner 做深度解读。
+                    可在处理队列页手动触发「Flash 初筛」按钮。
+                  </p>
+                </div>
+              </SettingCard>
+            </div>
+
+            {/* Data window */}
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.10em] mb-3"
+                 style={{ color: "var(--text-tertiary)" }}>数据范围</p>
+              <SettingCard>
+                <div className="space-y-2.5">
+                  <InfoRow label="时区"          value="Asia/Singapore (UTC+8)" />
+                  <InfoRow label="日报周期"       value="当日 00:00 → 24:00" />
+                  <InfoRow label="时间线排序依据" value="发布时间（publishedAt）" />
+                </div>
+              </SettingCard>
             </div>
           </div>
-        </Section>
+        )}
+
+        {/* ════════════════════════════════════════════════
+            模型 tab
+            ════════════════════════════════════════════════ */}
+        {activeTab === "模型" && (
+          <div className="space-y-5">
+
+            {/* Scoring */}
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.10em] mb-3"
+                 style={{ color: "var(--text-tertiary)" }}>自动评分</p>
+              <SettingCard>
+                <SettingRow label="抓取后自动打分" desc="关闭后仍可在处理队列手动触发">
+                  <Switch checked={autoScore} onCheckedChange={v => { setAutoScore(v); handleSave() }} />
+                </SettingRow>
+              </SettingCard>
+            </div>
+
+            {/* API Keys */}
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.10em] mb-3"
+                 style={{ color: "var(--text-tertiary)" }}>API 配置</p>
+              <SettingCard>
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[12px] font-medium" style={{ color: "var(--text-secondary)" }}>
+                        DeepSeek API Key
+                      </label>
+                      <span className="text-[10px] px-2 py-0.5 rounded font-medium"
+                            style={{ background: "color-mix(in srgb, var(--accent-lime) 12%, transparent)", color: "var(--accent-lime)", border: "1px solid color-mix(in srgb, var(--accent-lime) 25%, transparent)" }}>
+                        已配置（.env.local）
+                      </span>
+                    </div>
+                    <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                      在项目根目录的 .env.local 中设置 LLM_API_KEY。当前已检测到有效密钥。
+                    </p>
+                  </div>
+                </div>
+              </SettingCard>
+            </div>
+
+            {/* Model info */}
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.10em] mb-3"
+                 style={{ color: "var(--text-tertiary)" }}>使用模型</p>
+              <SettingCard>
+                <div className="space-y-2.5">
+                  <InfoRow label="深度解读 / 深度分析" value="deepseek-reasoner" accent="var(--accent-orange)" />
+                  <InfoRow label="Flash 初筛（批量预过滤）" value="deepseek-chat"    accent="var(--accent-blue)" />
+                  <Divider />
+                  <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                    可通过 .env.local 中的 LLM_MODEL（深度）和 LLM_FAST_MODEL（初筛）修改。
+                  </p>
+                </div>
+              </SettingCard>
+            </div>
+          </div>
+        )}
 
       </div>
     </AppShell>

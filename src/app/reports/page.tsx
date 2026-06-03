@@ -1,39 +1,54 @@
 export const dynamic = 'force-dynamic'
 
-import { getLatestDailyRecommendationSnapshot } from '@/lib/data/daily-recommendation-snapshot'
-import { getFeedItems } from '@/lib/data/feed-adapter'
 import { AppShell } from '@/components/layout/app-shell'
 import ReportsClient from './_reports-client'
+import { getDailyRecommendationSnapshot, getLatestDailyRecommendationSnapshot } from '@/lib/data/daily-recommendation-snapshot'
+import { todayKey, JARVIS_TIMEZONE } from '@/lib/recommendations/daily-gate'
+import { getFeedItems } from '@/lib/data/feed-adapter'
 
-export default async function ReportsPage() {
+function shiftDate(dateKey: string, days: number): string {
+  const d = new Date(dateKey + 'T12:00:00Z')
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+export default async function ReportsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ date?: string }>
+}) {
+  const sp = await searchParams
+  const today = todayKey(JARVIS_TIMEZONE)
+
+  // Validate the requested date param
+  const requestedDate =
+    sp.date && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) && sp.date <= today
+      ? sp.date
+      : null
+
   const [snapshot, feedItems] = await Promise.all([
-    getLatestDailyRecommendationSnapshot(),
-    getFeedItems(),
+    requestedDate
+      ? getDailyRecommendationSnapshot(requestedDate)
+      : getLatestDailyRecommendationSnapshot(),
+    getFeedItems({ limit: 1 }),
   ])
 
   const topSignal = feedItems[0]
     ? { score: feedItems[0].finalScore, title: feedItems[0].title, category: feedItems[0].category }
     : undefined
 
-  if (!snapshot.hasSnapshot) {
-    return (
-      <AppShell topSignal={topSignal}>
-        <div className="p-8 max-w-[900px]">
-          <p className="page-kicker mb-1">Daily Brief</p>
-          <h1 className="editorial-title text-[2.25rem]">日报快照</h1>
-          <div className="mt-8 rounded-lg border border-border py-16 text-center bg-card space-y-2">
-            <p className="text-sm text-muted-foreground">推荐快照尚未生成</p>
-            <p className="text-xs text-muted-foreground/60">
-              请在处理队列完成分流后，到今日雷达页面生成今日推荐。
-            </p>
-            <p className="text-[10px] text-muted-foreground/40 mt-2">
-              API: POST /api/today/recommendations/generate
-            </p>
-          </div>
-        </div>
-      </AppShell>
-    )
-  }
+  const viewingDate = snapshot.date || today
+  const prevDate = shiftDate(viewingDate, -1)
+  const nextDate = shiftDate(viewingDate, 1)
 
-  return <ReportsClient snapshot={snapshot} topSignal={topSignal} />
+  return (
+    <ReportsClient
+      snapshot={snapshot}
+      topSignal={topSignal}
+      today={today}
+      viewingDate={viewingDate}
+      prevDate={prevDate}
+      nextDate={nextDate <= today ? nextDate : null}
+    />
+  )
 }

@@ -12,9 +12,10 @@
  * Priority layers (higher = more urgent):
  *   1. Staleness: never fetched > 24h > 6h > fresh   (dominant factor)
  *   2. User-curated flag (+200)
- *   3. Source tier: S(+150) A(+100) B(+50) C(+0) D(-20)
- *   4. user_source_priority field (+5 per point, max 20)
- *   5. Health penalty: degraded(-20) failing(-100, but may be cooled down)
+ *   3. Official / KOL role: official(+160), key_person/KOL(+180)
+ *   4. Source tier: S(+150) A(+100) B(+50) C(+0) D(-20)
+ *   5. user_source_priority field (+5 per point, max 20)
+ *   6. Health penalty: degraded(-20) failing(-100, but may be cooled down)
  *
  * Failure cooldown:
  *   failure_count 0-1  → no cooldown
@@ -69,6 +70,9 @@ export type SourceSelectionStats = {
   selectedNeverFetched: number
   selectedStale24h:    number   // last fetched > 24h ago
   selectedOfficialRss: number   // official:true in user_source_note
+  selectedKolRss:      number
+  activeKolRss:        number
+  pendingWebSources:   number
   selectedByTier:      Record<string, number>
 }
 
@@ -138,6 +142,32 @@ const HEALTH_MODIFIER: Record<string, number> = {
   healthy: 0, degraded: -20, unknown: 0, failing: -100,
 }
 
+function sourceNote(source: DbSource): string {
+  return (source as DbSource & { user_source_note?: string | null }).user_source_note ?? ''
+}
+
+function sourceRole(source: DbSource): string | null {
+  const note = sourceNote(source)
+  const match = note.match(/\brole:([^|\s]+)/)
+  return match?.[1] ?? null
+}
+
+function isOfficialSource(source: DbSource): boolean {
+  return source.is_official === true || sourceNote(source).includes('official:true')
+}
+
+function isKolSource(source: DbSource): boolean {
+  const note = sourceNote(source).toLowerCase()
+  const role = sourceRole(source)
+  return role === 'key_person'
+    || note.includes('sourcepack:ai-kol-sources-v1')
+    || note.includes('role:kol')
+    || note.includes('role:ai_research_kol')
+    || note.includes('role:ai_engineering_kol')
+    || note.includes('role:ai_infra_kol')
+    || note.includes('role:analyst_kol')
+}
+
 function computeUrgencyScore(
   source: DbSource & { last_fetch_status?: string | null; last_error_message?: string | null },
   now: Date,
@@ -166,6 +196,8 @@ function computeUrgencyScore(
 
   // ── Priority boosters ─────────────────────────────────────────────────────
   if (source.is_user_curated) score += 200
+  if (isOfficialSource(source)) score += 160
+  if (isKolSource(source)) score += 180
   score += TIER_BOOST[source.source_tier] ?? 0
   score += Math.min((source.user_source_priority ?? 0) * 5, 100)
 
@@ -213,7 +245,9 @@ export async function selectSourcesForIngest(
       skippedWebPlatform: 0, skippedPendingWeb: 0,
       selectedUserCurated: 0, selectedTierSA: 0,
       selectedNeverFetched: 0, selectedStale24h: 0,
-      selectedOfficialRss: 0, selectedByTier: {},
+      selectedOfficialRss: 0, selectedKolRss: 0,
+      activeKolRss: 0, pendingWebSources: 0,
+      selectedByTier: {},
     },
   }
 
@@ -226,7 +260,7 @@ export async function selectSourcesForIngest(
       'id, name, url, source_tier, category, platform, is_blocked, data_origin, ' +
       'health_status, failure_count, last_fetch_at, last_error_at, last_success_at, ' +
       'last_fetch_status, last_error_message, ' +
-      'is_user_curated, user_source_priority, user_source_note',
+      'is_official, is_user_curated, user_source_priority, user_source_note',
     )
     .neq('data_origin', 'demo')
     .order('source_tier', { ascending: true })
@@ -263,7 +297,7 @@ export async function selectSourcesForIngest(
     }
 
     // Safety net: skip any source tagged pendingWeb:true in user_source_note
-    const srcNote = (source as DbSource & { user_source_note?: string | null }).user_source_note ?? ''
+    const srcNote = sourceNote(source)
     if (srcNote.includes('pendingWeb:true')) {
       skippedPendingWeb++
       reasonBySourceId[source.id] = 'pendingWeb:true in user_source_note'
@@ -298,6 +332,9 @@ export async function selectSourcesForIngest(
       stalenessBucket === 'stale_24h' ? `stale >24h (+800)` :
       stalenessBucket === 'stale_6h' ? `stale >6h (+400)` : 'fresh (+50)',
       source.is_user_curated ? 'user_curated (+200)' : null,
+      isOfficialSource(source) ? 'official (+160)' : null,
+      isKolSource(source) ? 'kol (+180)' : null,
+      sourceRole(source) ? `role=${sourceRole(source)}` : null,
       `tier ${source.source_tier}`,
       source.health_status ? `health=${source.health_status}` : null,
       (source as { last_fetch_status?: string | null }).last_fetch_status === 'failed' ? 'last_fetch_failed(-200)' : null,
@@ -365,10 +402,10 @@ export async function selectSourcesForIngest(
     selectedTierSA:      selectedEntries.filter(e => e.source.source_tier === 'S' || e.source.source_tier === 'A').length,
     selectedNeverFetched: selectedEntries.filter(e => e.stalenessBucket === 'never_fetched').length,
     selectedStale24h:    selectedEntries.filter(e => e.stalenessBucket === 'stale_24h').length,
-    selectedOfficialRss: selectedEntries.filter(e => {
-      const n = (e.source as DbSource & { user_source_note?: string | null }).user_source_note ?? ''
-      return n.includes('official:true')
-    }).length,
+    selectedOfficialRss: selectedEntries.filter(e => isOfficialSource(e.source)).length,
+    selectedKolRss:      selectedEntries.filter(e => isKolSource(e.source)).length,
+    activeKolRss:        all.filter(s => !s.is_blocked && s.platform === 'rss' && isKolSource(s)).length,
+    pendingWebSources:   all.filter(s => !s.is_blocked && s.platform !== 'rss').length,
     selectedByTier,
   }
 
