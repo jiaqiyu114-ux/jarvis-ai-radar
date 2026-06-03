@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/pipeline/flash-filter",
-      "schedule": "0 */3 * * *"
+      "schedule": "0 0 * * *"
     },
     {
       "path": "/api/pipeline/recommendations?mode=scheduled&maxSources=12&ingestTimeoutMs=55000",
