@@ -1,16 +1,12 @@
 {
   "crons": [
     {
+      "path": "/api/pipeline/recommendations?mode=scheduled&maxSources=16&ingestTimeoutMs=55000",
+      "schedule": "30 23 * * *"
+    },
+    {
       "path": "/api/pipeline/flash-filter",
-      "schedule": "0 0 * * *"
-    },
-    {
-      "path": "/api/pipeline/recommendations?mode=scheduled&maxSources=12&ingestTimeoutMs=55000",
-      "schedule": "0 */6 * * *"
-    },
-    {
-      "path": "/api/today/recommendations/generate",
-      "schedule": "0 0 * * *"
+      "schedule": "30 0 * * *"
     }
   ]
 }
