@@ -9,7 +9,7 @@ import { EngineRecommendationCard } from "./_engine-recommendation-card"
 import { SignalTimeline } from "./_signal-timeline"
 import { buildSignalTimeline } from "@/lib/recommendations/signal-timeline"
 import { DashboardMoreMenu } from "./_dashboard-more-menu"
-import { ProfileSync } from "./_profile-sync"
+import { DashboardRefreshCoordinator } from "./_refresh-coordinator"
 import { listEventClusters, type EventClusterListItem } from "@/lib/db/event-clusters"
 import { getLatestDailyRecommendationSnapshot } from "@/lib/data/daily-recommendation-snapshot"
 import { getLatestRecommendationSnapshot } from "@/lib/db/recommendation-snapshots"
@@ -33,7 +33,6 @@ import { GlassPanel } from "@/components/ui/glass-panel"
 import { ClientRelativeTime } from "@/components/time/client-relative-time"
 import { cleanDisplayText, safeSourceName } from "@/lib/text/decode-html"
 import { getRole, isAdmin as checkAdmin } from "@/lib/auth-server"
-import { AutoPipelineTrigger } from "./_auto-pipeline-trigger"
 import type { RecommendedItem } from "@/lib/recommendations/recommendation-engine"
 import type { DailyRecommendationSnapshotItem } from "@/lib/data/daily-recommendation-snapshot"
 import type { TopSignalData } from "@/components/layout/app-shell"
@@ -301,14 +300,11 @@ export default async function DashboardPage() {
     >
       <div className="mx-auto max-w-[1240px] px-5 py-6 md:px-7">
 
-        {/* Auto-refresh if profile changed after snapshot */}
-        <ProfileSync
+        {/* Unified refresh coordinator: display sync + stale content fetch, one lock */}
+        <DashboardRefreshCoordinator
           snapshotGeneratedAt={engineSnapshot?.generated_at ?? null}
           profileId={profileId}
         />
-
-        {/* Auto-trigger pipeline when snapshot is stale (> 1h) or missing */}
-        <AutoPipelineTrigger snapshotGeneratedAt={engineSnapshot?.generated_at ?? null} />
 
         {/* ── Pipeline error / stale alert banner ── */}
         {(() => {
