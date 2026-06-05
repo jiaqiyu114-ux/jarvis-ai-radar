@@ -88,7 +88,7 @@ export default function LoginPage() {
                 className="rounded-md px-2 py-0.5 text-[10.5px] font-semibold tracking-wider"
                 style={{ background: `${PRIMARY}22`, color: PRIMARY, border: `1px solid ${PRIMARY}44` }}
               >
-                v1.3.1
+                v1.4.0
               </span>
             </div>
             <p className="text-[22px] font-bold leading-snug tracking-tight" style={{ color: "#d8d8e0" }}>
@@ -305,7 +305,7 @@ export default function LoginPage() {
           </button>
 
           <p className="mt-7 text-center text-[11px]" style={{ color: "#2a2a32" }}>
-            Personal Radar · v1.3.1
+            Personal Radar · v1.4.0
           </p>
         </div>
       </div>

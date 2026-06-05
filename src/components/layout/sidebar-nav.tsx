@@ -172,7 +172,7 @@ export function SidebarNav() {
         <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--success)", boxShadow: "0 0 10px var(--success)" }} />
         <span className="text-[10px]" style={{ color: "var(--text-tertiary)" }}>Pipeline ready</span>
         <span className="ml-auto text-[9px] font-mono uppercase tracking-widest" style={{ color: "var(--text-muted)" }}>
-          v1.3.1
+          v1.4.0
         </span>
       </div>
     </aside>
