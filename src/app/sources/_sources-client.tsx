@@ -887,16 +887,16 @@ export default function SourcesClient({ sources: initialSources, isAdmin = false
         {/* ── Stats cards ── */}
         <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-5">
           {[
-            { label: "总信源",    value: stats.total,      color: "text-slate-200" },
-            { label: "正常",      value: stats.rssOk,      color: "text-green-400" },
-            { label: "官方",      value: stats.official,   color: "text-sky-400" },
-            { label: "KOL",       value: stats.kol,        color: "text-teal-300" },
-            { label: "未抓取",    value: stats.neverFetched, color: stats.neverFetched > 0 ? "text-amber-400" : "text-slate-500" },
-            { label: "不稳定",    value: stats.failing,    color: stats.failing > 0 ? "text-amber-400" : "text-slate-500" },
-            { label: "屏蔽",      value: stats.blocked,    color: stats.blocked > 0 ? "text-red-400" : "text-slate-500" },
+            { label: "总信源",  value: stats.total,        color: "text-foreground" },
+            { label: "正常",    value: stats.rssOk,        color: "text-emerald-600 dark:text-emerald-400" },
+            { label: "官方",    value: stats.official,     color: "text-sky-600 dark:text-sky-400" },
+            { label: "KOL",     value: stats.kol,          color: "text-teal-600 dark:text-teal-400" },
+            { label: "未抓取",  value: stats.neverFetched, color: stats.neverFetched > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground" },
+            { label: "不稳定",  value: stats.failing,      color: stats.failing > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground" },
+            { label: "屏蔽",    value: stats.blocked,      color: stats.blocked > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground" },
           ].map(({ label, value, color }) => (
-            <div key={label} className="rounded-xl border border-white/[0.07] bg-white/[0.03] px-3 py-2.5">
-              <p className="text-[9px] font-mono tracking-widest text-slate-500 uppercase mb-1">{label}</p>
+            <div key={label} className="rounded-xl border border-border bg-card px-3 py-2.5">
+              <p className="text-[9px] font-mono tracking-widest text-muted-foreground uppercase mb-1">{label}</p>
               <p className={cn("text-xl font-bold tabular-nums font-mono", color)}>{value}</p>
             </div>
           ))}

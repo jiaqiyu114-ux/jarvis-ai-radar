@@ -34,18 +34,27 @@ function isMissingTable(err: { code?: string | null; message?: string | null }):
 
 /**
  * Returns the set of item IDs already delivered as today_recommendation
- * for the given delivery date. Fast — queries only today's deliveries.
+ * for the given delivery date.
+ *
+ * olderThanMinutes (default 240 = 4h): only suppress items whose delivery
+ * record is older than this threshold. This grace period prevents same-session
+ * pipeline re-runs from immediately marking everything as "already delivered"
+ * — matching the 4h grace in getPreviouslyRecommendedItemIds (snapshot path).
+ * Without this, running the pipeline twice within an hour would empty 必看.
  */
 export async function getTodayDeliveredItemIds(
   deliveryDate: string,
+  olderThanMinutes = 240,
 ): Promise<Set<string>> {
   if (!isServerSupabaseConfigured || !supabaseServer) return new Set()
   try {
+    const cutoff = new Date(Date.now() - olderThanMinutes * 60_000).toISOString()
     const { data, error } = await db()
       .from('recommendation_deliveries')
       .select('item_id')
       .eq('delivery_date', deliveryDate)
       .eq('delivery_bucket', 'today_recommendation')
+      .lt('created_at', cutoff)
 
     if (error) {
       if (isMissingTable(error)) return new Set()

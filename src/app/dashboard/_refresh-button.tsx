@@ -48,13 +48,13 @@ export function RefreshRecommendationsButton() {
     setSnapshotHint(null)
 
     try {
+      // Skip RSS ingest — only re-score existing DB items and write a new snapshot.
+      // This takes ~3s instead of ~50s, giving near-instant feedback.
       const pipelineUrl =
         "/api/pipeline/recommendations" +
-        "?ingest=true" +
+        "?ingest=false" +
         "&refresh=true" +
-        "&maxSources=8" +
-        "&ingestTimeoutMs=55000" +
-        "&deepDive=llm" +
+        "&deepDive=deterministic" +
         "&mode=manual"
 
       const res = await fetch(pipelineUrl, { method: "POST" })
@@ -65,16 +65,11 @@ export function RefreshRecommendationsButton() {
         setState("running")
         router.refresh()
         scheduleReset("running")
-      } else if (data.ok && data.status === "success") {
+      } else if (data.ok) {
         setState("success")
         if (snapshotId) setSnapshotHint(`snapshot ${snapshotId.slice(0, 8)} 已更新`)
         router.refresh()
         scheduleReset("success")
-      } else if (data.ok && data.status === "partial_success") {
-        setState("partial")
-        if (snapshotId) setSnapshotHint(`snapshot ${snapshotId.slice(0, 8)} 已更新`)
-        router.refresh()
-        scheduleReset("partial")
       } else {
         setState("error")
         setErrMsg(data.error ?? "生成失败，可重试")
@@ -95,8 +90,8 @@ export function RefreshRecommendationsButton() {
   }
 
   const buttonClass: Record<RefreshState, string> = {
-    idle: "text-[color:var(--text-tertiary)] border-[color:var(--border-subtle)] bg-white/[0.55] hover:bg-white/[0.85] hover:text-foreground cursor-pointer",
-    loading: "text-muted-foreground border-[color:var(--border-subtle)] bg-white/[0.45] cursor-not-allowed",
+    idle: "text-white border-[color:var(--primary)] bg-[color:var(--primary)] hover:opacity-90 cursor-pointer",
+    loading: "text-white/70 border-[color:var(--primary)] bg-[color:var(--primary)]/70 cursor-not-allowed",
     success: "text-success border-success/30 bg-success/8 cursor-default",
     partial: "text-warning border-warning/30 bg-warning/8 cursor-default",
     running: "text-sky-400 border-sky-400/30 bg-sky-400/8 cursor-default",

@@ -316,15 +316,10 @@ export async function selectSourcesForIngest(
       }
     }
 
-    // Exclude consistently failing non-curated sources (unless force)
-    if (!opts.force && !source.is_user_curated) {
-      if (source.health_status === 'failing' && (source.failure_count ?? 0) >= 4) {
-        skippedCoolingDown++
-        reasonBySourceId[source.id] = `health_status=failing, failure_count=${source.failure_count ?? 0}, use force=true to include`
-        excluded.push(source)
-        continue
-      }
-    }
+    // Removed hard-exclude for failing sources: the cooldown mechanism already
+    // handles repeated failures (72h cooldown at fc>=6). Hard-excluding permanently
+    // blocks recovery of legitimate-but-flaky sources (e.g. Cloudflare-protected
+    // feeds that occasionally pass). Cooldown is sufficient protection.
 
     const { score, stalenessBucket } = computeUrgencyScore(source as DbSource & { last_fetch_status?: string | null; last_error_message?: string | null }, now)
     const reason = [
@@ -346,9 +341,31 @@ export async function selectSourcesForIngest(
   // Sort by urgency score descending
   eligible.sort((a, b) => b.score - a.score)
 
+  // ── S/A-tier guaranteed slots ─────────────────────────────────────────────
+  // Reserve up to half the run budget for S/A tier sources so critical
+  // publishers (OpenAI, DeepMind, etc.) are never bumped by many C-tier sources.
+  // S/A sources above the reservation already appear naturally from urgency sort;
+  // this only matters when low-tier sources would otherwise crowd them out.
   const maxSel = Math.min(opts.maxSources, eligible.length)
-  const selectedEntries = eligible.slice(0, maxSel)
-  const deferredEntries = eligible.slice(maxSel)
+  const reservedSlots = Math.floor(maxSel / 2)
+
+  const saEligible    = eligible.filter(e => e.source.source_tier === 'S' || e.source.source_tier === 'A')
+  const otherEligible = eligible.filter(e => e.source.source_tier !== 'S' && e.source.source_tier !== 'A')
+
+  const guaranteedSA  = saEligible.slice(0, reservedSlots)
+  const guaranteedIds = new Set(guaranteedSA.map(e => e.source.id))
+
+  // Fill remaining slots from urgency order (may include S/A already guaranteed)
+  const remaining = eligible.filter(e => !guaranteedIds.has(e.source.id))
+  const freeSlots = maxSel - guaranteedSA.length
+  const freeEntries = remaining.slice(0, freeSlots)
+
+  // Final selection: guaranteed S/A first, then free-slot entries (all already sorted by urgency)
+  const selectedEntries = [...guaranteedSA, ...freeEntries]
+    .sort((a, b) => b.score - a.score)   // re-sort so display order is still by urgency
+  const selectedIds = new Set(selectedEntries.map(e => e.source.id))
+  const deferredEntries = eligible.filter(e => !selectedIds.has(e.source.id))
+  void otherEligible  // used implicitly via remaining above
 
   // ── Build selected feeds ──────────────────────────────────────────────────
   const selected: SelectedFeed[] = selectedEntries.map(e => {
