@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { AppShell } from "@/components/layout/app-shell"
 import { ThemeToggle } from "@/components/theme/theme-toggle"
 import { Input } from "@/components/ui/input"
@@ -133,6 +134,7 @@ const TABS: { id: Tab; icon: typeof Sliders }[] = [
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
+  const router = useRouter()
   const [activeTab, setActiveTab] = useState<Tab>("外观")
 
   const [profileId,  setProfileId]  = useState<ProfileId>(() => loadSettings().profileId)
@@ -150,8 +152,11 @@ export default function SettingsPage() {
   function handleProfileChange(id: ProfileId) {
     setProfileId(id)
     const now = new Date().toISOString()
-    persistSettings({ profileId: id, autoScore, interests, blocklist, profileUpdatedAt: now },
-      () => flash("档位已保存，回到今日雷达生效"))
+    // Persist cookie + localStorage immediately, then navigate to dashboard.
+    // Dashboard is server-rendered and reads the cookie, so the new thresholds
+    // take effect on first render — no waiting for a background API call.
+    persistSettings({ profileId: id, autoScore, interests, blocklist, profileUpdatedAt: now })
+    router.push('/dashboard')
   }
 
   function handleSave() {
@@ -344,16 +349,58 @@ export default function SettingsPage() {
             {/* Pipeline automation */}
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.10em] mb-3"
-                 style={{ color: "var(--text-tertiary)" }}>自动化管道</p>
+                 style={{ color: "var(--text-tertiary)" }}>自动化管道（Vercel Cron）</p>
               <SettingCard>
                 <div className="space-y-3">
-                  <InfoRow label="Flash 初筛（DeepSeek-chat）" value="每 3 小时" accent="var(--accent-blue)" />
-                  <InfoRow label="信号抓取 + 推荐快照"          value="每 6 小时" accent="var(--accent-lime)" />
-                  <InfoRow label="日报时间窗口"                  value="00:00 – 24:00" />
+                  <InfoRow label="信号抓取 + 推荐快照" value="每天 07:30 北京时间" accent="var(--accent-lime)" />
+                  <InfoRow label="维护批次（Flash 初筛 + Evidence + 聚类 + 日报）" value="每天 08:30 北京时间" accent="var(--accent-blue)" />
+                  <InfoRow label="选题池自动填充"     value="同维护批次" />
+                  <InfoRow label="日报时间窗口"       value="00:00 – 24:00" />
                   <Divider />
                   <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    以上均由 Vercel Cron 自动触发。本地开发时请在处理队列页手动运行。
+                    Hobby 计划每天各触发一次。本地开发时请在 Dashboard 手动点击「手动生成快照」。
                   </p>
+                </div>
+              </SettingCard>
+            </div>
+
+            {/* Security — PIPELINE_SECRET */}
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.10em] mb-3"
+                 style={{ color: "var(--text-tertiary)" }}>安全配置</p>
+              <SettingCard>
+                <div className="space-y-3">
+                  <div className="flex items-start gap-3 p-3 rounded-lg"
+                       style={{ background: "color-mix(in srgb, #f59e0b 8%, transparent)", border: "1px solid color-mix(in srgb, #f59e0b 25%, transparent)" }}>
+                    <span className="text-base leading-none mt-0.5">⚠️</span>
+                    <div className="space-y-1">
+                      <p className="text-[12px] font-medium" style={{ color: "#b45309" }}>
+                        请在 Vercel 环境变量中设置 PIPELINE_SECRET
+                      </p>
+                      <p className="text-[11px]" style={{ color: "#92400e" }}>
+                        未设置时，任何人知道 URL 都可以触发 pipeline 消耗 token。
+                        在 Vercel Dashboard → Settings → Environment Variables 中添加
+                        任意强密码作为 PIPELINE_SECRET 的值。
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 p-3 rounded-lg"
+                       style={{ background: "color-mix(in srgb, var(--accent-blue) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)" }}>
+                    <span className="text-base leading-none mt-0.5">🔧</span>
+                    <div>
+                      <p className="text-[12px] font-medium" style={{ color: "var(--text-secondary)" }}>
+                        信源名称修复
+                      </p>
+                      <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                        如发现信源名显示乱码（如"36? AI"），可调用
+                        <code className="mx-1 px-1 rounded text-[10px]"
+                              style={{ background: "var(--overlay-2)" }}>
+                          POST /api/admin/fix-source-names
+                        </code>
+                        一次性修复数据库中的乱码信源名。
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </SettingCard>
             </div>
@@ -366,7 +413,7 @@ export default function SettingsPage() {
                 <div className="space-y-2.5">
                   <InfoRow label="初筛模型"   value="deepseek-chat" accent="var(--accent-blue)" />
                   <InfoRow label="批量大小"   value="25 条/次" />
-                  <InfoRow label="最低分数"   value="≥ 3 / 5（通过）" />
+                  <InfoRow label="最低分数"   value="≥ 4 / 5（高价值及以上通过）" />
                   <InfoRow label="预估成本"   value="~¥0.015 / 100 条" />
                   <Divider />
                   <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>

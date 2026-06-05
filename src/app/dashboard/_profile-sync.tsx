@@ -35,13 +35,16 @@ export function ProfileSync({
       // Only refresh if the profile was changed AFTER the last snapshot was generated
       if (new Date(updatedAt) <= new Date(snapshotGeneratedAt)) return
 
+      // Re-render immediately so the new thresholds take effect on screen.
+      // The snapshot regeneration (which also uses the new thresholds) runs in
+      // the background — the display filter is already correct from the cookie.
+      router.refresh()
+
       const t = getProfileThresholds(profileId)
       fetch(
         `/api/recommendations/refresh?deepDive=deterministic&mustRead=${t.mustRead}&highValue=${t.highValue}&observe=${t.observe}`,
         { method: 'POST' },
-      )
-        .then(() => router.refresh())
-        .catch(() => {/* silent — next manual refresh will pick up the new profile */})
+      ).catch(() => {/* silent */})
     } catch {
       // localStorage or JSON parse errors — silently skip
     }

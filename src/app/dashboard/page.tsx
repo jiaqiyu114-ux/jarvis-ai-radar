@@ -246,9 +246,11 @@ export default async function DashboardPage() {
   const todayHVCount = engineHighValue.length
   const todayTotal   = todayMRCount + todayHVCount
 
-  // Dashboard is a live timeline: the curated signals ordered by publish time
-  // ("what happened, and when"). Built from the whole scored snapshot pool.
-  const timelineGroups = buildSignalTimeline(engineItems, { limit: 50 })
+  // Dashboard is a live timeline: the curated signals ordered by publish time.
+  // Apply the current profile's observe threshold so "只看大事" hides low-score
+  // items — previously the timeline used the entire pool regardless of profile.
+  const timelineItems  = engineItems.filter(i => i.recommendationScore >= thresholds.observe)
+  const timelineGroups = buildSignalTimeline(timelineItems, { limit: 50 })
   const timelineCount  = timelineGroups.reduce((n, g) => n + g.entries.length, 0)
 
   // Score distribution across all engine candidates (for explaining gaps)
@@ -307,6 +309,31 @@ export default async function DashboardPage() {
 
         {/* Auto-trigger pipeline when snapshot is stale (> 1h) or missing */}
         <AutoPipelineTrigger snapshotGeneratedAt={engineSnapshot?.generated_at ?? null} />
+
+        {/* ── Pipeline error / stale alert banner ── */}
+        {(() => {
+          const lastRunFailed = latestRun?.status === 'failed'
+          const ageH = freshness?.ageMinutes != null ? freshness.ageMinutes / 60 : null
+          const isVeryStale = ageH != null && ageH > 28  // missed a cron cycle
+          if (!lastRunFailed && !isVeryStale) return null
+          return (
+            <div className="mb-5 flex items-start gap-3 rounded-xl px-4 py-3"
+                 style={{ background: "color-mix(in srgb, #ef4444 8%, transparent)", border: "1px solid color-mix(in srgb, #ef4444 25%, transparent)" }}>
+              <span className="mt-0.5 text-[15px]">⚠️</span>
+              <div className="min-w-0">
+                <p className="text-[12px] font-semibold" style={{ color: "#dc2626" }}>
+                  {lastRunFailed ? 'Pipeline 最近一次运行失败' : `快照已 ${Math.round(ageH ?? 0)} 小时未更新`}
+                </p>
+                <p className="mt-0.5 text-[11px]" style={{ color: "#991b1b" }}>
+                  {lastRunFailed
+                    ? `上次运行于 ${latestRun?.started_at ? new Date(latestRun.started_at).toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '未知'}，可点击「更多 → 手动生成快照」重新触发。`
+                    : '可能是 Vercel Cron 未触发或网络问题。点击「更多 → 手动生成快照」立即刷新。'
+                  }
+                </p>
+              </div>
+            </div>
+          )
+        })()}
 
         {/* ── Title row ── */}
         <header className="mb-6 flex items-start justify-between gap-4">
