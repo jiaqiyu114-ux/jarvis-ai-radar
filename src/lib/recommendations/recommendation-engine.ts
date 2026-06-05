@@ -13,6 +13,7 @@
 import { supabaseServer, isServerSupabaseConfigured } from '@/lib/supabase/server'
 import { detectLowValueNoise } from '@/lib/scoring/noise'
 import { normalizeDisplayText } from '@/lib/text/normalize-display-text'
+import { calculateFinalScore } from '@/lib/scoring/final-score'
 import type { RecommendationDeepDive } from '@/lib/recommendations/deep-dive'
 import type { RelatedSignal } from '@/lib/recommendations/related-signals'
 
@@ -113,6 +114,8 @@ export type RecommendedItem = {
   nextStep:             string          // Next action suggestion
   deepDive?:            RecommendationDeepDive
   relatedSignals?:      RelatedSignal[] | null
+  // Chinese hint from Flash Filter's analysis_reason (shown for English content)
+  flashReason?:         string | null
   // Daily gate metadata (populated by refresh pipeline; absent on live-query path)
   recommendationBucket?:  RecommendationBucket
   deliveryStatus?:        DeliveryStatus
@@ -184,6 +187,17 @@ type EngineRow = {
   data_origin:   string | null
   published_at:  string | null
   fetched_at:    string | null
+  // 9 AI/rule dimension scores — used to recompute a freshness-correct final_score
+  // at ranking time (final_score in the DB is frozen at first ingest, see mapRow).
+  ai_relevance_score:      number | null
+  source_score:            number | null
+  importance_score:        number | null
+  novelty_score:           number | null
+  momentum_score:          number | null
+  credibility_score:       number | null
+  actionability_score:     number | null
+  content_potential_score: number | null
+  personal_fit_score:      number | null
   ev_score:      number | null
   truth_score:   number | null
   evidence_level: string | null
@@ -200,7 +214,8 @@ type EngineRow = {
   should_track_event:        boolean | null
   should_deep_analyze:       boolean | null
   should_enter_topic_pool:   boolean | null
-  analysis_tier: string | null
+  analysis_tier:   string | null
+  analysis_reason: string | null
   sources?: EngineSourceJoin
 }
 
@@ -209,11 +224,13 @@ type EngineRow = {
 const ENGINE_SELECT = [
   'id', 'title', 'summary', 'url', 'source_id', 'category', 'tags',
   'final_score', 'data_origin', 'published_at', 'fetched_at',
+  'ai_relevance_score', 'source_score', 'importance_score', 'novelty_score', 'momentum_score',
+  'credibility_score', 'actionability_score', 'content_potential_score', 'personal_fit_score',
   'ev_score', 'truth_score', 'evidence_level',
   'content_word_count', 'content_fetch_status', 'clean_text', 'cover_image_url', 'media_urls',
   'clickbait_penalty', 'marketing_penalty', 'duplicate_penalty', 'cognitive_load_penalty',
   'should_enter_daily_report', 'should_track_event', 'should_deep_analyze', 'should_enter_topic_pool',
-  'analysis_tier',
+  'analysis_tier', 'analysis_reason',
   'sources!items_source_id_fkey(name, url, source_tier, is_user_curated, is_official)',
 ].join(', ')
 
@@ -229,7 +246,8 @@ const RECOMMENDATION_OR = [
   'ev_score.gte.40',
 ].join(',')
 
-const MAX_POOL = 300
+const MAX_POOL = 500
+const RECENT_FLOOR = 150   // always score the N most-recently-fetched items (②)
 const DEFAULT_WINDOW = 72
 const DEFAULT_LIMIT  = 30
 
@@ -242,6 +260,14 @@ const AI_ENTITIES = [
   'perplexity', 'xai', 'grok', 'mistral', 'deepseek', 'qwen', 'cohere',
   'stability ai', 'midjourney', 'sora', 'gemma', 'phi-3', 'phi-4',
   'mixtral', 'langchain', 'autogen', 'crewai', 'langsmith',
+]
+
+// Specific AI technology terms — stronger signal than company names alone
+const AI_TECH_TERMS = [
+  'llm', 'model', 'agent', 'transformer', 'neural', 'inference', 'training',
+  'benchmark', 'multimodal', 'embedding', 'fine-tun', 'diffusion', 'generative',
+  'reasoning', 'foundation model', 'agentic', 'ai ', 'artificial intelligence',
+  '大模型', '人工智能', '机器学习', '智能体', '生成式',
 ]
 
 const EVENT_KEYWORDS = [
@@ -257,6 +283,61 @@ const EVENT_KEYWORDS = [
 
 function n(v: number | null | undefined): number { return v ?? 0 }
 function b(v: boolean | null | undefined): boolean { return v === true }
+
+/**
+ * Return a trustworthy publish instant for ordering / freshness math (⑤).
+ * Rejects un-parseable dates and dates in the future (clock skew / bad feeds),
+ * falling back to fetched_at. A genuinely old-but-valid date is kept as-is —
+ * the timeline and freshness recompute *want* the real old date.
+ */
+function plausiblePublishedAt(
+  published: string | null | undefined,
+  fetched:   string | null | undefined,
+): string | null {
+  const fb = fetched ?? null
+  if (!published) return fb
+  const ms = new Date(published).getTime()
+  if (Number.isNaN(ms)) return fb
+  if (ms > Date.now() + 24 * 3_600_000) return fb   // more than a day in the future → bogus
+  return published
+}
+
+/**
+ * Recompute final_score from the stored dimension scores + the REAL published_at (①).
+ *
+ * The DB's final_score is frozen at first ingest. If a feed initially reported a
+ * recent/absent date (→ fresh multiplier) and the true old date was backfilled
+ * later, the stored final_score stays inflated forever. Recomputing here with the
+ * current time + corrected date re-applies the freshness decay every run, so a
+ * 2019 archive post can no longer masquerade as fresh. Falls back to the stored
+ * value when no dimension scores are present.
+ */
+function freshnessCorrectedFinalScore(row: EngineRow): number {
+  const hasDims = row.importance_score != null || row.ai_relevance_score != null || row.source_score != null
+  if (!hasDims) return n(row.final_score)
+  const pubForFreshness = plausiblePublishedAt(row.published_at, row.fetched_at) ?? new Date().toISOString()
+  const { finalScore } = calculateFinalScore(
+    {
+      ai_relevance_score:      n(row.ai_relevance_score),
+      source_score:            n(row.source_score),
+      importance_score:        n(row.importance_score),
+      novelty_score:           n(row.novelty_score),
+      momentum_score:          n(row.momentum_score),
+      credibility_score:       n(row.credibility_score),
+      actionability_score:     n(row.actionability_score),
+      content_potential_score: n(row.content_potential_score),
+      personal_fit_score:      n(row.personal_fit_score),
+    },
+    pubForFreshness,
+    {
+      duplicate_penalty:      n(row.duplicate_penalty),
+      clickbait_penalty:      n(row.clickbait_penalty),
+      marketing_penalty:      n(row.marketing_penalty),
+      cognitive_load_penalty: n(row.cognitive_load_penalty),
+    },
+  )
+  return finalScore
+}
 
 /**
  * Detect text that contains mojibake (UTF-8 bytes decoded as Windows-1252/Latin-1).
@@ -379,20 +460,33 @@ function computeRecommendationScore(
   if (hoursAgo < 24)      score += 4
   else if (hoursAgo < 72) score += 2
 
-  // NOTE: No score-based age decay here. Whether an item is eligible for today's
-  // recommendation is enforced by the daily hard gate in daily-gate.ts (applied
-  // during the refresh pipeline), not by penalising scores. Score reflects
-  // objective quality; the gate controls scheduling.
-
-  // First-fetch recovery: items just fetched (< 24h) but with old published_at have their
-  // final_score heavily penalised by the freshness multiplier at ingest time. Compensate so
-  // first-discovered articles from reputable sources surface at the right tier.
-  const pubMs2     = row.published_at ? new Date(row.published_at).getTime() : 0
+  // ── Published-time recency ranking ──────────────────────────────────────────
+  // The dashboard is a "today's radar" / publish-time timeline, so ranking must
+  // favour genuinely recent content. The daily hard gate in daily-gate.ts is NOT
+  // applied in the snapshot pipeline, so without a recency term here nothing keeps
+  // stale items down — and archive backfill (a crawler discovering a source's old
+  // posts) would dominate the top-N snapshot and bury today's news.
+  const pubIso      = plausiblePublishedAt(row.published_at, row.fetched_at)
+  const pubMs2      = pubIso ? new Date(pubIso).getTime() : 0
   const pubHoursAgo = pubMs2 > 0 ? (Date.now() - pubMs2) / 3_600_000 : 0
-  if (hoursAgo < 24 && pubHoursAgo >= 72) {
+  const pubDays     = pubHoursAgo / 24
+  if (pubMs2 > 0) {
+    if (pubHoursAgo < 24)      score += 10   // today
+    else if (pubHoursAgo < 72) score += 5    // last 3 days
+    else if (pubDays <= 14)    score += 0    // recent enough — neutral
+    else if (pubDays <= 30)    score -= 10   // getting stale for a daily radar
+    else                       score -= 25   // archive backfill — must not top the radar
+  }
+
+  // First-fetch recovery: an item just fetched (< 24h) but published a few days ago
+  // had its final_score cut by the ingest-time freshness multiplier (×0.5 beyond 72h).
+  // Compensate so a legitimately recent post from a reputable but infrequent source
+  // (KOL blog, weekly newsletter) still surfaces. Bounded to published ≤ 14 days —
+  // beyond that it is archive backfill, not a fresh discovery, and must not be lifted.
+  if (hoursAgo < 24 && pubHoursAgo >= 72 && pubDays <= 14) {
     const tier2 = String(row.sources?.source_tier ?? 'C').toUpperCase()
-    if (tier2 === 'S' || tier2 === 'A') score += 18
-    else if (tier2 === 'B')             score += 10
+    if (tier2 === 'S' || tier2 === 'A') score += 12
+    else if (tier2 === 'B')             score += 8
   }
 
   // Signal flags
@@ -401,6 +495,25 @@ function computeRecommendationScore(
 
   // User curated — light positive signal (prevents complete de-prioritization)
   if (isUserCurated) score += 3
+
+  // Non-AI / financial content penalty
+  const titleAndSummary = ((row.title ?? '') + ' ' + (row.summary ?? '')).toLowerCase()
+  const hasAiEntity = AI_ENTITIES.some(e => titleAndSummary.includes(e))
+  const hasAiTech   = AI_TECH_TERMS.some(t => titleAndSummary.includes(t))
+  const FINANCIAL_KW = [
+    '减持', '增持', '回购', '配股', '定增', '股价', '市值', '净利润',
+    '分红', '股息', 'a股', '沪深', '创业板', '科创板', '港股', '证券账户',
+    '集中竞价', '流通股', '上市公司',
+  ]
+  const isFinancialNoise = FINANCIAL_KW.some(k => titleAndSummary.includes(k))
+
+  if (isFinancialNoise && !hasAiTech) {
+    score -= 30  // financial news with no AI tech signal: hard exclusion
+  } else if (!hasAiEntity && !hasAiTech) {
+    score -= 22  // off-topic for an AI radar
+  } else if (!hasAiTech && hasAiEntity) {
+    score -= 8   // mentions AI company but content may not be AI-specific
+  }
 
   // Noise penalty
   score -= noisePenalty
@@ -485,37 +598,76 @@ function buildQualityFlags(
   return flags
 }
 
+// Named AI entities for reason extraction (display name → keyword to match)
+const ENTITY_DISPLAY: Array<[string, string]> = [
+  ['OpenAI', 'openai'], ['Anthropic', 'anthropic'], ['Google DeepMind', 'deepmind'],
+  ['Google', 'google ai'], ['Meta AI', 'meta ai'], ['Microsoft', 'microsoft'],
+  ['NVIDIA', 'nvidia'], ['DeepSeek', 'deepseek'], ['Mistral', 'mistral'],
+  ['Cohere', 'cohere'], ['Perplexity', 'perplexity'], ['xAI', 'xai'],
+  ['Claude', 'claude'], ['ChatGPT', 'chatgpt'], ['Gemini', 'gemini'],
+  ['Llama', 'llama'], ['Grok', 'grok'], ['Sora', 'sora'], ['Cursor', 'cursor'],
+]
+
+function extractEntities(title: string): string[] {
+  const t = title.toLowerCase()
+  return ENTITY_DISPLAY
+    .filter(([, kw]) => t.includes(kw))
+    .map(([name]) => name)
+    .slice(0, 2)
+}
+
+function sanitizeSourceName(name: string | null | undefined): string {
+  if (!name) return '该信源'
+  // Remove garbled chars, excessive punctuation, truncate
+  return name.replace(/[?？�]/g, '').replace(/\s+/g, ' ').trim().slice(0, 30) || '该信源'
+}
+
 function buildReason(
   row:          EngineRow,
   tier:         RecommendationTier,
   sourceStatus: EngineSourceStatus,
 ): string {
   const category = row.category ?? ''
-  const title    = normalizeDisplayText(row.title).toLowerCase()
-  const isModel  = /\b(model|gpt|claude|gemini|llama|mistral|llm|agent)\b/.test(title)
-  const isFunding  = category === '融资并购'
-  const isPolicy   = category === '监管政策'
-  const isResearch = category === '研究报告'
-  const isProduct  = category === '产品发布'
-  const ev         = n(row.ev_score)
+  const rawTitle = normalizeDisplayText(row.title)
+  const title    = rawTitle.toLowerCase()
+  const source   = sanitizeSourceName(row.sources?.name)
+  const entities = extractEntities(title)
+  const who      = entities.length > 0 ? entities.join(' / ') : source
+
+  // Event type detection
+  const isRelease    = /\b(release|launch|introduc|announc|reveal|ship|出|发布|推出|上线)\b/.test(title)
+  const isFunding    = category === '融资并购' || /\b(raises?|funding|series [abc]|billion|valuat|融资|估值|投资)\b/.test(title)
+  const isResearch   = category === '研究报告' || /\b(paper|research|study|benchmark|findings?|论文|研究|发现)\b/.test(title)
+  const isPolicy     = category === '监管政策' || /\b(regulat|policy|ban|law|govern|监管|政策|法规)\b/.test(title)
+  const isOpen       = /open.sourc|open.weight|开源/.test(title)
+  const isAcquire    = /\b(acqui|merger?|合并|收购)\b/.test(title)
+  const isModel      = /\b(model|llm|gpt|claude|gemini|llama|mistral|agent|大模型)\b/.test(title)
+  const ev           = n(row.ev_score)
+  const isFresh      = (() => {
+    const ms = row.published_at ? new Date(row.published_at).getTime() : 0
+    return ms > 0 && (Date.now() - ms) / 3_600_000 < 12
+  })()
 
   if (tier === 'must_read') {
-    if (isModel)    return '模型能力或产品形态有新变化，值得今日重点跟进。'
-    if (isFunding)  return '资本正在押注某类 AI 方向，反映行业资源流向，适合今日优先阅读。'
-    if (isPolicy)   return '监管动态可能影响行业边界，建议今日优先关注。'
-    if (isResearch) return '新研究结论可能改变技术路线判断，值得深读。'
-    return '综合评分较高且证据信号充分，适合今日重点阅读。'
+    if (isRelease && entities.length > 0) return `${who} 发布新产品或模型更新，一手信息，建议今日优先阅读。`
+    if (isResearch && entities.length > 0) return `${who} 发布研究结论，可能影响技术路线判断，值得深读。`
+    if (isFunding)  return `${who} 融资动态，资本正在押注此方向，适合今日优先关注。`
+    if (isPolicy)   return `监管动态（${who}），可能影响 AI 行业边界，建议今日优先关注。`
+    if (isModel)    return `${who} 模型或能力有新变化，综合证据充分，值得今日重点跟进。`
+    return `${who} 高分信号，证据信号充分，适合今日重点阅读。`
   }
 
-  if (b(row.should_track_event)) return '该事件可能持续发酵，适合进入追踪队列观察后续进展。'
-  if (b(row.should_enter_daily_report)) return '已通过日报入选条件，适合纳入今日摘要。'
-  if (sourceStatus === 'official') return '来自官方一手信源，真实性权重较高，适合直接参考。'
-  if (sourceStatus === 'user_curated') return '来自你主动接入的信源，具备初始参考价值，仍需多源验证。'
-  if (isModel && ev >= 60) return '指向模型能力变化，证据较完整，适合今日深读判断。'
-  if (isProduct && ev >= 55) return '指向 AI 产品新动态，证据基础较完整，可作为选题素材。'
-  if (isFunding) return '反映资本流向，可用于判断 AI 行业资源分布变化。'
-  if (tier === 'observe') return '信号价值暂未达高价值门槛，但趋势值得持续观察。'
-  return '综合信号初步达标，适合今日轻量浏览。'
+  if (b(row.should_track_event)) return `${who} 相关事件可能持续发酵，建议进入追踪队列观察后续进展。`
+  if (sourceStatus === 'official') return `来自 ${who} 官方一手信源，真实性权重高，适合直接参考。`
+  if (isRelease)   return `${who} 产品或功能更新${isFresh ? '，刚刚发布' : ''}，适合今日跟进了解变化。`
+  if (isOpen)      return `${who} 开源发布，值得关注技术细节和社区反应。`
+  if (isResearch)  return `${who} 相关研究，ev_score=${ev > 0 ? ev : '待评'}，可作为技术判断参考。`
+  if (isFunding)   return `${who} 融资信息，反映 AI 行业资源分布变化。`
+  if (isAcquire)   return `${who} 并购动态，反映行业整合趋势，值得追踪。`
+  if (isPolicy)    return `监管信号（${who}），持续关注对行业的潜在影响。`
+  if (sourceStatus === 'user_curated') return `来自你接入的信源 ${source}，具备初始参考价值，仍需多源验证。`
+  if (tier === 'observe') return `来自 ${who}，暂入观察队列，信号价值待多源跟进验证。`
+  return `来自 ${who}，综合评分达到推荐门槛，适合今日浏览。`
 }
 
 function buildRiskNote(
@@ -552,6 +704,10 @@ function buildNextStep(
 // ── Row mapper ────────────────────────────────────────────────────────────────
 
 function mapRow(row: EngineRow, thresholds: TierThresholds = DEFAULT_THRESHOLDS): RecommendedItem {
+  // ① Correct the frozen final_score using the real published_at + current time,
+  // before any downstream scoring reads row.final_score.
+  row.final_score = freshnessCorrectedFinalScore(row)
+
   const source        = row.sources
   const isOfficial    = source?.is_official    ?? false
   const isUserCurated = source?.is_user_curated ?? false
@@ -573,13 +729,23 @@ function mapRow(row: EngineRow, thresholds: TierThresholds = DEFAULT_THRESHOLDS)
   const risk    = buildRiskNote(sourceStatus, qualityFlags, tier)
   const next    = buildNextStep(tier, qualityFlags, sourceStatus, b(row.should_track_event))
 
+  // Extract the Chinese one-sentence hint from flash filter analysis_reason.
+  // Passed items are stored as: "[Flash ✓ <Chinese sentence>] <gate reason>"
+  const flashReason = (() => {
+    const raw = row.analysis_reason ?? ''
+    const m = raw.match(/^\[Flash\s*[✓✗]\s*([^\]]+)\]/)
+    if (!m) return null
+    const sentence = m[1].trim()
+    return sentence.length > 4 ? sentence : null
+  })()
+
   return {
     id:          row.id,
     title,
     summary,
     source:      source?.name ?? (row.source_id ? '未知信源' : 'Unknown Source'),
     sourceTier:  String(source?.source_tier ?? 'C').toUpperCase(),
-    publishedAt: row.published_at ?? row.fetched_at ?? new Date().toISOString(),
+    publishedAt: plausiblePublishedAt(row.published_at, row.fetched_at) ?? new Date().toISOString(),
     fetchedAt:   row.fetched_at,
     category:    row.category ?? '其他',
     tags:        row.tags ?? [],
@@ -607,6 +773,7 @@ function mapRow(row: EngineRow, thresholds: TierThresholds = DEFAULT_THRESHOLDS)
     recommendationReason: reason,
     riskNote:             risk,
     nextStep:             next,
+    flashReason,
   }
 }
 
@@ -640,7 +807,11 @@ export async function getRecommendations(
   const poolLimit = fetchAll ? MAX_POOL : Math.min(limit * 8, MAX_POOL)
 
   try {
-    const [{ data, error }, countResult] = await Promise.all([
+    // ② Two pools, merged & de-duped:
+    //   (a) quality pool — top items by final_score (may truncate fresh-but-mid items)
+    //   (b) recency floor — the most-recently-fetched items, so genuinely new content
+    //       is ALWAYS scored even when the quality pool is saturated by high scorers.
+    const [{ data, error }, { data: recentData, error: recentError }, countResult] = await Promise.all([
       supabaseServer
         .from('items')
         .select(ENGINE_SELECT)
@@ -653,6 +824,14 @@ export async function getRecommendations(
         .limit(poolLimit),
       supabaseServer
         .from('items')
+        .select(ENGINE_SELECT)
+        .eq('data_origin', 'real')
+        .gte('fetched_at', windowStart)
+        .or(RECOMMENDATION_OR)
+        .order('fetched_at', { ascending: false, nullsFirst: false })
+        .limit(RECENT_FLOOR),
+      supabaseServer
+        .from('items')
         .select('id', { count: 'exact', head: true })
         .eq('data_origin', 'real')
         .gte('fetched_at', windowStart),
@@ -662,19 +841,82 @@ export async function getRecommendations(
       console.error('[recommendation-engine] query failed:', error.message)
       return empty
     }
+    if (recentError) {
+      console.warn('[recommendation-engine] recency-floor query failed:', recentError.message)
+    }
 
-    const rows = (data ?? []) as unknown as EngineRow[]
+    const seenIds = new Set<string>()
+    const rows: EngineRow[] = []
+    for (const r of [...(data ?? []), ...(recentData ?? [])] as unknown as EngineRow[]) {
+      if (!r?.id || seenIds.has(r.id)) continue
+      seenIds.add(r.id)
+      rows.push(r)
+    }
     const mapped = rows.map(row => mapRow(row, thresholds))
 
-    // Sort by recommendationScore descending
-    mapped.sort((a, b) => b.recommendationScore - a.recommendationScore)
+    // ── Feedback demoting: items the user explicitly rejected are archived ────
+    // Query is scoped to the pool's item IDs to avoid table-scanning all feedback.
+    try {
+      if (mapped.length > 0) {
+        const poolIds = mapped.map(i => i.id)
+        const { data: uselessRows } = await supabaseServer
+          .from('item_feedback')
+          .select('item_id')
+          .eq('feedback_type', 'not_worth_reading')
+          .in('item_id', poolIds)
+
+        const uselessIds = new Set((uselessRows ?? []).map(r => r.item_id as string))
+        if (uselessIds.size > 0) {
+          for (const item of mapped) {
+            if (uselessIds.has(item.id) && item.recommendationTier !== 'archive') {
+              item.recommendationTier   = 'archive'
+              item.recommendationScore  = Math.min(item.recommendationScore, 30)
+              item.qualityFlags         = [...item.qualityFlags, 'user_rejected']
+            }
+          }
+        }
+      }
+    } catch { /* feedback errors are non-fatal — proceed without demotion */ }
+
+    // Sort by recommendationScore descending. ③ Many items saturate at 100, so
+    // break ties by publish recency (newest first) to keep ordering deterministic
+    // and recency-biased instead of falling back to arbitrary DB row order.
+    const pubTs = (i: RecommendedItem) => {
+      const ms = new Date(i.publishedAt).getTime()
+      return Number.isNaN(ms) ? 0 : ms
+    }
+    mapped.sort((a, b) => (b.recommendationScore - a.recommendationScore) || (pubTs(b) - pubTs(a)))
+
+    // ── Story deduplication: keep highest-scored item per story ──────────────
+    // Prevents the same news from appearing 3× from different outlets.
+    // Uses first 35 normalized chars of title as story key.
+    const storyKeys = new Map<string, true>()
+    const deduped = mapped.map(item => {
+      const key = item.title
+        .toLowerCase()
+        .replace(/[\s　]+/g, ' ')           // normalize whitespace (incl. fullwidth)
+        .replace(/[^\w\s一-鿿]/g, '')   // strip punctuation, keep CJK + latin
+        .trim()
+        .slice(0, 35)
+      if (key.length < 8) return item            // too short to dedup safely
+      if (storyKeys.has(key)) {
+        // Second+ occurrence: demote to archive so it doesn't crowd out other stories
+        return {
+          ...item,
+          recommendationTier:  'archive' as RecommendationTier,
+          qualityFlags:        [...item.qualityFlags, 'story_duplicate'],
+        }
+      }
+      storyKeys.set(key, true)
+      return item
+    })
 
     // Apply tier filter if specified
     const filtered = options.tier
-      ? mapped.filter(item => item.recommendationTier === options.tier)
+      ? deduped.filter(item => item.recommendationTier === options.tier)
       : options.includeArchive
-        ? mapped
-        : mapped.filter(item => item.recommendationTier !== 'archive')
+        ? deduped
+        : deduped.filter(item => item.recommendationTier !== 'archive')
 
     // fetchAll: threshold-based — return ALL qualifying items, not a fixed top-N.
     // Standard: slice to `limit` for paginated/live-query use.
@@ -682,11 +924,11 @@ export async function getRecommendations(
 
     const stats: RecommendationStats = {
       capturedTotal:            countResult.count ?? 0,
-      recommendationCandidates: mapped.length,
-      mustReadCount:            mapped.filter(i => i.recommendationTier === 'must_read').length,
-      highValueCount:           mapped.filter(i => i.recommendationTier === 'high_value').length,
-      observeCount:             mapped.filter(i => i.recommendationTier === 'observe').length,
-      archiveCount:             mapped.filter(i => i.recommendationTier === 'archive').length,
+      recommendationCandidates: deduped.length,
+      mustReadCount:            deduped.filter(i => i.recommendationTier === 'must_read').length,
+      highValueCount:           deduped.filter(i => i.recommendationTier === 'high_value').length,
+      observeCount:             deduped.filter(i => i.recommendationTier === 'observe').length,
+      archiveCount:             deduped.filter(i => i.recommendationTier === 'archive').length,
     }
 
     return { windowHours, windowStart, windowEnd, stats, items: output }
@@ -737,6 +979,17 @@ export function enrichItemWithEngine(
     data_origin: 'real',
     published_at: item.publishedAt,
     fetched_at: item.fetchedAt ?? null,
+    // No stored dimensions on the enrich path → freshnessCorrectedFinalScore
+    // falls back to the supplied finalScore (no recompute).
+    ai_relevance_score: null,
+    source_score: null,
+    importance_score: null,
+    novelty_score: null,
+    momentum_score: null,
+    credibility_score: null,
+    actionability_score: null,
+    content_potential_score: null,
+    personal_fit_score: null,
     ev_score: item.evScore ?? null,
     truth_score: item.truthScore ?? null,
     evidence_level: null,
@@ -753,7 +1006,8 @@ export function enrichItemWithEngine(
     should_track_event: item.shouldTrackEvent ?? null,
     should_deep_analyze: null,
     should_enter_topic_pool: null,
-    analysis_tier: item.analysisTier ?? null,
+    analysis_tier:   item.analysisTier ?? null,
+    analysis_reason: null,
     sources: {
       name: null,
       url: null,

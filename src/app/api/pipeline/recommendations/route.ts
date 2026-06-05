@@ -49,6 +49,7 @@ import {
 } from '@/lib/ingest/ingest-runner'
 import { getSourceCoverageStats } from '@/lib/ingest/source-selector'
 import { getRecommendations } from '@/lib/recommendations/recommendation-engine'
+import { applyDailyGate, persistDeliveries } from '@/lib/recommendations/apply-daily-gate'
 import {
   getRecommendationFreshness,
 } from '@/lib/recommendations/recommendation-freshness'
@@ -65,6 +66,7 @@ import {
 } from '@/lib/db/recommendation-snapshots'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60  // Vercel Hobby plan max; keeps ingest+refresh within budget
 
 // ── Param parsing ─────────────────────────────────────────────────────────────
 
@@ -290,6 +292,7 @@ export async function POST(req: NextRequest) {
         windowHours:    params.refreshWindowHours,
         limit:          params.refreshLimit,
         includeArchive: true,
+        fetchAll:       true,   // ④ store the full qualifying pool, not just top-N
       })
       const durationMs = Date.now() - refreshStart
       const runStatus  = result.items.length > 0 ? 'success' : 'partial_success'
@@ -309,10 +312,12 @@ export async function POST(req: NextRequest) {
       }
 
       const snapshotItemsBase = result.items.filter(i => i.recommendationTier !== 'archive')
+      // Daily hard gate: demote items not eligible for today before snapshotting.
+      const { items: gatedItems, gateStats } = await applyDailyGate(snapshotItemsBase)
       const {
         items: snapshotItems,
         deepDiveStats,
-      } = await attachDeepDivesToRecommendations(snapshotItemsBase, {
+      } = await attachDeepDivesToRecommendations(gatedItems, {
         mode: params.deepDiveMode,
         concurrency: 2,
         includeSkipped: false,
@@ -333,10 +338,13 @@ export async function POST(req: NextRequest) {
           metadata: {
             deepDiveMode: params.deepDiveMode,
             deepDiveStats,
+            dailyGate: gateStats,
           },
         },
         snapshotItems,
       )
+
+      await persistDeliveries(snapshotItems, gateStats.todayKey, snapshotId).catch(() => {})
 
       refreshOk     = true
       refreshResult = {
